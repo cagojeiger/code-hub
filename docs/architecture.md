@@ -16,9 +16,12 @@ graph TB
         DB[(Database)]
     end
 
-    subgraph Runner[Runner - Local Docker]
-        Lifecycle[Lifecycle Manager]
-        HSB[HomeStoreBackend]
+    subgraph StorageProvider[Storage Provider]
+        SP[local-dir / object-store]
+    end
+
+    subgraph InstanceController[Instance Controller - Local Docker]
+        IC[Lifecycle Manager]
     end
 
     subgraph Infrastructure
@@ -31,10 +34,10 @@ graph TB
     API --> DB
     Proxy --> DB
     Proxy --> Docker
-    API --> Lifecycle
-    Lifecycle --> Docker
-    Lifecycle --> HSB
-    HSB --> HomeStore
+    API --> SP
+    SP --> HomeStore
+    API --> IC
+    IC --> Docker
     Docker --> HomeStore
 ```
 
@@ -48,14 +51,14 @@ graph TB
 sequenceDiagram
     participant U as User
     participant CP as Control Plane
-    participant R as Runner
+    participant IC as Instance Controller
     participant D as Docker
 
     U->>CP: GET /w/{workspace_id}/
     CP->>CP: 세션 확인 (401 if fail)
     CP->>CP: owner 인가 확인 (403 if fail)
-    CP->>R: ResolveUpstream
-    R-->>CP: {host, port}
+    CP->>IC: ResolveUpstream
+    IC-->>CP: {host, port}
 
     alt upstream 연결 성공
         CP->>D: 프록시 연결 (WebSocket 포함)
@@ -81,6 +84,119 @@ sequenceDiagram
     U->>CP: GET /w/{workspace_id}/
     CP->>CP: prefix strip → upstream /
 ```
+
+### StartWorkspace (`POST /api/v1/workspaces/{id}:start`)
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant CP as Control Plane
+    participant SP as Storage Provider
+    participant IC as Instance Controller
+    participant D as Docker
+
+    U->>CP: POST /api/v1/workspaces/{id}:start
+    CP->>CP: 상태 확인 (CREATED/STOPPED/ERROR)
+    CP->>CP: DB 상태 → PROVISIONING
+
+    CP->>SP: Provision(home_store_key, existing_ctx)
+
+    alt existing_ctx 존재
+        SP->>SP: 기존 ctx 정리 (내부)
+    end
+
+    SP-->>CP: {home_mount, home_ctx}
+    CP->>CP: DB에 home_ctx 저장
+
+    CP->>IC: StartWorkspace(home_mount, image_ref)
+    IC->>D: docker create + start
+    D-->>IC: container started
+
+    loop HealthCheck 폴링
+        CP->>IC: HealthCheck
+        IC->>D: health probe
+        D-->>IC: status
+        IC-->>CP: {healthy: bool}
+    end
+
+    CP->>CP: DB 상태 → RUNNING
+    CP-->>U: {id, status: "RUNNING"}
+```
+
+> Control Plane이 Storage Provider.Provision 호출 → home_mount 획득 → Instance Controller에 전달
+> existing_ctx가 있으면 Provision 내부에서 자동 정리 (리소스 누수 방지)
+
+### StopWorkspace (`POST /api/v1/workspaces/{id}:stop`)
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant CP as Control Plane
+    participant SP as Storage Provider
+    participant IC as Instance Controller
+    participant D as Docker
+
+    U->>CP: POST /api/v1/workspaces/{id}:stop
+    CP->>CP: 상태 확인 (RUNNING만 가능)
+    CP->>CP: DB 상태 → STOPPING
+
+    CP->>IC: StopWorkspace(workspace_id)
+    IC->>D: docker stop
+    D-->>IC: container stopped
+
+    CP->>SP: Deprovision(home_ctx)
+
+    alt object-store
+        SP->>SP: PersistHome (내부)
+        SP->>SP: CleanupHome (내부)
+    end
+
+    Note over SP: local-dir: no-op
+
+    CP->>CP: DB home_ctx = NULL
+    CP->>CP: DB 상태 → STOPPED
+    CP-->>U: {id, status: "STOPPED"}
+```
+
+> 백엔드 분기 없이 항상 Deprovision 호출. 백엔드 내부에서 적절히 처리.
+
+### DeleteWorkspace (`DELETE /api/v1/workspaces/{id}`)
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant CP as Control Plane
+    participant SP as Storage Provider
+    participant IC as Instance Controller
+    participant D as Docker
+
+    U->>CP: DELETE /api/v1/workspaces/{id}
+    CP->>CP: 상태 확인 (CREATED/STOPPED/ERROR)
+    CP->>CP: DB 상태 → DELETING
+
+    alt home_ctx 존재
+        CP->>SP: Deprovision(home_ctx)
+        SP-->>CP: success
+        CP->>CP: DB home_ctx = NULL
+    end
+
+    CP->>IC: DeleteWorkspace(workspace_id)
+
+    alt 컨테이너 존재
+        IC->>D: docker rm -f
+        D-->>IC: container removed
+    end
+
+    Note over IC: 컨테이너 없으면 성공 (no-op)
+
+    IC-->>CP: success
+
+    CP->>CP: DB soft delete (deleted_at, status=DELETED)
+    CP-->>U: 204 No Content
+```
+
+> ctx 정리 후 컨테이너 삭제 (순서 중요)
+> MVP에서는 Home Store 데이터 삭제 안 함 (Purge 호출 X)
 
 ---
 
@@ -116,6 +232,21 @@ stateDiagram-v2
 
 > 프록시는 상태 확인 없이 바로 연결 시도. 컨테이너 미실행 시 502 에러. 사용자는 대시보드에서 Start API 호출 후 접속.
 
+### 상태 × 액션 매트릭스
+
+| 현재 상태 | Start | Stop | Delete | 프록시 접속 |
+|-----------|-------|------|--------|------------|
+| CREATED | → PROVISIONING | 409 | → DELETING | 502 |
+| PROVISIONING | 409 | 409 | 409 | 502 |
+| RUNNING | 409 | → STOPPING | 409 | ✓ 연결 |
+| STOPPING | 409 | 409 | 409 | 502 |
+| STOPPED | → PROVISIONING | 409 | → DELETING | 502 |
+| DELETING | 409 | 409 | 409 | 502 |
+| ERROR | → PROVISIONING | 409 | → DELETING | 502 |
+| DELETED | 404 | 404 | 404 | 404 |
+
+> 409 = INVALID_STATE, 404 = WORKSPACE_NOT_FOUND, 502 = UPSTREAM_UNAVAILABLE
+
 ---
 
 ## 4. 컴포넌트 구조
@@ -132,25 +263,31 @@ graph LR
         ProxyGW --> Auth
     end
 
-    subgraph Runner[Runner]
+    subgraph StorageProvider[Storage Provider]
         direction TB
-        LM[Lifecycle Manager]
-
-        subgraph Backends[Backends]
-            LocalDocker[local-docker]
-        end
-
-        subgraph HomeStoreBackends[HomeStore Backends]
+        subgraph StorageBackends[Backends]
             LocalDir[local-dir]
             ObjectStore[object-store<br/>추후]
         end
-
-        LM --> LocalDocker
-        LM --> LocalDir
     end
 
-    ControlPlane --> Runner
+    subgraph InstanceController[Instance Controller]
+        direction TB
+        LM[Lifecycle Manager]
+
+        subgraph InstanceBackends[Backends]
+            LocalDocker[local-docker]
+            K8s[k8s<br/>추후]
+        end
+
+        LM --> LocalDocker
+    end
+
+    ControlPlane --> StorageProvider
+    ControlPlane --> InstanceController
 ```
+
+> Instance Controller는 컨테이너 lifecycle만 담당, Storage Provider는 스토리지 프로비저닝 담당
 
 ---
 
@@ -176,3 +313,52 @@ graph LR
     WI -->|/home/coder| HS
     DB -->|메타데이터| WI
 ```
+
+---
+
+## 6. (추후) Reconciler 패턴 도입
+
+현재는 명령적(Imperative) 방식으로 동작하지만, GetStatus 메서드를 통해 Reconciler 패턴으로 확장 가능하도록 설계되어 있습니다.
+
+### 현재 방식 (명령적)
+
+```
+API 호출 → Storage Provider.Provision → Instance Controller.Start → 완료
+```
+
+- Control Plane이 순차적으로 호출
+- 중간 실패 시 부분 완료 상태 발생 가능
+- 롤백 로직이 복잡해질 수 있음
+
+### Reconciler 방식 (선언적)
+
+```mermaid
+graph LR
+    subgraph Reconciler[Reconciler Loop]
+        GS[GetStatus 호출]
+        CMP[현재 vs 원하는<br/>상태 비교]
+        ACT[조정 액션]
+    end
+
+    GS --> CMP
+    CMP -->|차이 있음| ACT
+    ACT --> GS
+    CMP -->|일치| GS
+```
+
+**Reconciler 도입 시:**
+1. 백그라운드 워커가 주기적으로 모든 워크스페이스 순회
+2. `GetStatus`로 현재 상태 조회 (Storage Provider, Instance Controller)
+3. DB의 desired_status와 비교
+4. 차이 있으면 기존 메서드(Provision/Start 등)로 조정
+5. 상태 불일치 자동 복구
+
+### 설계 원칙
+
+| 원칙 | 설명 |
+|------|------|
+| **멱등성** | 모든 조정 메서드는 여러 번 호출해도 안전 |
+| **상태 조회 분리** | GetStatus는 부수효과 없이 현재 상태만 반환 |
+| **점진적 확장** | MVP는 명령적, 추후 Reconciler로 감싸기 가능 |
+
+> MVP에서는 명령적 방식으로 충분하며, 프로덕션 규모에서 상태 불일치 문제가 발생하면 Reconciler 도입 검토

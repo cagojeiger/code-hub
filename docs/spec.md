@@ -35,8 +35,8 @@
 | 구성요소 | 책임 |
 |---------|------|
 | Control Plane | `/api/v1/*` API 제공, `/w/{workspace_id}/*` 프록시 (auth → authorize → proxy), Workspace 메타데이터 관리 |
-| Runner (Local Docker) | Workspace Instance lifecycle 관리, HomeStoreBackend 결과를 `/home/coder`에 마운트 |
-| HomeStoreBackend | local-dir: host dir 마운트 / object-store: restore/persist (클라우드용) |
+| Instance Controller (Local Docker) | Workspace Instance lifecycle 관리, Storage Provider 결과를 `/home/coder`에 마운트 |
+| Storage Provider | local-dir: host dir 마운트 / object-store: restore/persist (클라우드용) |
 
 ---
 
@@ -86,8 +86,8 @@
 3. DB에 메타데이터 저장:
    - status = CREATED
    - image_ref = config.workspace.default_image
-   - backend = local-docker
-   - home_store_backend = config.home_store.backend
+   - instance_backend = local-docker
+   - storage_backend = config.home_store.backend
    - home_ctx = NULL
 4. 응답: `{ id, name, status, url }`
 
@@ -97,18 +97,21 @@
 
 ### StartWorkspace 플로우
 
-> CREATED 또는 STOPPED 상태에서만 호출 가능
+> CREATED, STOPPED, ERROR 상태에서만 호출 가능
 
 1. DB 상태를 PROVISIONING으로 원자 변경
-   - `WHERE id=? AND status IN ('CREATED', 'STOPPED')`
+   - `WHERE id=? AND status IN ('CREATED', 'STOPPED', 'ERROR')`
    - 실패 시 409 INVALID_STATE
-2. HomeStoreBackend.PrepareHome 호출
+2. Storage Provider.Provision(home_store_key, DB.home_ctx) 호출
+   - 기존 ctx가 있으면 내부에서 자동 정리 후 새 ctx 생성
    - 반환: `{ home_mount, home_ctx }`
 3. DB에 `home_ctx` 저장
-4. Runner.StartWorkspace 호출 (home_mount, image_ref)
-5. HealthCheck 폴링 (config 기반: 간격/최대 대기시간)
-6. healthy → 상태를 RUNNING으로 변경
+4. Instance Controller.StartWorkspace 호출 (home_mount, image_ref)
+5. GetStatus 폴링 (config 기반: 간격/최대 대기시간)
+6. healthy=true → 상태를 RUNNING으로 변경
 7. unhealthy(타임아웃) → 상태를 ERROR로 변경
+
+> Provision이 existing_ctx를 받아 자동 정리하므로 리소스 누수 방지
 
 ### StopWorkspace 플로우
 
@@ -117,15 +120,15 @@
 1. DB 상태를 STOPPING으로 원자 변경
    - `WHERE id=? AND status='RUNNING'`
    - 실패 시 409 INVALID_STATE
-2. Runner.StopWorkspace 호출
-3. home_store_backend가 object-store인 경우:
-   - HomeStoreBackend.PersistHome(home_ctx) 호출
-   - HomeStoreBackend.CleanupHome(home_ctx) 호출
-4. local-dir인 경우 3번 스킵
-5. 성공 → 상태를 STOPPED로 변경, home_ctx = NULL
+2. Instance Controller.StopWorkspace 호출
+3. Storage Provider.Deprovision(home_ctx) 호출
+   - `local-dir`: no-op
+   - `object-store`: 내부적으로 persist + cleanup 처리
+4. DB home_ctx = NULL
+5. 성공 → 상태를 STOPPED로 변경
 6. 실패 → 상태를 ERROR로 변경
 
-> local-dir 백엔드는 bind mount라서 persist/cleanup 불필요
+> 백엔드 분기 없이 무조건 Deprovision 호출. 백엔드 내부에서 적절히 처리.
 
 ### DeleteWorkspace 플로우
 
@@ -134,47 +137,112 @@
 1. DB 상태를 DELETING으로 원자 변경
    - `WHERE id=? AND status IN ('CREATED', 'STOPPED', 'ERROR')`
    - 실패 시 409 INVALID_STATE
-2. Runner.DeleteWorkspace 호출 (컨테이너/리소스 정리)
-3. 성공 → Soft delete (deleted_at 기록, status = DELETED)
-4. 실패 → 상태를 ERROR로 변경
+2. home_ctx가 있으면 Storage Provider.Deprovision(home_ctx) 호출
+   - DB home_ctx = NULL
+3. Instance Controller.DeleteWorkspace 호출 (컨테이너/리소스 정리)
+4. 성공 → Soft delete (deleted_at 기록, status = DELETED)
+5. 실패 → 상태를 ERROR로 변경
 
-> Home Store 데이터 보관 정책(리텐션)은 추후 정의
+> ctx 정리 후 컨테이너 삭제 (순서 중요)
 
-### Runner 인터페이스
+> MVP에서는 Home Store 데이터 삭제 안 함 (Purge 호출 X). 리텐션 정책은 추후 정의.
+
+> DELETED 상태의 워크스페이스는 존재하지 않는 것으로 처리 (404 반환)
+
+### Instance Controller 인터페이스
 
 ```
 StartWorkspace(workspace_id, image_ref, home_mount) -> error?
 StopWorkspace(workspace_id) -> error?
 DeleteWorkspace(workspace_id) -> error?
 ResolveUpstream(workspace_id) -> { host, port } | error
-HealthCheck(workspace_id) -> { healthy: bool } | error
+GetStatus(workspace_id) -> { exists, running, healthy, port? } | error
 ```
 
-> Runner는 컨테이너 lifecycle만 담당. 상태는 Control Plane이 DB에서 관리.
+#### GetStatus
+컨테이너의 현재 상태를 조회합니다.
 
-### Runner 구현 규칙 (Local Docker)
+**반환값:**
+- `exists`: 컨테이너 존재 여부
+- `running`: 실행 중 여부
+- `healthy`: 헬스체크 통과 여부
+- `port`: 매핑된 포트 (실행 중일 때만)
+
+**용도:**
+- 기존 HealthCheck를 포함한 확장된 상태 조회
+- Reconciler 패턴 도입 시 상태 비교에 사용
+- ResolveUpstream과 일부 중복되지만 용도가 다름 (프록시 연결용 vs 전체 상태 조회용)
+
+> Instance Controller는 컨테이너 lifecycle만 담당. 상태는 Control Plane이 DB에서 관리.
+
+### Instance Controller 구현 규칙 (Local Docker)
 
 - 컨테이너 이름: `codehub-ws-{workspace_id}`
-- StartWorkspace는 멱등적: 컨테이너 있으면 start, 없으면 create+start
+- **멱등성 규칙:**
+  - StartWorkspace: 컨테이너 있으면 start, 없으면 create+start
+  - StopWorkspace: 컨테이너 없거나 이미 정지 상태면 성공 반환
+  - DeleteWorkspace: 컨테이너 없으면 성공 반환 (no-op)
 - ResolveUpstream: docker inspect로 포트 매핑 조회 (DB 의존 X)
 - 보안: 컨테이너 포트는 `127.0.0.1` 바인딩 (외부 노출 금지)
 
-### HomeStoreBackend 인터페이스
+### Storage Provider 인터페이스
 
 ```
-PrepareHome(user_id, workspace_id, home_store_key, restore_ref?) -> {
-  home_mount,
-  home_ctx
-}
-PersistHome(user_id, workspace_id, home_store_key, home_ctx) -> { persist_op_id? }
-GetPersistStatus(persist_op_id) -> { state }
-CleanupHome(home_ctx)
-PurgeHome(home_store_key)
+Provision(home_store_key, existing_ctx?) -> { home_mount, home_ctx }
+Deprovision(home_ctx) -> void
+Purge(home_store_key) -> void
+GetStatus(home_store_key) -> { provisioned, home_ctx?, home_mount? }
 ```
 
-> `home_ctx`: opaque context (JSON/string). object-store에서 staging dir, snapshot ref 등 저장.
+#### Provision
+컨테이너가 사용할 home_mount를 준비합니다.
 
-> local-dir에서는 home_ctx를 단순 경로 또는 NULL로 사용 (Stop에서 스킵하므로).
+**동작:**
+1. existing_ctx가 있으면 먼저 정리 (내부적으로 Deprovision 로직 실행)
+2. 새 home_mount 준비
+3. 새 home_ctx 반환
+
+**백엔드별 구현:**
+- `local-dir`: base_dir + key 경로 반환, ctx는 경로 문자열
+- `object-store`: 스냅샷 복원 → staging dir 생성 → ctx에 staging 정보 저장
+
+#### Deprovision
+home_ctx 리소스를 해제합니다.
+
+**동작:**
+- 백엔드 내부에서 필요한 정리 수행
+- 멱등적: ctx가 NULL이거나 이미 정리됐으면 성공 반환
+
+**백엔드별 구현:**
+- `local-dir`: no-op (bind mount는 컨테이너 정지 시 자동 해제)
+- `object-store`: staging → object store 영속화 → staging 삭제
+
+#### Purge
+home_store_key에 해당하는 모든 데이터를 완전 삭제합니다.
+
+**백엔드별 구현:**
+- `local-dir`: 디렉토리 삭제
+- `object-store`: 오브젝트 삭제
+
+> MVP에서는 Purge 호출 안 함 (데이터 보존)
+
+#### GetStatus
+현재 프로비저닝 상태를 조회합니다.
+
+**반환값:**
+- `provisioned`: 프로비저닝 완료 여부
+- `home_ctx`: 현재 ctx (없으면 null)
+- `home_mount`: 마운트 경로 (없으면 null)
+
+**백엔드별 구현:**
+- `local-dir`: 디렉토리 존재 여부 확인
+- `object-store`: staging dir 존재 여부 + 스냅샷 존재 여부 확인
+
+**용도:**
+- Reconciler 패턴 도입 시 상태 비교에 사용
+- MVP에서는 디버깅/모니터링 용도
+
+> `home_ctx`: opaque context (JSON/string). Provision이 생성하고 Deprovision이 정리.
 
 ---
 
@@ -287,8 +355,8 @@ PurgeHome(home_store_key)
 | memo | 자유 메모 |
 | status | CREATED/PROVISIONING/RUNNING/STOPPING/STOPPED/DELETING/ERROR/DELETED |
 | image_ref | 이미지 참조 |
-| backend | =local-docker |
-| home_store_backend | =local-dir |
+| instance_backend | =local-docker |
+| storage_backend | =local-dir |
 | home_store_key | Home Store 키 |
 | home_ctx | opaque context (nullable, JSON/string) |
 | updated_at | 수정 시각 |
@@ -335,4 +403,4 @@ home_store:
 
 - `last_access_at`, `expires_at` 컬럼/마이그레이션 준비
 - `/w/{workspace_id}` 처리 파이프라인에 `touch` 훅 넣기 쉬운 구조 유지
-- Reaper(스케줄러) 추가 시 `Runner.Stop`/DB 업데이트가 멱등적으로 동작
+- Reaper(스케줄러) 추가 시 `Instance Controller.Stop`/DB 업데이트가 멱등적으로 동작
