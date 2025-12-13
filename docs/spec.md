@@ -1,12 +1,12 @@
 # code-hub Spec (Local MVP)
 
-> 용어 정의는 [glossary.md](./glossary.md) 참조
+> 프로젝트 소개는 [README.md](../README.md), 용어 정의는 [glossary.md](./glossary.md) 참조
 
 ---
 
 ## 1. 개요
 
-로컬에서 **Workspace(메타데이터)** 를 생성/관리하고, 필요 시 **Workspace Instance(code-server)** 를 띄워 `/w/{workspace_id}` 프록시로 접속하는 워크스페이스 허브.
+클라우드 개발 환경(CDE) 플랫폼의 Local MVP 스펙.
 
 ---
 
@@ -49,6 +49,12 @@
 | API | `/api/v1/*` |
 | Workspace 접속 | `/w/{workspace_id}/*` |
 
+### Trailing Slash 규칙
+
+- `/w/{workspace_id}` 요청은 **308 Redirect → `/w/{workspace_id}/`** 로 정규화
+- 프록시는 `/w/{workspace_id}/` prefix를 strip하고 upstream `/`에 전달
+- code-server sub-path reverse proxy 패턴 준수
+
 ### ID 규칙
 
 - `workspace_id`: ULID/UUID (추측 가능한 증가형 금지)
@@ -66,35 +72,109 @@
 
 1. 세션 확인
 2. owner 인가 (불일치 시 403)
-3. STOPPED면 StartWorkspace
-4. ResolveUpstream 후 프록시 연결
+3. ResolveUpstream 후 프록시 연결
+   - 연결 실패 시 502 에러
 
 > WebSocket 업그레이드 필수 (code-server)
+
+> 상태 확인은 프록시에서 하지 않음. 사용자는 대시보드(API)에서 상태 확인.
+
+### Workspace 생성 플로우
+
+1. workspace_id 생성 (ULID/UUID)
+2. home_store_key 계산: `users/{user_id}/workspaces/{workspace_id}/home`
+3. DB에 메타데이터 저장:
+   - status = CREATED
+   - image_ref = config.workspace.default_image
+   - backend = local-docker
+   - home_store_backend = config.home_store.backend
+   - home_ctx = NULL
+4. 응답: `{ id, name, status, url }`
+
+> url은 `{public_base_url}/w/{id}/`로 계산 (trailing slash 포함, DB 저장 X)
+
+> 컨테이너는 StartWorkspace에서 생성
+
+### StartWorkspace 플로우
+
+> CREATED 또는 STOPPED 상태에서만 호출 가능
+
+1. DB 상태를 PROVISIONING으로 원자 변경
+   - `WHERE id=? AND status IN ('CREATED', 'STOPPED')`
+   - 실패 시 409 INVALID_STATE
+2. HomeStoreBackend.PrepareHome 호출
+   - 반환: `{ home_mount, home_ctx }`
+3. DB에 `home_ctx` 저장
+4. Runner.StartWorkspace 호출 (home_mount, image_ref)
+5. HealthCheck 폴링 (config 기반: 간격/최대 대기시간)
+6. healthy → 상태를 RUNNING으로 변경
+7. unhealthy(타임아웃) → 상태를 ERROR로 변경
+
+### StopWorkspace 플로우
+
+> RUNNING 상태에서만 호출 가능
+
+1. DB 상태를 STOPPING으로 원자 변경
+   - `WHERE id=? AND status='RUNNING'`
+   - 실패 시 409 INVALID_STATE
+2. Runner.StopWorkspace 호출
+3. home_store_backend가 object-store인 경우:
+   - HomeStoreBackend.PersistHome(home_ctx) 호출
+   - HomeStoreBackend.CleanupHome(home_ctx) 호출
+4. local-dir인 경우 3번 스킵
+5. 성공 → 상태를 STOPPED로 변경, home_ctx = NULL
+6. 실패 → 상태를 ERROR로 변경
+
+> local-dir 백엔드는 bind mount라서 persist/cleanup 불필요
+
+### DeleteWorkspace 플로우
+
+> CREATED, STOPPED, ERROR 상태에서만 호출 가능
+
+1. DB 상태를 DELETING으로 원자 변경
+   - `WHERE id=? AND status IN ('CREATED', 'STOPPED', 'ERROR')`
+   - 실패 시 409 INVALID_STATE
+2. Runner.DeleteWorkspace 호출 (컨테이너/리소스 정리)
+3. 성공 → Soft delete (deleted_at 기록, status = DELETED)
+4. 실패 → 상태를 ERROR로 변경
+
+> Home Store 데이터 보관 정책(리텐션)은 추후 정의
 
 ### Runner 인터페이스
 
 ```
-CreateWorkspace(owner_user_id, workspace_id, image_ref, spec)
-StartWorkspace(workspace_id)
-StopWorkspace(workspace_id) -> { persist_op_id? }
-DeleteWorkspace(workspace_id)
-GetStatus(workspace_id) -> { status, persist? }
-ResolveUpstream(workspace_id) -> { host, port }
+StartWorkspace(workspace_id, image_ref, home_mount) -> error?
+StopWorkspace(workspace_id) -> error?
+DeleteWorkspace(workspace_id) -> error?
+ResolveUpstream(workspace_id) -> { host, port } | error
+HealthCheck(workspace_id) -> { healthy: bool } | error
 ```
+
+> Runner는 컨테이너 lifecycle만 담당. 상태는 Control Plane이 DB에서 관리.
+
+### Runner 구현 규칙 (Local Docker)
+
+- 컨테이너 이름: `codehub-ws-{workspace_id}`
+- StartWorkspace는 멱등적: 컨테이너 있으면 start, 없으면 create+start
+- ResolveUpstream: docker inspect로 포트 매핑 조회 (DB 의존 X)
+- 보안: 컨테이너 포트는 `127.0.0.1` 바인딩 (외부 노출 금지)
 
 ### HomeStoreBackend 인터페이스
 
 ```
 PrepareHome(user_id, workspace_id, home_store_key, restore_ref?) -> {
   home_mount,
-  home_ref,
-  pod_template_patch?
+  home_ctx
 }
-PersistHome(user_id, workspace_id, home_store_key, home_ref) -> { persist_op_id? }
+PersistHome(user_id, workspace_id, home_store_key, home_ctx) -> { persist_op_id? }
 GetPersistStatus(persist_op_id) -> { state }
-CleanupHome(home_ref)
+CleanupHome(home_ctx)
 PurgeHome(home_store_key)
 ```
+
+> `home_ctx`: opaque context (JSON/string). object-store에서 staging dir, snapshot ref 등 저장.
+
+> local-dir에서는 home_ctx를 단순 경로 또는 NULL로 사용 (Stop에서 스킵하므로).
 
 ---
 
@@ -120,8 +200,55 @@ PurgeHome(home_store_key)
 | PATCH | `/api/v1/workspaces/{id}` | 수정 (`{ name?, description?, memo? }`) |
 | POST | `/api/v1/workspaces/{id}:start` | 시작 |
 | POST | `/api/v1/workspaces/{id}:stop` | 정지 |
-| DELETE | `/api/v1/workspaces/{id}` | 삭제 |
-| GET | `/api/v1/workspaces/{id}/authorize` | 인가 확인 (200 or 403) |
+| DELETE | `/api/v1/workspaces/{id}` | 삭제 (CREATED/STOPPED/ERROR 상태에서만 가능) |
+
+### 성공 응답 형식
+
+**Workspace 조회/생성/수정:**
+```json
+{
+  "id": "01HXYZ...",
+  "name": "my-workspace",
+  "description": "...",
+  "memo": "...",
+  "status": "CREATED",
+  "url": "http://localhost:8080/w/01HXYZ.../",
+  "created_at": "2024-01-01T00:00:00Z",
+  "updated_at": "2024-01-01T00:00:00Z"
+}
+```
+
+> url은 trailing slash 포함: `{public_base_url}/w/{id}/`
+
+**start/stop:**
+```json
+{
+  "id": "01HXYZ...",
+  "status": "PROVISIONING"
+}
+```
+
+> start → PROVISIONING, stop → STOPPING 상태 반환. 최종 상태(RUNNING/STOPPED)는 폴링 또는 상세 조회로 확인.
+
+### 에러 응답 형식
+
+```json
+{
+  "error": {
+    "code": "WORKSPACE_NOT_FOUND",
+    "message": "Workspace not found"
+  }
+}
+```
+
+| HTTP | 코드 | 설명 |
+|------|------|------|
+| 400 | `INVALID_REQUEST` | 잘못된 요청 (파라미터 오류 등) |
+| 401 | `UNAUTHORIZED` | 인증 필요 |
+| 403 | `FORBIDDEN` | 권한 없음 |
+| 404 | `WORKSPACE_NOT_FOUND` | 워크스페이스 없음 |
+| 409 | `INVALID_STATE` | 현재 상태에서 불가능한 작업 |
+| 502 | `UPSTREAM_UNAVAILABLE` | 프록시 연결 실패 |
 
 ---
 
@@ -132,25 +259,40 @@ PurgeHome(home_store_key)
 | 컬럼 | 설명 |
 |-----|------|
 | id | PK |
-| provider | =local |
-| subject | =username |
+| username | 로그인 ID (unique) |
+| password_hash | bcrypt/argon2id 해시 |
+| created_at | 생성 시각 |
+
+### sessions
+
+| 컬럼 | 설명 |
+|-----|------|
+| id | PK (UUID) |
+| user_id | FK(users.id) |
+| created_at | 생성 시각 |
+| expires_at | 만료 시각 |
+| revoked_at | 로그아웃/폐기 시각 (nullable) |
+
+> 세션 쿠키 값은 `sessions.id`를 담는다.
 
 ### workspaces
 
 | 컬럼 | 설명 |
 |-----|------|
 | id | PK |
-| owner_user_id | 소유자 |
+| owner_user_id | FK(users.id) |
+| created_at | 생성 시각 |
 | name | 이름 |
 | description | 짧은 설명 |
 | memo | 자유 메모 |
-| status | RUNNING/STOPPED/ERROR/DELETED |
+| status | CREATED/PROVISIONING/RUNNING/STOPPING/STOPPED/DELETING/ERROR/DELETED |
 | image_ref | 이미지 참조 |
 | backend | =local-docker |
 | home_store_backend | =local-dir |
 | home_store_key | Home Store 키 |
+| home_ctx | opaque context (nullable, JSON/string) |
 | updated_at | 수정 시각 |
-| deleted_at | soft delete 시각 |
+| deleted_at | soft delete 시각 (nullable) |
 
 ---
 
@@ -165,18 +307,27 @@ auth:
   mode: local
   session:
     cookie_name: "session"
+    ttl: "24h"
+
+workspace:
+  default_image: "codercom/code-server:latest"
+  healthcheck:
+    interval: "2s"
+    timeout: "60s"
 
 home_store:
   backend: local-dir
   base_dir: "/data/home"
 ```
 
+> CreateWorkspace 시 `workspace.default_image`, `home_store.backend` 사용.
+
 ---
 
 ## 9. MVP 완료 기준
 
-- [ ] 내 계정으로 생성 → `/w/{workspace_id}` 접속 성공
-- [ ] 다른 계정으로 `/w/{workspace_id}` 직접 접근 → 403
+- [ ] 내 계정으로 생성 → `/w/{workspace_id}/` 접속 성공
+- [ ] 다른 계정으로 `/w/{workspace_id}/` 접근 → 403
 - [ ] STOP 후 START → Home 유지 (Home Store 기준)
 - [ ] WebSocket 포함 정상 동작 (터미널/에디터)
 

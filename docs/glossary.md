@@ -6,8 +6,11 @@ code-hub 프로젝트에서 사용하는 핵심 용어 정의입니다.
 
 ## C
 
+### CAS (Compare-And-Swap)
+DB 상태 변경 시 원자적 조건부 업데이트 패턴. `WHERE status IN (...)` 조건으로 동시성 제어.
+
 ### Control Plane
-API(`/api/v1/*`) 및 워크스페이스 프록시(`/w/{workspace_id}/*`)를 제공하는 서버. Workspace 메타데이터 관리를 담당합니다.
+API(`/api/v1/*`) 및 워크스페이스 프록시(`/w/{workspace_id}/*`)를 제공하는 서버. Workspace 메타데이터/상태 관리, 세션 관리를 담당합니다.
 
 ---
 
@@ -22,6 +25,9 @@ Home Store 내 논리 경로 키. DB에는 절대경로가 아닌 논리 키만 
 - 로컬: `base_dir + home_store_key`를 bind mount
 - 클라우드: `{home_store_key}/home.tar.zst` 같은 오브젝트 키로 사용
 
+### home_ctx
+HomeStoreBackend가 반환하는 opaque context (JSON/string). object-store에서 staging dir, snapshot ref 등을 저장. local-dir에서는 NULL 또는 경로.
+
 ### HomeStoreBackend
 홈 스토어 구현체 인터페이스. `local-dir`(로컬) 또는 `object-store`(클라우드) 백엔드를 제공합니다.
 
@@ -30,14 +36,34 @@ Home Store 내 논리 경로 키. DB에는 절대경로가 아닌 논리 키만 
 ## R
 
 ### Runner
-Workspace Instance 생명주기(lifecycle)를 관리하는 컴포넌트. 로컬에서는 Docker를 사용하고, HomeStoreBackend 결과를 `/home/coder`에 마운트합니다.
+Workspace Instance 생명주기(lifecycle)를 관리하는 컴포넌트.
+- 컨테이너 이름: `codehub-ws-{workspace_id}`
+- 멱등적 동작: 컨테이너 있으면 start, 없으면 create+start
+- DB에 의존하지 않고 docker inspect로 정보 조회
+
+---
+
+## S
+
+### Session
+사용자 인증 상태를 유지하는 DB 레코드. 쿠키에 session.id를 저장하고, 만료/폐기 시각으로 유효성 관리.
 
 ---
 
 ## W
 
 ### Workspace
-메타데이터 단위(DB 레코드). 이름, 설명, 메모, Home Store Key 등의 정보를 포함합니다.
+메타데이터 단위(DB 레코드). 이름, 설명, 메모, Home Store Key, 상태 등의 정보를 포함합니다.
 
 ### Workspace Instance
 실행 중인 code-server 인스턴스. 로컬 환경에서는 Docker 컨테이너, 클라우드 환경에서는 K8s Pod으로 구현됩니다. Workspace 1개당 1개의 Instance가 매핑됩니다.
+
+### Workspace 상태
+- **CREATED**: 생성됨, 아직 시작 안 함
+- **PROVISIONING**: 컨테이너 시작 중, HealthCheck 대기
+- **RUNNING**: 실행 중, 접속 가능
+- **STOPPING**: 정지 중
+- **STOPPED**: 정지됨
+- **DELETING**: 삭제 중
+- **ERROR**: 오류 발생 (재시도 또는 삭제 가능)
+- **DELETED**: 삭제됨 (soft delete)

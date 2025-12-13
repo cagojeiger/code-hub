@@ -12,7 +12,8 @@ graph TB
 
     subgraph ControlPlane[Control Plane]
         API["/api/v1/*"]
-        Proxy["/w/{workspace_id}"]
+        Proxy["/w/{workspace_id}/"]
+        DB[(Database)]
     end
 
     subgraph Runner[Runner - Local Docker]
@@ -27,6 +28,8 @@ graph TB
 
     User --> API
     User --> Proxy
+    API --> DB
+    Proxy --> DB
     Proxy --> Docker
     API --> Lifecycle
     Lifecycle --> Docker
@@ -39,33 +42,44 @@ graph TB
 
 ## 2. 요청 흐름
 
-### Workspace 접속 (`/w/{workspace_id}`)
+### Workspace 접속 (`/w/{workspace_id}/`)
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant CP as Control Plane
     participant R as Runner
-    participant HS as HomeStore
     participant D as Docker
 
-    U->>CP: GET /w/{workspace_id}
-    CP->>CP: 세션 확인
-    CP->>CP: owner 인가 확인
-
-    alt STOPPED 상태
-        CP->>R: StartWorkspace
-        R->>HS: PrepareHome
-        HS-->>R: home_mount
-        R->>D: 컨테이너 생성
-        D-->>R: container_id
-        R-->>CP: RUNNING
-    end
-
+    U->>CP: GET /w/{workspace_id}/
+    CP->>CP: 세션 확인 (401 if fail)
+    CP->>CP: owner 인가 확인 (403 if fail)
     CP->>R: ResolveUpstream
     R-->>CP: {host, port}
-    CP->>D: 프록시 연결 (WebSocket 포함)
-    D-->>U: code-server 응답
+
+    alt upstream 연결 성공
+        CP->>D: 프록시 연결 (WebSocket 포함)
+        D-->>U: code-server 응답
+    end
+
+    alt upstream 연결 실패
+        CP-->>U: 502 UPSTREAM_UNAVAILABLE
+    end
+```
+
+> 프록시에서 상태 확인 안 함. 사용자는 대시보드(API)에서 start 후 접속.
+
+### Trailing Slash 규칙
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant CP as Control Plane
+
+    U->>CP: GET /w/{workspace_id}
+    CP-->>U: 308 Redirect
+    U->>CP: GET /w/{workspace_id}/
+    CP->>CP: prefix strip → upstream /
 ```
 
 ---
@@ -74,20 +88,33 @@ sequenceDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> STOPPED: CreateWorkspace
+    [*] --> CREATED: CreateWorkspace
 
-    STOPPED --> RUNNING: start
-    RUNNING --> STOPPED: stop
+    CREATED --> PROVISIONING: start
+    STOPPED --> PROVISIONING: start
 
-    RUNNING --> ERROR: 오류 발생
-    ERROR --> STOPPED: stop
-    ERROR --> RUNNING: start (재시도)
+    PROVISIONING --> RUNNING: healthy
+    PROVISIONING --> ERROR: timeout/fail
 
-    STOPPED --> DELETED: delete
-    ERROR --> DELETED: delete
+    RUNNING --> STOPPING: stop
+    RUNNING --> ERROR: 인프라 오류
+
+    STOPPING --> STOPPED: success
+    STOPPING --> ERROR: fail
+
+    CREATED --> DELETING: delete
+    STOPPED --> DELETING: delete
+    ERROR --> DELETING: delete
+
+    DELETING --> DELETED: success
+    DELETING --> ERROR: fail
+
+    ERROR --> PROVISIONING: start (재시도)
 
     DELETED --> [*]
 ```
+
+> 프록시는 상태 확인 없이 바로 연결 시도. 컨테이너 미실행 시 502 에러. 사용자는 대시보드에서 Start API 호출 후 접속.
 
 ---
 
