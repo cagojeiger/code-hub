@@ -261,12 +261,12 @@ stateDiagram-v2
 graph LR
     subgraph ControlPlane[Control Plane]
         direction TB
-        API[API Server]
         Auth[Auth Middleware]
+        API[API Server]
         ProxyGW[Proxy Gateway]
 
-        API --> Auth
-        ProxyGW --> Auth
+        Auth --> API
+        Auth --> ProxyGW
     end
 
     subgraph StorageProvider[Storage Provider]
@@ -305,6 +305,10 @@ graph LR
         U[User]
     end
 
+    subgraph ControlPlane[Control Plane]
+        CP[API / Proxy]
+    end
+
     subgraph Storage[저장소]
         DB[(Database)]
         HS[Home Store]
@@ -314,11 +318,14 @@ graph LR
         WI[Workspace Instance<br/>code-server]
     end
 
-    U -->|API 호출| DB
-    U -->|/w/ 접속| WI
-    WI -->|/home/coder| HS
-    DB -->|메타데이터| WI
+    U -->|API 호출| CP
+    U -->|/w/ 접속| CP
+    CP <-->|메타데이터| DB
+    CP -->|프록시| WI
+    WI <-->|/home/coder| HS
 ```
+
+> User는 항상 Control Plane을 통해 접근. API 호출 시 DB 조회/수정, 프록시 접속 시 Workspace Instance로 연결.
 
 ---
 
