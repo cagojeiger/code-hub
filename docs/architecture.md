@@ -111,7 +111,7 @@ sequenceDiagram
     SP-->>CP: {home_mount, home_ctx}
     CP->>CP: DB에 home_ctx 저장
 
-    CP->>IC: StartWorkspace(home_mount, image_ref)
+    CP->>IC: StartWorkspace(workspace_id, image_ref, home_mount)
     IC->>D: docker create + start
     D-->>IC: container started
 
