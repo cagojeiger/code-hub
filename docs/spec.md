@@ -298,6 +298,13 @@ home_store_key에 해당하는 모든 데이터를 완전 삭제합니다.
 
 > start → PROVISIONING, stop → STOPPING 상태 반환. 최종 상태(RUNNING/STOPPED)는 폴링 또는 상세 조회로 확인.
 
+**delete:**
+```
+204 No Content
+```
+
+> 삭제 완료 시 빈 응답. 이미 정지된 상태에서만 삭제 가능하므로 동기적으로 완료.
+
 ### 에러 응답 형식
 
 ```json
@@ -380,8 +387,10 @@ auth:
 workspace:
   default_image: "codercom/code-server:latest"
   healthcheck:
-    interval: "2s"
-    timeout: "60s"
+    type: http           # http 또는 tcp
+    path: /healthz       # code-server 기본 헬스체크 엔드포인트
+    interval: "2s"       # 폴링 간격
+    timeout: "60s"       # 최대 대기시간 (초과 시 ERROR)
 
 home_store:
   backend: local-dir

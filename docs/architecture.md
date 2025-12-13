@@ -98,6 +98,9 @@ sequenceDiagram
     U->>CP: POST /api/v1/workspaces/{id}:start
     CP->>CP: 상태 확인 (CREATED/STOPPED/ERROR)
     CP->>CP: DB 상태 → PROVISIONING
+    CP-->>U: {id, status: "PROVISIONING"}
+
+    Note over CP: 이후 백그라운드에서 진행
 
     CP->>SP: Provision(home_store_key, existing_ctx)
 
@@ -112,17 +115,17 @@ sequenceDiagram
     IC->>D: docker create + start
     D-->>IC: container started
 
-    loop HealthCheck 폴링
-        CP->>IC: HealthCheck
+    loop GetStatus 폴링
+        CP->>IC: GetStatus
         IC->>D: health probe
         D-->>IC: status
-        IC-->>CP: {healthy: bool}
+        IC-->>CP: {exists, running, healthy, port?}
     end
 
     CP->>CP: DB 상태 → RUNNING
-    CP-->>U: {id, status: "RUNNING"}
 ```
 
+> API는 PROVISIONING 상태를 즉시 반환. 클라이언트는 폴링으로 최종 상태 확인.
 > Control Plane이 Storage Provider.Provision 호출 → home_mount 획득 → Instance Controller에 전달
 > existing_ctx가 있으면 Provision 내부에서 자동 정리 (리소스 누수 방지)
 
@@ -139,6 +142,9 @@ sequenceDiagram
     U->>CP: POST /api/v1/workspaces/{id}:stop
     CP->>CP: 상태 확인 (RUNNING만 가능)
     CP->>CP: DB 상태 → STOPPING
+    CP-->>U: {id, status: "STOPPING"}
+
+    Note over CP: 이후 백그라운드에서 진행
 
     CP->>IC: StopWorkspace(workspace_id)
     IC->>D: docker stop
@@ -155,9 +161,9 @@ sequenceDiagram
 
     CP->>CP: DB home_ctx = NULL
     CP->>CP: DB 상태 → STOPPED
-    CP-->>U: {id, status: "STOPPED"}
 ```
 
+> API는 STOPPING 상태를 즉시 반환. 클라이언트는 폴링으로 최종 상태 확인.
 > 백엔드 분기 없이 항상 Deprovision 호출. 백엔드 내부에서 적절히 처리.
 
 ### DeleteWorkspace (`DELETE /api/v1/workspaces/{id}`)
