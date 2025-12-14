@@ -115,10 +115,10 @@
 
 ### StopWorkspace 플로우
 
-> RUNNING 상태에서만 호출 가능
+> RUNNING 또는 ERROR 상태에서 호출 가능 (ERROR에서 재시도 허용)
 
 1. DB 상태를 STOPPING으로 원자 변경
-   - `WHERE id=? AND status='RUNNING'`
+   - `WHERE id=? AND status IN ('RUNNING', 'ERROR')`
    - 실패 시 409 INVALID_STATE
 2. Instance Controller.StopWorkspace 호출
 3. Storage Provider.Deprovision(home_ctx) 호출
@@ -137,13 +137,13 @@
 1. DB 상태를 DELETING으로 원자 변경
    - `WHERE id=? AND status IN ('CREATED', 'STOPPED', 'ERROR')`
    - 실패 시 409 INVALID_STATE
-2. home_ctx가 있으면 Storage Provider.Deprovision(home_ctx) 호출
+2. Instance Controller.DeleteWorkspace 호출 (컨테이너 삭제)
+3. home_ctx가 있으면 Storage Provider.Deprovision(home_ctx) 호출
    - DB home_ctx = NULL
-3. Instance Controller.DeleteWorkspace 호출 (컨테이너/리소스 정리)
 4. 성공 → Soft delete (deleted_at 기록, status = DELETED)
 5. 실패 → 상태를 ERROR로 변경
 
-> ctx 정리 후 컨테이너 삭제 (순서 중요)
+> 컨테이너 삭제 후 스토리지 해제 (생성의 역순)
 
 > MVP에서는 Home Store 데이터 삭제 안 함 (Purge 호출 X). 리텐션 정책은 추후 정의.
 
@@ -184,6 +184,35 @@ GetStatus(workspace_id) -> { exists, running, healthy, port? } | error
   - DeleteWorkspace: 컨테이너 없으면 성공 반환 (no-op)
 - ResolveUpstream: docker inspect로 포트 매핑 조회 (DB 의존 X)
 - 보안: 컨테이너 포트는 `127.0.0.1` 바인딩 (외부 노출 금지)
+
+### MVP 제약사항 (local-dir)
+
+MVP는 `local-dir` 백엔드만 지원하며, 다음 특성에 의존합니다:
+
+- **결정적 경로**: `home_mount = base_dir + home_store_key`로 항상 동일
+- **Provision 멱등성**: 같은 key에 대해 항상 같은 경로 반환
+- **StartWorkspace 단순화**: 경로가 바뀌지 않으므로 기존 컨테이너 재사용 가능
+
+#### K8s 패턴과의 비교
+
+| 원칙 | K8s | local-dir (MVP) | object-store (추후) |
+|------|-----|-----------------|---------------------|
+| **멱등성 키** | PVC UID 기반 결정적 명명 | ✅ `home_store_key` 기반 결정적 경로 | ✅ 동일 적용 |
+| **불변성** | Pod 스펙 변경 시 재생성 | 불필요 (경로 불변) | **필요** (config-aware recreate) |
+
+**멱등성 키 (Deterministic Naming)**
+- K8s: 볼륨 이름에 요청 ID 포함 → 재시도 시 기존 것 반환
+- local-dir: `workspace_id` 기반 경로 계산 → 항상 같은 경로 반환
+- 효과: Orphan Resource 방지
+
+**불변성 (Immutability)**
+- K8s: Pod 스펙 수정 불가, 변경 시 삭제 후 재생성
+- local-dir: 경로가 바뀌지 않으므로 불필요
+- object-store: staging 경로가 바뀔 수 있으므로 필요
+
+> ⚠️ `object-store` 도입 시:
+> - StartWorkspace를 **config-aware** 방식으로 업그레이드 (설정 불일치 시 컨테이너 re-create)
+> - **GC 메커니즘** 추가 (DB에 없는 staging 주기적 정리)
 
 ### Storage Provider 인터페이스
 
@@ -243,6 +272,53 @@ home_store_key에 해당하는 모든 데이터를 완전 삭제합니다.
 - MVP에서는 디버깅/모니터링 용도
 
 > `home_ctx`: opaque context (JSON/string). Provision이 생성하고 Deprovision이 정리.
+
+### Startup Recovery (크래시 복구)
+
+서버 시작 시 전이 상태에서 stuck된 워크스페이스를 자동 복구합니다.
+
+#### 동작 조건
+
+- 서버 프로세스 시작 시 자동 실행 (API 요청 수락 전)
+- 대상: 모든 전이 상태 (PROVISIONING, STOPPING, DELETING)
+
+> MVP는 단일 프로세스이므로 서버 재시작 = 모든 백그라운드 작업 중단. 시간 제한 없이 모든 전이 상태를 복구합니다.
+
+#### 복구 매트릭스
+
+| DB 상태 | Instance 상태 | 복구 결과 | 설명 |
+|---------|--------------|----------|------|
+| PROVISIONING | running + healthy | RUNNING | 시작 성공 후 크래시 |
+| PROVISIONING | 그 외 | ERROR | 시작 실패 |
+| STOPPING | not running | STOPPED | 정지 성공 후 크래시 |
+| STOPPING | running | RUNNING | 정지 명령 실패, 재시도 가능 |
+| DELETING | not exists | DELETED | 삭제 성공 후 크래시 |
+| DELETING | exists | ERROR | 삭제 실패 |
+
+#### 의사 코드
+
+```python
+def startup_recovery():
+    # MVP: 단일 프로세스이므로 모든 전이 상태 복구 (시간 제한 없음)
+    stuck = db.query("""
+        SELECT * FROM workspaces
+        WHERE status IN ('PROVISIONING', 'STOPPING', 'DELETING')
+    """)
+
+    for ws in stuck:
+        status = instance_controller.get_status(ws.id)
+
+        if ws.status == 'PROVISIONING':
+            ws.status = 'RUNNING' if (status.running and status.healthy) else 'ERROR'
+        elif ws.status == 'STOPPING':
+            ws.status = 'STOPPED' if not status.running else 'RUNNING'
+        elif ws.status == 'DELETING':
+            ws.status = 'DELETED' if not status.exists else 'ERROR'
+
+        db.save(ws)
+```
+
+> Startup Recovery는 Reconciler의 경량 버전. 서버 재시작 시에만 실행되며, 주기적 실행이 필요하면 Reconciler 도입 검토.
 
 ---
 

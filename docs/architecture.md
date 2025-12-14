@@ -180,12 +180,6 @@ sequenceDiagram
     CP->>CP: 상태 확인 (CREATED/STOPPED/ERROR)
     CP->>CP: DB 상태 → DELETING
 
-    alt home_ctx 존재
-        CP->>SP: Deprovision(home_ctx)
-        SP-->>CP: success
-        CP->>CP: DB home_ctx = NULL
-    end
-
     CP->>IC: DeleteWorkspace(workspace_id)
 
     alt 컨테이너 존재
@@ -197,11 +191,17 @@ sequenceDiagram
 
     IC-->>CP: success
 
+    alt home_ctx 존재
+        CP->>SP: Deprovision(home_ctx)
+        SP-->>CP: success
+        CP->>CP: DB home_ctx = NULL
+    end
+
     CP->>CP: DB soft delete (deleted_at, status=DELETED)
     CP-->>U: 204 No Content
 ```
 
-> ctx 정리 후 컨테이너 삭제 (순서 중요)
+> 컨테이너 삭제 후 스토리지 해제 (생성의 역순)
 > MVP에서는 Home Store 데이터 삭제 안 함 (Purge 호출 X)
 
 ---
@@ -232,6 +232,7 @@ stateDiagram-v2
     DELETING --> ERROR: fail
 
     ERROR --> PROVISIONING: start (재시도)
+    ERROR --> STOPPING: stop (재시도)
 
     DELETED --> [*]
 ```
@@ -248,7 +249,7 @@ stateDiagram-v2
 | STOPPING | 409 | 409 | 409 | 502 |
 | STOPPED | → PROVISIONING | 409 | → DELETING | 502 |
 | DELETING | 409 | 409 | 409 | 502 |
-| ERROR | → PROVISIONING | 409 | → DELETING | 502 |
+| ERROR | → PROVISIONING | → STOPPING | → DELETING | 502 |
 | DELETED | 404 | 404 | 404 | 404 |
 
 > 409 = INVALID_STATE, 404 = WORKSPACE_NOT_FOUND, 502 = UPSTREAM_UNAVAILABLE
@@ -329,7 +330,50 @@ graph LR
 
 ---
 
-## 6. (추후) Reconciler 패턴 도입
+## 6. Startup Recovery (MVP)
+
+서버 크래시로 인한 stuck 상태를 서버 시작 시 자동 복구합니다.
+
+### 동작 흐름
+
+```mermaid
+sequenceDiagram
+    participant S as Server Process
+    participant SR as Startup Recovery
+    participant DB as Database
+    participant IC as Instance Controller
+
+    S->>SR: 서버 시작
+    SR->>DB: 전이 상태 조회
+    DB-->>SR: [PROVISIONING, STOPPING, DELETING]
+
+    loop 각 stuck 워크스페이스
+        SR->>IC: GetStatus(workspace_id)
+        IC-->>SR: {exists, running, healthy}
+        SR->>SR: 복구 상태 결정
+        SR->>DB: 상태 업데이트
+    end
+
+    SR-->>S: 복구 완료
+    S->>S: HTTP 서버 시작
+```
+
+### 복구 매트릭스
+
+| DB 상태 | Instance 상태 | 복구 결과 |
+|---------|--------------|----------|
+| PROVISIONING | running + healthy | RUNNING |
+| PROVISIONING | 그 외 | ERROR |
+| STOPPING | not running | STOPPED |
+| STOPPING | running | RUNNING |
+| DELETING | not exists | DELETED |
+| DELETING | exists | ERROR |
+
+> MVP에서는 Startup Recovery로 크래시 복구. 프로덕션 규모에서 주기적 복구가 필요하면 Reconciler 도입.
+
+---
+
+## 7. (추후) Reconciler 패턴 도입
 
 현재는 명령적(Imperative) 방식으로 동작하지만, GetStatus 메서드를 통해 Reconciler 패턴으로 확장 가능하도록 설계되어 있습니다.
 

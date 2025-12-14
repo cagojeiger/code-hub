@@ -53,6 +53,13 @@ Workspace Instance 생명주기(lifecycle)를 관리하는 컴포넌트.
 ### Session
 사용자 인증 상태를 유지하는 DB 레코드. 쿠키에 session.id를 저장하고, 만료/폐기 시각으로 유효성 관리.
 
+### Startup Recovery
+서버 시작 시 전이 상태(PROVISIONING, STOPPING, DELETING)에서 stuck된 워크스페이스를 자동 복구하는 메커니즘.
+- 실행 시점: 서버 프로세스 시작 시, HTTP 요청 수락 전
+- 대상: 모든 전이 상태 (MVP는 단일 프로세스이므로 시간 제한 없음)
+- Instance Controller.GetStatus를 호출하여 실제 상태 확인 후 DB 업데이트
+- Reconciler의 경량 버전으로, MVP에서 크래시 복구용으로 사용
+
 ### Storage Provider
 스토리지 프로비저닝을 관리하는 컴포넌트. Home Store 준비/해제/삭제를 담당합니다.
 - 구현체: `local-dir`(로컬), `object-store`(클라우드, 추후)
