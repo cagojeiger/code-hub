@@ -140,7 +140,7 @@ sequenceDiagram
     participant D as Docker
 
     U->>CP: POST /api/v1/workspaces/{id}:stop
-    CP->>CP: 상태 확인 (RUNNING만 가능)
+    CP->>CP: 상태 확인 (RUNNING/ERROR)
     CP->>CP: DB 상태 → STOPPING
     CP-->>U: {id, status: "STOPPING"}
 
