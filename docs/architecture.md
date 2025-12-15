@@ -12,7 +12,7 @@ graph TB
 
     subgraph ControlPlane[Control Plane]
         API["/api/v1/*"]
-        Proxy["/w/{workspace_id}/"]
+        Proxy["/w/{workspace_id}/*"]
         DB[(Database)]
     end
 
@@ -368,6 +368,8 @@ sequenceDiagram
 | STOPPING | running | RUNNING |
 | DELETING | not exists | DELETED |
 | DELETING | exists | ERROR |
+
+> ⚠️ Startup Recovery는 상태 전이가 아닌 "DB 보정"입니다. 서버 크래시로 인해 DB 상태와 실제 컨테이너 상태가 불일치할 때, DB를 현실에 맞춰 수정합니다. 따라서 상태 다이어그램에는 표현되지 않습니다.
 
 > MVP에서는 Startup Recovery로 크래시 복구. 프로덕션 규모에서 주기적 복구가 필요하면 Reconciler 도입.
 
