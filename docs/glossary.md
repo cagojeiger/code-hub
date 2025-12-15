@@ -43,6 +43,7 @@ Workspace Instance 생명주기(lifecycle)를 관리하는 컴포넌트.
   - StopWorkspace: 없거나 이미 정지면 성공
   - DeleteWorkspace: 없으면 성공 (no-op)
 - DB에 의존하지 않고 docker inspect로 정보 조회
+- **ResolveUpstream**: 프록시가 컨테이너 연결 정보(host, port) 조회 시 사용
 - **GetStatus**: 컨테이너 존재/실행/헬스 상태 통합 조회. Reconciler 확장 대비.
 - 구현체: `local-docker` (로컬), `k8s` (클라우드, 추후)
 

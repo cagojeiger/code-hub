@@ -294,7 +294,7 @@ graph LR
     ControlPlane --> InstanceController
 ```
 
-> Instance Controller는 컨테이너 lifecycle만 담당, Storage Provider는 스토리지 프로비저닝 담당
+> Instance Controller는 컨테이너 lifecycle 담당 (시작 시 home_mount를 /home/coder에 마운트), Storage Provider는 스토리지 프로비저닝 담당
 
 ---
 
