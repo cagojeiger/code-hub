@@ -4,37 +4,118 @@
 
 ---
 
-## 1. 전체 프로세스 개요
+## 0. 역할 정의
 
-```mermaid
-flowchart TB
-    subgraph Documents["문서 체계"]
-        SPEC[spec.md<br/>What to build]
-        ARCH[architecture.md<br/>How to build]
-        ADR[adr/*.md<br/>Why decisions]
-        ROADMAP[roadmap/*.md<br/>Progress tracking]
-    end
+| 역할 | AI | Human |
+|------|-----|-------|
+| 🔵 **계획** | spec 초안 제안, Roadmap/Task 시뮬레이션 | 피드백 후 최종 결정 |
+| 🤖 **실행** | 브랜치 생성, 구현, 테스트, PR 생성, Notes 기록 | - |
+| 🔵🤖 **리뷰** | Self-review, 설명 | 코드 리뷰, PR 승인/머지 |
+| 🔵🤖 **트리아지** | Notes 정리, 분류 제안 | 최종 분류 결정 |
 
-    subgraph Process["개발 프로세스"]
-        direction TB
-        R[Roadmap] --> M[Milestone]
-        M --> T[Task]
-        T --> PR[Pull Request]
-        PR --> MERGE[Merge]
-        MERGE --> |Task 완료| M
-        M --> |Milestone 완료| TRIAGE[Notes Triage]
-        TRIAGE --> |다음| M2[Next Milestone]
-    end
-
-    SPEC --> T
-    ARCH --> T
-    ADR --> T
-    T --> ROADMAP
-```
+> **원칙**: AI는 **제안/실행**, Human은 **결정/승인**
 
 ---
 
-## 2. Roadmap → Milestone → Task → PR
+## 1. 계획 수립 🔵
+
+```mermaid
+flowchart LR
+    H1[🔵 Human 요청] --> AI[🤖 AI 제안]
+    AI --> H2{🔵 Human}
+    H2 -->|피드백| AI
+    H2 -->|승인| DONE[실행으로]
+```
+
+### 핑퐁 흐름
+
+```
+🔵 Human: 요청/질문
+🤖 AI: 제안
+🔵 Human: 피드백 or 승인
+   ↺ (반복)
+```
+
+### 계획 단계
+
+1. **spec.md** - 기능 요구사항
+2. **Roadmap** - Milestone 구조
+3. **Task** - 작업 단위 + Exit Criteria
+
+> 각 단계마다 핑퐁 후 Human 승인 시 다음 단계로
+
+---
+
+## 2. 실행 흐름 🔵🤖
+
+```mermaid
+flowchart TB
+    subgraph Phase1["Phase 1: 계획"]
+        ROADMAP_CHECK[Roadmap 확인]
+        TASK_SELECT[Task 선택]
+        EXIT_CONFIRM[Exit Criteria 확인]
+    end
+
+    subgraph Phase2["Phase 2: 실행"]
+        BRANCH[브랜치 생성]
+        IMPL[구현]
+        TEST[테스트]
+        PR_CREATE[PR 생성]
+    end
+
+    subgraph Phase3["Phase 3: 리뷰"]
+        REVIEW[코드 리뷰]
+        FIX[수정]
+        MERGE[머지]
+    end
+
+    subgraph Phase4["Phase 4: 정리"]
+        EXIT_MET{Exit Criteria<br/>충족?}
+        TASK_CHECK[Task 체크 ✓]
+        NOTES_UPDATE[Notes 업데이트]
+        ALL_DONE{모든 Task<br/>완료?}
+    end
+
+    subgraph Phase5["Phase 5: 트리아지"]
+        TRIAGE[Notes 트리아지]
+        FIX_NOW{FIX-NOW?}
+        FIX_TASK[FIX Task 추가]
+        MS_DONE[Milestone 완료]
+        ROADMAP_DONE{Roadmap 완료?}
+        NEXT_MS[다음 Milestone]
+        RELEASE[Release/완료]
+    end
+
+    ROADMAP_CHECK --> TASK_SELECT --> EXIT_CONFIRM --> BRANCH
+    BRANCH --> IMPL --> TEST --> PR_CREATE --> REVIEW
+    REVIEW -->|수정 필요| FIX --> REVIEW
+    REVIEW -->|승인| MERGE
+
+    MERGE --> EXIT_MET
+    EXIT_MET -->|No| TASK_SELECT
+    EXIT_MET -->|Yes| TASK_CHECK --> NOTES_UPDATE --> ALL_DONE
+
+    ALL_DONE -->|No| TASK_SELECT
+    ALL_DONE -->|Yes| TRIAGE
+
+    TRIAGE --> FIX_NOW
+    FIX_NOW -->|Yes| FIX_TASK --> TASK_SELECT
+    FIX_NOW -->|No| MS_DONE --> ROADMAP_DONE
+    ROADMAP_DONE -->|No| NEXT_MS --> TASK_SELECT
+    ROADMAP_DONE -->|Yes| RELEASE
+```
+
+### 핵심 용어 정의
+
+| 용어 | 정의 |
+|------|------|
+| **Task 완료** | PR 머지 + Exit Criteria 충족 |
+| **Milestone 완료** | 모든 Task 완료 + 트리아지 + FIX-NOW 해결 |
+| **트리아지 트리거** | 모든 Task 완료 시점 |
+
+---
+
+## 3. Roadmap → Milestone → Task → PR
 
 ### 계층 구조
 
@@ -72,7 +153,7 @@ Roadmap 000: MVP
 
 ---
 
-## 3. Milestone 라이프사이클
+## 4. Milestone 라이프사이클
 
 ```mermaid
 stateDiagram-v2
@@ -88,7 +169,9 @@ stateDiagram-v2
         PR --> Review
         Review --> Merged: 승인
         Review --> Implement: 수정 요청
-        Merged --> TaskCheck
+        Merged --> ExitCheck: Exit Criteria 확인
+        ExitCheck --> TaskCheck: 충족
+        ExitCheck --> Implement: 미충족
         TaskCheck --> [*]: 다음 Task
     }
 
@@ -102,7 +185,7 @@ stateDiagram-v2
 
 ---
 
-## 4. Task 라이프사이클
+## 5. Task 라이프사이클
 
 ### 상태 흐름
 
@@ -119,13 +202,19 @@ stateDiagram-v2
     Review --> Merged: 승인
     Review --> InProgress: 수정 요청
 
-    Merged --> Completed: Exit Criteria 충족
+    Merged --> ExitCheck: Exit Criteria 확인
+
+    ExitCheck --> Completed: 충족
+    ExitCheck --> InProgress: 미충족 → 추가 작업
+
     Merged --> Reverted: 버그 발견
 
-    Reverted --> InProgress: 재구현 (v2)
+    Reverted --> NewTask: 새 Task 생성 (v2)
 
     Completed --> [*]
 ```
+
+> **핵심**: PR 머지 ≠ Task 완료. **Exit Criteria 충족**이 완료 조건.
 
 ### Task 형식
 
@@ -146,7 +235,7 @@ stateDiagram-v2
 
 ---
 
-## 5. Notes 트리아지
+## 6. Notes 트리아지
 
 ### 왜 필요한가?
 
@@ -162,11 +251,11 @@ Month 5: Notes 40개 → 💥 기술 부채 폭발
 ```mermaid
 flowchart TD
     subgraph Trigger["트리거"]
-        MS_END[Milestone 종료]
+        ALL_TASK_DONE[모든 Task 완료]
     end
 
     subgraph Collect["수집"]
-        MS_END --> NOTES[Notes 목록 확인]
+        ALL_TASK_DONE --> NOTES[Notes 목록 확인]
     end
 
     subgraph Classify["분류"]
@@ -213,7 +302,7 @@ flowchart TD
 
 ---
 
-## 6. 엣지 케이스 처리
+## 7. 엣지 케이스 처리
 
 ```mermaid
 flowchart TD
@@ -264,7 +353,7 @@ flowchart TD
 
 ---
 
-## 7. 문서 간 관계
+## 8. 문서 간 관계
 
 ```mermaid
 flowchart LR
@@ -291,7 +380,7 @@ flowchart LR
     ARCH --> ROADMAP
     ADR --> ROADMAP
 
-    WORKFLOW --> AGENTS
+    AGENTS --> WORKFLOW
     ROADMAP --> AGENTS
 
     GLOSSARY --> SPEC
@@ -300,7 +389,7 @@ flowchart LR
 
 ---
 
-## 8. 브랜치 전략
+## 9. 브랜치 전략
 
 ```mermaid
 gitGraph
@@ -341,51 +430,6 @@ dev → main         : 릴리즈 준비 완료 시
 
 ---
 
-## 9. 전체 흐름 요약
-
-```mermaid
-flowchart TB
-    subgraph Phase1["Phase 1: 계획"]
-        SPEC_READ[spec.md 읽기]
-        ARCH_READ[architecture.md 읽기]
-        ROADMAP_CHECK[Roadmap 확인]
-    end
-
-    subgraph Phase2["Phase 2: 실행"]
-        TASK_SELECT[Task 선택]
-        BRANCH[브랜치 생성]
-        IMPL[구현]
-        TEST[테스트]
-        PR_CREATE[PR 생성]
-    end
-
-    subgraph Phase3["Phase 3: 리뷰"]
-        REVIEW[코드 리뷰]
-        FIX[수정]
-        MERGE[머지]
-    end
-
-    subgraph Phase4["Phase 4: 정리"]
-        TASK_CHECK[Task 체크]
-        NOTES_UPDATE[Notes 업데이트]
-        TRIAGE{Milestone 종료?}
-        NOTES_TRIAGE[Notes 트리아지]
-    end
-
-    SPEC_READ --> ARCH_READ --> ROADMAP_CHECK
-    ROADMAP_CHECK --> TASK_SELECT
-    TASK_SELECT --> BRANCH --> IMPL --> TEST --> PR_CREATE
-    PR_CREATE --> REVIEW
-    REVIEW -->|수정 필요| FIX --> REVIEW
-    REVIEW -->|승인| MERGE
-    MERGE --> TASK_CHECK --> NOTES_UPDATE --> TRIAGE
-    TRIAGE -->|No| TASK_SELECT
-    TRIAGE -->|Yes| NOTES_TRIAGE
-    NOTES_TRIAGE --> TASK_SELECT
-```
-
----
-
 ## 10. 체크리스트
 
 ### Task 시작 시
@@ -393,11 +437,13 @@ flowchart TB
 - [ ] Roadmap에서 현재 Task 확인
 - [ ] spec.md에서 관련 섹션 읽기
 - [ ] architecture.md에서 컴포넌트 관계 확인
-- [ ] Exit Criteria 확인/정의
+- [ ] Exit Criteria 확인 (정의는 Task 생성 시 완료)
 
 ### PR 머지 후
 
-- [ ] Task 체크: `- [x] Task (PR #N)`
+- [ ] Exit Criteria 충족 확인
+- [ ] 충족 시: Task 체크 `- [x] Task (PR #N)`
+- [ ] 미충족 시: 추가 작업 진행 (Task 미완료 유지)
 - [ ] Notes 업데이트 (필요시)
 
 ### Milestone 종료 시
