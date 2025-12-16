@@ -4,6 +4,13 @@ code-hub 프로젝트에서 사용하는 핵심 용어 정의입니다.
 
 ---
 
+## B
+
+### Blocker
+현재 Task 진행을 멈추게 하는 상태/심각도. 발생 시 즉시 FIX/ADR/Issue로 라우팅 (Hard 가드레일).
+
+---
+
 ## C
 
 ### CAS (Compare-And-Swap)
@@ -11,6 +18,16 @@ DB 상태 변경 시 원자적 조건부 업데이트 패턴. `WHERE status IN (
 
 ### Control Plane
 API(`/api/v1/*`) 및 워크스페이스 프록시(`/w/{workspace_id}/*`)를 제공하는 서버. Workspace 메타데이터/상태 관리, 세션 관리를 담당합니다.
+
+---
+
+## F
+
+### FIX-NOW
+트리아지 결과 라벨(우선순위). Milestone 종료 전 반드시 해결해야 하는 항목.
+
+### FIX Task
+Blocker 또는 FIX-NOW 해결을 위한 실제 작업 단위(Task 타입).
 
 ---
 
