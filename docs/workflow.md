@@ -90,8 +90,10 @@ flowchart TB
     BRANCH --> IMPL --> TEST --> PR_CREATE --> REVIEW
     REVIEW -->|수정 필요| FIX --> REVIEW
     REVIEW -->|승인| MERGE
+    REVIEW -.->|Rejected| TASK_SELECT
 
     MERGE --> EXIT_MET
+    MERGE -.->|Reverted| TASK_SELECT
     EXIT_MET -->|No| NEW_BRANCH[추가 브랜치 생성]
     NEW_BRANCH --> IMPL
     EXIT_MET -->|Yes| TASK_CHECK --> NOTES_UPDATE --> ALL_DONE
@@ -114,6 +116,10 @@ flowchart TB
     NEW_ROADMAP --> ROADMAP_CHECK
 ```
 
+> **점선 경로**: Rejected/Reverted는 예외 흐름 (상세: 섹션 5 Task 라이프사이클)
+>
+> **역할**: MERGE/분류 결정은 Human 최종 승인. AI는 제안/실행.
+
 ### 핵심 용어 정의
 
 | 용어 | 정의 |
@@ -121,9 +127,11 @@ flowchart TB
 | **Task 완료** | PR 머지 + Exit Criteria 충족 → `[x]` |
 | **Task 종료** | REVERTED/취소 → `[x] ~~취소선~~` (Closed) |
 | **모든 Task 완료** | Open 상태(`[ ]`) Task가 0개 |
-| **Milestone 완료** | 모든 Task 완료 + 트리아지 + FIX-NOW 해결 |
-| **트리아지 트리거** | 모든 Task 완료 시점 |
+| **Milestone 완료** | 모든 Task 완료 + 트리아지 + (FIX-NOW 해결 또는 이월 승인) |
+| **트리아지 트리거** | 모든 Task 완료 시점 (정기 트리아지) |
+| **Blocker** | Task 진행 불가 → 즉시 FIX/ADR/Issue 분기 (비정기) |
 | **1 Task = 1 PR (기본)** | 예외적으로 N PR 허용 (리스크 분산, Exit 단계적 충족) |
+| **DEFER(이월)** | Task/Note를 다음 Milestone/Backlog로 이동 (Human 승인 + 사유). 현재 Milestone Open 카운트 제외 |
 
 ### 가드레일
 
@@ -132,7 +140,7 @@ flowchart TB
 | 🔴 Hard | **Blocker 즉시 라우팅** | Task 완료 대기 없이 FIX/ADR/Issue 분기 |
 | 🔴 Hard | **DROP은 Human 승인** | 사유 기록 필수 (ADR 또는 roadmap notes) |
 | 🔴 Hard | **Revert 시 v2 필수** | 같은 Milestone 귀속 기본. 이동은 Human 승인 |
-| 🟡 Soft | **dev green 유지** | "항상"이 아니라 "최대한 + 빨리 복구" |
+| 🟡 Soft | **dev green 유지** | green = CI 통과 + 테스트 통과. red 시 당일 내 복구 원칙 |
 | 🟡 Soft | **1 Task = 1 PR 기본** | N PR은 예외 (리스크 분산, Exit 단계적 충족) |
 | 🟡 Soft | **FIX-NOW 컷** | Milestone 당 1~2회. 초과 시 ADR/Backlog로 이월 |
 
@@ -184,6 +192,9 @@ Roadmap 000: MVP
 
 ## 4. Milestone 라이프사이클
 
+<details>
+<summary>📖 상세 다이어그램 (클릭)</summary>
+
 ```mermaid
 stateDiagram-v2
     [*] --> Pending: Roadmap에 정의
@@ -217,9 +228,18 @@ stateDiagram-v2
     Completed --> [*]
 ```
 
+> **FIX-NOW 컷 초과 시**: ADR/Backlog로 이월 후 다음 Milestone 진행 (상세: 섹션 6 트리아지 Gate)
+
+</details>
+
 ---
 
 ## 5. Task 라이프사이클
+
+> **핵심**: PR 머지 ≠ Task 완료. **Exit Criteria 충족**이 완료 조건.
+
+<details>
+<summary>📖 상세 (클릭)</summary>
 
 ### 상태 흐름
 
@@ -247,11 +267,13 @@ stateDiagram-v2
     Merged --> Reverted: 버그 발견
 
     Reverted --> NewTask: 새 Task 생성 (v2)
+    NewTask --> Closed: 현재 Task 종료
 
     Completed --> [*]
+    Closed --> [*]
 ```
 
-> **핵심**: PR 머지 ≠ Task 완료. **Exit Criteria 충족**이 완료 조건.
+> **Revert 시 Task 상태**: 현재 Task → Closed (`[x] ~~취소선~~`), v2 Task → 새로 Open (`[ ]`)
 
 ### Review 결과 구분
 
@@ -276,17 +298,25 @@ stateDiagram-v2
 
 ```markdown
 **Tasks**:
-- [ ] Task 이름 (Exit: 완료 조건 한 줄)
+- [ ] Task 이름 (Exit: 완료 조건 요약)
 - [x] 완료된 Task (PR #N)
+- [x] 여러 PR로 완료된 Task (PR #1, #2, #3)
 - [x] ~~Task 이름~~ (CLOSED: PR #N REVERTED → v2로 대체)
 - [ ] Task 이름 v2 (Exit: 완료 조건)
+- [x] Task 이름 (DEFER: 사유/링크)
+
+<!-- 복잡한 Exit Criteria는 체크리스트로 -->
+- [ ] 복잡한 Task (Exit: 아래 체크리스트)
+  - [ ] 조건 1
+  - [ ] 조건 2
 ```
 
 > **완료 판정 규칙**
-> - `[x]` = **완료(Done)** 또는 **종료(Closed)**
+> - `[x]` = **완료(Done)** 또는 **종료(Closed)** 또는 **이월(DEFER)**
 > - `[ ]` = **진행 중(Open)**
 > - "모든 Task 완료" = Open 상태 Task가 0개
 > - REVERTED Task는 `[x] ~~취소선~~`으로 **Closed** 처리 후, 새 Task(v2)를 Open
+> - DEFER Task는 `[x] (DEFER: 사유)`로 처리, 다음 Milestone/Backlog에 후속 Task로 이어짐
 
 ### Exit Criteria 예시
 
@@ -296,9 +326,16 @@ stateDiagram-v2
 | Auth Middleware | 유효한 세션 쿠키로 인증 통과, 만료 시 401 |
 | Storage Provider | Provision/Deprovision 멱등성 테스트 통과 |
 
+</details>
+
 ---
 
 ## 6. Notes 트리아지
+
+> **트리거**: 모든 Task 완료 시점. Notes 쌓아두면 기술 부채 폭발.
+
+<details>
+<summary>📖 상세 (클릭)</summary>
 
 ### 왜 필요한가?
 
@@ -335,16 +372,21 @@ flowchart TD
         FIX --> BLOCK[현재 Milestone에서 해결]
         ADR --> ADR_DOC[ADR 문서 작성]
         ISSUE --> GH_ISSUE[GitHub Issue 생성]
-        DROP --> ARCHIVE[기록만 남김]
-        DONE --> ARCHIVE
+        DONE --> ARCHIVE[기록만 남김]
     end
 
     subgraph Gate["게이트"]
         BLOCK --> CHECK{FIX-NOW 해결?}
-        CHECK -->|No| BLOCK
-        CHECK -->|Yes| NEXT[다음 Milestone 시작]
+        CHECK -->|No| CUT_CHECK{FIX-NOW 컷 초과?}
+        CUT_CHECK -->|No| BLOCK
+        CUT_CHECK -->|Yes| DEFER[ADR/Backlog 이월]
+        DEFER --> NEXT[다음 Milestone 시작]
+        CHECK -->|Yes| NEXT
         ADR_DOC --> NEXT
         GH_ISSUE --> NEXT
+        DROP --> HUMAN_OK{🔵 Human 승인}
+        HUMAN_OK -->|승인| ARCHIVE
+        HUMAN_OK -->|거부| ASSESS
         ARCHIVE --> NEXT
     end
 ```
@@ -363,19 +405,49 @@ flowchart TD
 | ✅ DONE | SQLModel async 확인 | 동작 확인됨 |
 ```
 
+</details>
+
 ---
 
 ## 7. 엣지 케이스 처리
 
 | 상황 | 처리 |
 |------|------|
-| **Task 의존성 발견** | Notes 기록 → 의존 Task 먼저 진행 |
+| **Task 의존성 발견** | Notes 기록 → 의존 Task 먼저 진행. 다른 Milestone이면 이동 또는 prereq Task 명시 |
 | **스펙 불완전/모순** | Notes 기록 → 스펙 수정 PR 먼저 |
 | **Task가 너무 큼** | Task 분리 + Roadmap 수정 |
-| **Blocker 발생** | 🔴 즉시 FIX/ADR/Issue 분기 (Hard 가드레일) |
+| **Blocker 발생** | 🔴 즉시 FIX/ADR/Issue 분기 (상세 아래) |
 | **AI 세션 중단** | Notes/Draft PR에 현재 상태 기록 |
 | **PR Revert 필요** | 🔴 v2 Task 생성 (Hard 가드레일) |
 | **PR 완전 거절** | Notes 기록 → Task 재설계 후 재시작 |
+
+<details>
+<summary>📖 상세 (클릭)</summary>
+
+### Blocker 처리 흐름 (Hard 가드레일)
+
+> **Blocker**: Task 진행이 불가능한 상황 (정기 트리아지와 별개로 **즉시** 처리)
+
+```
+Blocker 발생 (Phase 2 실행 중)
+    ↓
+현재 Task 일시 중단
+    ↓
+분류 판단
+├── 즉시 해결 가능 → FIX Task 생성 → 현재 Milestone에서 해결
+├── 아키텍처 결정 필요 → ADR 작성 → 결정 후 재개
+└── 외부 도움 필요 → GitHub Issue 생성 → 응답 대기 또는 다른 Task 진행
+    ↓
+Blocker 해소 후 원래 Task 재개
+```
+
+> **정기 트리아지와 차이점**
+> - 정기 트리아지: 모든 Task 완료 시점에 Notes 전체 평가
+> - Blocker: 작업 중 발생 즉시 해당 건만 처리 (Task 완료 대기 안 함)
+>
+> **장기화 컷**: 외부 의존으로 Blocker가 장기화되면
+> - 해당 Task를 **DEFER(이월)** 처리 → 다음 Milestone로 이동 (Human 승인 + 사유 기록)
+> - 또는 Milestone 스코프 변경 시 ADR/roadmap 수정
 
 ### AI가 "더 좋은 아키텍처" 제안 시
 
@@ -383,6 +455,8 @@ flowchart TD
 |----------------------|------|
 | **Yes** | 현재 Task에서 구현 |
 | **No** | Notes에 기록 → Milestone 트리아지에서 ADR/Backlog/Drop 결정 |
+
+</details>
 
 ---
 
