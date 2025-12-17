@@ -24,7 +24,7 @@ async def root() -> dict[str, str]:
     return {"message": "code-hub API", "version": "0.1.0"}
 
 
-@app.get("/api/v1/containers")
+@app.get("/debug/containers")
 async def list_containers() -> dict:
     """List codehub namespace containers (for testing Docker socket proxy)."""
 
