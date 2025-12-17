@@ -1,9 +1,27 @@
 services:
+  # Docker Socket Proxy - secure access to Docker API
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy
+    container_name: codehub-docker-proxy
+    environment:
+      - CONTAINERS=1
+      - NETWORKS=1
+      - IMAGES=1
+      - INFO=1
+      - VERSION=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - codehub-net
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: codehub-backend
+    depends_on:
+      - docker-proxy
 
     ports:
       - "127.0.0.1:8080:8080"
@@ -18,21 +36,14 @@ services:
       # data directory bind mount (not Docker volume)
       - ./data:/data
 
-      # Docker socket mount (host Docker control)
-      - /var/run/docker.sock:/var/run/docker.sock
-
     environment:
       - PYTHONUNBUFFERED=1
       - CODEHUB_ENV=development
       - HOME_STORE_BASE_DIR=/data/home
       - HOME_STORE_HOST_PATH=${PWD}/data/home
+      - DOCKER_HOST=tcp://docker-proxy:2375
 
-    # NOTE: Docker socket access requires root on macOS Docker Desktop
-    # For Linux: uncomment user/group_add and set DOCKER_GID
-    # user: "1000:1000"
-    # group_add:
-    #   - "${DOCKER_GID:-999}"
-    user: "0:0"  # Run as root for Docker socket access (dev only)
+    user: "1000:1000"
 
     networks:
       - codehub-net
