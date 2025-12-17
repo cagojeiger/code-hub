@@ -1,14 +1,30 @@
 """code-hub Backend - Minimal FastAPI Application for M1 Foundation."""
 
 import asyncio
+from contextlib import asynccontextmanager
 
 import docker
 from fastapi import FastAPI
+
+from app.core.config import get_settings
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Application lifespan handler - validates config on startup."""
+    settings = get_settings()
+    print(f"[config] Server bind: {settings.server.bind}")
+    print(f"[config] Public base URL: {settings.server.public_base_url}")
+    print(f"[config] Home store backend: {settings.home_store.backend}")
+    print(f"[config] Home store base_dir: {settings.home_store.base_dir}")
+    yield
+
 
 app = FastAPI(
     title="code-hub",
     description="Cloud Development Environment Platform - Local MVP",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 
