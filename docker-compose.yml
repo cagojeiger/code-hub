@@ -1,0 +1,52 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: codehub-backend
+
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    volumes:
+      # Source code mount (hot reload)
+      - ./backend/app:/app/app:cached
+
+      # pyproject.toml mount (reflect dependency changes)
+      - ./backend/pyproject.toml:/app/pyproject.toml:ro
+
+      # data directory bind mount (not Docker volume)
+      - ./data:/data
+
+      # Docker socket mount (host Docker control)
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CODEHUB_ENV=development
+      - HOME_STORE_BASE_DIR=/data/home
+      - HOME_STORE_HOST_PATH=${PWD}/data/home
+
+    # NOTE: Docker socket access requires root on macOS Docker Desktop
+    # For Linux: uncomment user/group_add and set DOCKER_GID
+    # user: "1000:1000"
+    # group_add:
+    #   - "${DOCKER_GID:-999}"
+    user: "0:0"  # Run as root for Docker socket access (dev only)
+
+    networks:
+      - codehub-net
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  codehub-net:
+    name: codehub-net
+    driver: bridge

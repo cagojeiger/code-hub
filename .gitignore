@@ -209,3 +209,6 @@ __marimo__/
 # Claude Code
 .claude/*
 !.claude/commands/
+
+# code-hub specific
+data/
