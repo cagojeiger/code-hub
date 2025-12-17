@@ -22,8 +22,8 @@ RUN groupadd -g 1000 codehub && \
 WORKDIR /app
 
 # Copy dependency files and install
-COPY pyproject.toml ./
-RUN uv sync --frozen --no-install-project || uv sync --no-install-project
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project
 
 # Copy application code
 COPY app ./app
