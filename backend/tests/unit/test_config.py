@@ -179,46 +179,46 @@ class TestHealthcheckConfig:
 class TestHomeStoreConfig:
     """Tests for HomeStoreConfig."""
 
-    def test_default_values_require_host_path(self):
-        """HomeStoreConfig requires host_path for local-dir backend."""
+    def test_default_values_require_workspace_base_dir(self):
+        """HomeStoreConfig requires workspace_base_dir for local-dir backend."""
         with pytest.raises(ValidationError) as exc_info:
             HomeStoreConfig()
-        assert "host_path is required" in str(exc_info.value)
+        assert "workspace_base_dir is required" in str(exc_info.value)
 
-    def test_with_host_path(self):
-        """HomeStoreConfig should work with host_path set."""
+    def test_with_workspace_base_dir(self):
+        """HomeStoreConfig should work with workspace_base_dir set."""
         with patch.dict(
-            os.environ, {"CODEHUB_HOME_STORE__HOST_PATH": "/host/data/home"}
+            os.environ, {"CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR": "/host/data/home"}
         ):
             config = HomeStoreConfig()
             assert config.backend == "local-dir"
-            assert config.base_dir == "/data/home"
-            assert config.host_path == "/host/data/home"
+            assert config.control_plane_base_dir == "/data/home"
+            assert config.workspace_base_dir == "/host/data/home"
 
-    def test_base_dir_validation_not_absolute(self):
-        """Relative base_dir should produce clear error."""
+    def test_control_plane_base_dir_validation_not_absolute(self):
+        """Relative control_plane_base_dir should produce clear error."""
         with patch.dict(
             os.environ,
             {
-                "CODEHUB_HOME_STORE__BASE_DIR": "data/home",
-                "CODEHUB_HOME_STORE__HOST_PATH": "/host/data/home",
+                "CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR": "data/home",
+                "CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR": "/host/data/home",
             },
         ):
             with pytest.raises(ValidationError) as exc_info:
                 HomeStoreConfig()
             assert "must be an absolute path" in str(exc_info.value)
 
-    def test_base_dir_trailing_slash_removed(self):
-        """Trailing slash should be removed from base_dir."""
+    def test_control_plane_base_dir_trailing_slash_removed(self):
+        """Trailing slash should be removed from control_plane_base_dir."""
         with patch.dict(
             os.environ,
             {
-                "CODEHUB_HOME_STORE__BASE_DIR": "/data/home/",
-                "CODEHUB_HOME_STORE__HOST_PATH": "/host/data/home",
+                "CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR": "/data/home/",
+                "CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR": "/host/data/home",
             },
         ):
             config = HomeStoreConfig()
-            assert config.base_dir == "/data/home"
+            assert config.control_plane_base_dir == "/data/home"
 
 
 class TestWorkspaceConfig:
@@ -257,7 +257,7 @@ class TestSettings:
         with patch.dict(
             os.environ,
             {
-                "CODEHUB_HOME_STORE__HOST_PATH": "/host/data/home",
+                "CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR": "/host/data/home",
             },
             clear=False,
         ):
@@ -267,7 +267,7 @@ class TestSettings:
             assert settings.auth.mode == "local"
             assert settings.workspace.default_image == "codercom/code-server:latest"
             assert settings.home_store.backend == "local-dir"
-            assert settings.home_store.base_dir == "/data/home"
+            assert settings.home_store.control_plane_base_dir == "/data/home"
 
     def test_all_settings_from_env(self):
         """All settings should be configurable via environment variables."""
@@ -279,8 +279,8 @@ class TestSettings:
             "CODEHUB_WORKSPACE__DEFAULT_IMAGE": "custom/image:v1",
             "CODEHUB_WORKSPACE__HEALTHCHECK__INTERVAL": "5s",
             "CODEHUB_WORKSPACE__HEALTHCHECK__TIMEOUT": "2m",
-            "CODEHUB_HOME_STORE__BASE_DIR": "/custom/home",
-            "CODEHUB_HOME_STORE__HOST_PATH": "/host/custom/home",
+            "CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR": "/custom/home",
+            "CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR": "/host/custom/home",
         }
         with patch.dict(os.environ, env_vars, clear=False):
             settings = validate_settings()
@@ -291,8 +291,8 @@ class TestSettings:
             assert settings.workspace.default_image == "custom/image:v1"
             assert settings.workspace.healthcheck.interval == "5s"
             assert settings.workspace.healthcheck.timeout == "2m"
-            assert settings.home_store.base_dir == "/custom/home"
-            assert settings.home_store.host_path == "/host/custom/home"
+            assert settings.home_store.control_plane_base_dir == "/custom/home"
+            assert settings.home_store.workspace_base_dir == "/host/custom/home"
 
     def test_validation_error_is_clear(self):
         """Invalid configuration should produce clear error messages.
@@ -303,7 +303,7 @@ class TestSettings:
             os.environ,
             {
                 "CODEHUB_SERVER__BIND": "invalid",
-                "CODEHUB_HOME_STORE__HOST_PATH": "/host/data/home",
+                "CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR": "/host/data/home",
             },
             clear=False,
         ):

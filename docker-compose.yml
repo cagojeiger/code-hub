@@ -39,8 +39,8 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - CODEHUB_ENV=development
-      - CODEHUB_HOME_STORE__BASE_DIR=/data/home
-      - CODEHUB_HOME_STORE__HOST_PATH=${PWD}/data/home
+      - CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/data/home
+      - CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=${PWD}/data/home
       - DOCKER_HOST=tcp://docker-proxy:2375
 
     user: "1000:1000"

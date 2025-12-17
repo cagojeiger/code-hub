@@ -16,7 +16,7 @@ async def lifespan(_app: FastAPI):
     print(f"[config] Server bind: {settings.server.bind}")
     print(f"[config] Public base URL: {settings.server.public_base_url}")
     print(f"[config] Home store backend: {settings.home_store.backend}")
-    print(f"[config] Home store base_dir: {settings.home_store.base_dir}")
+    print(f"[config] Home store control_plane_base_dir: {settings.home_store.control_plane_base_dir}")
     yield
 
 

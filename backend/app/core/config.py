@@ -236,34 +236,34 @@ class HomeStoreConfig(BaseSettings):
         default="local-dir",
         description="Storage backend (only 'local-dir' supported in MVP)",
     )
-    base_dir: str = Field(
+    control_plane_base_dir: str = Field(
         default="/data/home",
-        description="Base directory for home storage (container path)",
+        description="Base directory as seen from Control Plane container (Storage Provider uses this)",
     )
-    host_path: str | None = Field(
+    workspace_base_dir: str | None = Field(
         default=None,
-        description="Host path for Docker bind mount (required for local-dir)",
+        description="Same location as control_plane_base_dir but from host perspective (for Docker bind mount)",
     )
 
-    @field_validator("base_dir")
+    @field_validator("control_plane_base_dir")
     @classmethod
-    def validate_base_dir(cls, v: str) -> str:
-        """Validate base_dir is an absolute path."""
+    def validate_control_plane_base_dir(cls, v: str) -> str:
+        """Validate control_plane_base_dir is an absolute path."""
         if not v:
-            raise ValueError("base_dir cannot be empty")
+            raise ValueError("control_plane_base_dir cannot be empty")
         if not v.startswith("/"):
             raise ValueError(
-                f"Invalid base_dir '{v}': must be an absolute path starting with '/'"
+                f"Invalid control_plane_base_dir '{v}': must be an absolute path starting with '/'"
             )
         return v.rstrip("/")
 
     @model_validator(mode="after")
-    def validate_host_path_for_local_dir(self):
-        """Validate host_path is set when using local-dir backend."""
-        if self.backend == "local-dir" and not self.host_path:
+    def validate_workspace_base_dir_for_local_dir(self):
+        """Validate workspace_base_dir is set when using local-dir backend."""
+        if self.backend == "local-dir" and not self.workspace_base_dir:
             raise ValueError(
-                "home_store.host_path is required when using 'local-dir' backend. "
-                "Set CODEHUB_HOME_STORE__HOST_PATH environment variable."
+                "home_store.workspace_base_dir is required when using 'local-dir' backend. "
+                "Set CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR environment variable."
             )
         return self
 
