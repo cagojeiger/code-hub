@@ -11,9 +11,15 @@
 | 🔵 **계획** | spec 초안 제안, Roadmap/Task 시뮬레이션 | 피드백 후 최종 결정 |
 | 🤖 **실행** | 브랜치 생성, 구현, 테스트, PR 생성, Notes 기록 | - |
 | 🔵🤖 **리뷰** | Self-review, 설명 | 코드 리뷰, PR 승인/머지 |
+| 🔵 **Exit 판정** | 증거 제시 (테스트 로그, 체크리스트) | **최종 승인** |
 | 🔵🤖 **트리아지** | Notes 정리, 분류 제안 | 최종 분류 결정 |
 
 > **원칙**: AI는 **제안/실행**, Human은 **결정/승인**
+
+> **설계 원칙**:
+> - 명시되지 않은 상황은 Human 재량으로 판단
+> - 규칙 간 충돌 시 Human이 우선순위 결정
+> - 엣지 케이스를 모두 규정하지 않음 (의도적)
 
 ---
 
@@ -66,11 +72,11 @@ flowchart TB
     subgraph Phase3["Phase 3: 리뷰"]
         REVIEW[코드 리뷰]
         FIX[수정]
-        MERGE[머지]
+        MERGE[🔵 Human 머지]
     end
 
     subgraph Phase4["Phase 4: 정리"]
-        EXIT_MET{Exit Criteria<br/>충족?}
+        EXIT_MET{🔵 Exit 승인?}
         TASK_CHECK[Task 체크 ✓]
         NOTES_UPDATE[Notes 업데이트]
         ALL_DONE{모든 Task<br/>완료?}
@@ -90,16 +96,27 @@ flowchart TB
     BRANCH --> IMPL --> TEST --> PR_CREATE --> REVIEW
     REVIEW -->|수정 필요| FIX --> REVIEW
     REVIEW -->|승인| MERGE
-    REVIEW -.->|Rejected| TASK_SELECT
+    REVIEW -.->|Rejected| REDESIGN[🔵 재설계 결정]
+    REDESIGN --> TASK_SELECT
 
-    MERGE --> EXIT_MET
-    MERGE -.->|Reverted| TASK_SELECT
+    MERGE --> CRITICAL{치명 버그?}
+    CRITICAL -->|No| EXIT_MET
+    CRITICAL -->|Yes| FIX_CHOICE{🔵 복구 방식?}
+    FIX_CHOICE -->|Revert| REVERT_PR[Revert PR 생성]
+    FIX_CHOICE -->|Forward-fix| FORWARD_FIX[Forward-fix PR]
+    REVERT_PR --> REVERT_REVIEW[🔵 Revert 리뷰]
+    FORWARD_FIX --> REVIEW
+    REVERT_REVIEW -->|승인| REVERT_MERGE[🔵 Revert 머지]
+    REVERT_MERGE --> TASK_CLOSED[현재 Task 종료]
+    TASK_CLOSED --> V2_TASK[v2 Task 생성]
+    V2_TASK --> TASK_SELECT
     EXIT_MET -->|No| NEW_BRANCH[추가 브랜치 생성]
     NEW_BRANCH --> IMPL
     EXIT_MET -->|Yes| TASK_CHECK --> NOTES_UPDATE --> ALL_DONE
 
     ALL_DONE -->|No| TASK_SELECT
     ALL_DONE -->|Yes| TRIAGE
+    NOTES_UPDATE -.->|수시| TRIAGE
 
     TRIAGE --> FIX_NOW
     FIX_NOW -->|Yes| FIX_TASK --> TASK_SELECT
@@ -119,19 +136,27 @@ flowchart TB
 > **점선 경로**: Rejected/Reverted는 예외 흐름 (상세: 섹션 5 Task 라이프사이클)
 >
 > **역할**: MERGE/분류 결정은 Human 최종 승인. AI는 제안/실행.
+>
+> **치명 버그 기준** (하나라도 해당 시 복구 필요):
+> - 데이터 손상 가능성
+> - 보안 취약점
+> - 서비스 가용성 영향
+>
+> **Revert vs Forward-fix**: 🔵 Human이 상황에 따라 결정 (롤백 부작용, 데이터 변경 여부 등 고려)
 
 ### 핵심 용어 정의
 
-| 용어 | 정의 |
-|------|------|
-| **Task 완료** | PR 머지 + Exit Criteria 충족 → `[x]` |
-| **Task 종료** | REVERTED/취소 → `[x] ~~취소선~~` (Closed) |
-| **모든 Task 완료** | Open 상태(`[ ]`) Task가 0개 |
-| **Milestone 완료** | 모든 Task 완료 + 트리아지 + (FIX-NOW 해결 또는 이월 승인) |
-| **트리아지 트리거** | 모든 Task 완료 시점 (정기 트리아지) |
-| **Blocker** | Task 진행 불가 → 즉시 FIX/ADR/Issue 분기 (비정기) |
-| **1 Task = 1 PR (기본)** | 예외적으로 N PR 허용 (리스크 분산, Exit 단계적 충족) |
-| **DEFER(이월)** | Task/Note를 다음 Milestone/Backlog로 이동 (Human 승인 + 사유). 현재 Milestone Open 카운트 제외 |
+| 용어 | 정의 | 표기 |
+|------|------|------|
+| **Task 진행 중 (Open)** | 작업 대상 | `[ ]` |
+| **Task 완료 (Done)** | PR 머지 + Exit Criteria 충족 | `[x]` |
+| **Task 종료 (Closed)** | REVERTED/취소 | `[~]` |
+| **Task 이월 (Defer)** | 다음 Milestone로 이동 | `[>]` |
+| **트리아지 트리거** | Open Task 완료 시 또는 적절한 시점 (Human 판단) | - |
+| **Milestone 완료 조건** | 트리아지 완료 + FIX-NOW 해결 (Human 승인) | - |
+| **Blocker** | Task 진행 불가 → 즉시 FIX/ADR/Issue 분기 (비정기) | - |
+| **1 Task = 1 PR (기본)** | 예외적으로 N PR 허용 (리스크 분산, Exit 단계적 충족) | - |
+| **DEFER(이월)** | Task/Note를 다음 Milestone/Backlog로 이동 (Human 승인 + 사유). 과다 시 Milestone 재검토 권장 | `[>]` |
 
 ### 가드레일
 
@@ -142,7 +167,7 @@ flowchart TB
 | 🔴 Hard | **Revert 시 v2 필수** | 같은 Milestone 귀속 기본. 이동은 Human 승인 |
 | 🟡 Soft | **dev green 유지** | green = CI 통과 + 테스트 통과. red 시 당일 내 복구 원칙 |
 | 🟡 Soft | **1 Task = 1 PR 기본** | N PR은 예외 (리스크 분산, Exit 단계적 충족) |
-| 🟡 Soft | **FIX-NOW 컷** | Milestone 당 1~2회. 초과 시 ADR/Backlog로 이월 |
+| 🟡 Soft | **FIX-NOW 우선** | FIX-NOW는 우선 처리. 과다 시 이월 여부는 Human 판단 |
 
 ---
 
@@ -220,7 +245,7 @@ stateDiagram-v2
         TaskCheck --> [*]: 다음 Task
     }
 
-    TaskLoop --> NotesTriage: 모든 Task 완료
+    TaskLoop --> NotesTriage: 적절한 시점
 
     NotesTriage --> Completed: FIX-NOW 해결 완료
     NotesTriage --> InProgress: FIX-NOW 항목 존재
@@ -228,7 +253,7 @@ stateDiagram-v2
     Completed --> [*]
 ```
 
-> **FIX-NOW 컷 초과 시**: ADR/Backlog로 이월 후 다음 Milestone 진행 (상세: 섹션 6 트리아지 Gate)
+> **FIX-NOW 과다 시**: 이월 여부는 Human 판단 (상세: 섹션 6 트리아지)
 
 </details>
 
@@ -273,7 +298,7 @@ stateDiagram-v2
     Closed --> [*]
 ```
 
-> **Revert 시 Task 상태**: 현재 Task → Closed (`[x] ~~취소선~~`), v2 Task → 새로 Open (`[ ]`)
+> **Revert 시 Task 상태**: 현재 Task → Closed (`[~] ~~취소선~~`), v2 Task → 새로 Open (`[ ]`)
 
 ### Review 결과 구분
 
@@ -294,6 +319,13 @@ stateDiagram-v2
 > - "추가 구현"으로 Exit 충족 가능 → **ExitCheck 미충족** (머지 허용)
 > - "구조/접근 교체" 없이 Exit 불가 → **Rejected** (머지 금지)
 
+### Rejected 처리 규칙
+
+Rejected 발생 시:
+1. 🤖 **재설계 노트 작성** - 왜 틀렸는지 기록
+2. 🔵 **Human 결정**: Task 유지/분할/삭제/대체
+3. 결정 후 → Task 선택으로 복귀
+
 ### Task 형식
 
 ```markdown
@@ -301,9 +333,9 @@ stateDiagram-v2
 - [ ] Task 이름 (Exit: 완료 조건 요약)
 - [x] 완료된 Task (PR #N)
 - [x] 여러 PR로 완료된 Task (PR #1, #2, #3)
-- [x] ~~Task 이름~~ (CLOSED: PR #N REVERTED → v2로 대체)
+- [~] ~~Task 이름~~ (CLOSED: PR #N REVERTED → v2로 대체)
 - [ ] Task 이름 v2 (Exit: 완료 조건)
-- [x] Task 이름 (DEFER: 사유/링크)
+- [>] Task 이름 (DEFER: 사유 → M2로 이동)
 
 <!-- 복잡한 Exit Criteria는 체크리스트로 -->
 - [ ] 복잡한 Task (Exit: 아래 체크리스트)
@@ -312,11 +344,14 @@ stateDiagram-v2
 ```
 
 > **완료 판정 규칙**
-> - `[x]` = **완료(Done)** 또는 **종료(Closed)** 또는 **이월(DEFER)**
 > - `[ ]` = **진행 중(Open)**
-> - "모든 Task 완료" = Open 상태 Task가 0개
-> - REVERTED Task는 `[x] ~~취소선~~`으로 **Closed** 처리 후, 새 Task(v2)를 Open
-> - DEFER Task는 `[x] (DEFER: 사유)`로 처리, 다음 Milestone/Backlog에 후속 Task로 이어짐
+> - `[x]` = **완료(Done)** - PR 머지 + Exit Criteria 충족
+> - `[~]` = **종료(Closed)** - REVERTED/취소
+> - `[>]` = **이월(Defer)** - 다음 Milestone로 이동
+> - **트리아지 트리거** = Open Task 완료 시 또는 적절한 시점 (Human 판단)
+> - **Milestone 완료** = 트리아지 완료 + FIX-NOW 해결 (Human 승인)
+> - REVERTED Task는 `[~] ~~취소선~~`으로 **Closed** 처리 후, 새 Task(v2)를 Open
+> - DEFER Task는 `[>] (DEFER: 사유)`로 처리, 다음 Milestone/Backlog에 후속 Task로 이어짐
 
 ### Exit Criteria 예시
 
@@ -332,7 +367,7 @@ stateDiagram-v2
 
 ## 6. Notes 트리아지
 
-> **트리거**: 모든 Task 완료 시점. Notes 쌓아두면 기술 부채 폭발.
+> **트리거**: Open Task 완료 시 또는 적절한 시점에 (Human 판단). Notes 쌓아두면 기술 부채 폭발.
 
 <details>
 <summary>📖 상세 (클릭)</summary>
@@ -351,7 +386,7 @@ Month 5: Notes 40개 → 💥 기술 부채 폭발
 ```mermaid
 flowchart TD
     subgraph Trigger["트리거"]
-        ALL_TASK_DONE[모든 Task 완료]
+        ALL_TASK_DONE[Open Task 완료 또는<br/>적절한 시점]
     end
 
     subgraph Collect["수집"]
@@ -376,12 +411,11 @@ flowchart TD
     end
 
     subgraph Gate["게이트"]
-        BLOCK --> CHECK{FIX-NOW 해결?}
-        CHECK -->|No| CUT_CHECK{FIX-NOW 컷 초과?}
-        CUT_CHECK -->|No| BLOCK
-        CUT_CHECK -->|Yes| DEFER[ADR/Backlog 이월]
-        DEFER --> NEXT[다음 Milestone 시작]
-        CHECK -->|Yes| NEXT
+        BLOCK --> FIX_CHECK{FIX-NOW 해결?}
+        FIX_CHECK -->|Yes| NEXT[다음 Milestone 시작]
+        FIX_CHECK -->|No| DEFER_DECIDE{🔵 계속/이월?}
+        DEFER_DECIDE -->|계속| BLOCK
+        DEFER_DECIDE -->|이월| NEXT
         ADR_DOC --> NEXT
         GH_ISSUE --> NEXT
         DROP --> HUMAN_OK{🔵 Human 승인}
@@ -560,7 +594,8 @@ dev → main         : 릴리즈 준비 완료 시
 
 ### PR 머지 후
 
-- [ ] 🤖 Exit Criteria 충족 확인
+- [ ] 🤖 Exit Criteria 증거 제시 (테스트 결과, 스크린샷 등)
+- [ ] 🔵 Exit Criteria 충족 **승인**
 - [ ] 🔵 충족 시: Task 체크 `- [x] Task (PR #N)`
 - [ ] 🤖 미충족 시: 추가 작업 진행 (Task 미완료 유지)
 - [ ] 🤖 Notes 업데이트 (필요시)
