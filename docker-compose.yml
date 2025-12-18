@@ -41,6 +41,7 @@ services:
       - CODEHUB_ENV=development
       - CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/var/lib/codehub/homes
       - CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=${PWD}/data/codehub/homes
+      - CODEHUB_DATABASE__URL=sqlite+aiosqlite:////var/lib/codehub/codehub.db
       - DOCKER_HOST=tcp://docker-proxy:2375
 
     user: "1000:1000"
