@@ -34,13 +34,13 @@ services:
       - ./backend/pyproject.toml:/app/pyproject.toml:ro
 
       # data directory bind mount (not Docker volume)
-      - ./data:/data
+      - ./data/codehub:/var/lib/codehub
 
     environment:
       - PYTHONUNBUFFERED=1
       - CODEHUB_ENV=development
-      - CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/data/home
-      - CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=${PWD}/data/home
+      - CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/var/lib/codehub/homes
+      - CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=${PWD}/data/codehub/homes
       - DOCKER_HOST=tcp://docker-proxy:2375
 
     user: "1000:1000"

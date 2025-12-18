@@ -470,8 +470,8 @@ workspace:
 
 home_store:
   backend: local-dir
-  control_plane_base_dir: "/data/home"   # Control Plane 컨테이너 내부 경로
-  workspace_base_dir: "/host/data/home"  # 호스트 경로 (Docker bind mount용)
+  control_plane_base_dir: "/var/lib/codehub/homes"   # Control Plane 컨테이너 내부 경로
+  workspace_base_dir: "/host/var/lib/codehub/homes"  # 호스트 경로 (Docker bind mount용)
 ```
 
 > CreateWorkspace 시 `workspace.default_image`, `home_store.backend` 사용.

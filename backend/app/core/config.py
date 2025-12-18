@@ -6,7 +6,7 @@ All environment variables use CODEHUB_ prefix with double underscore for nested 
 Examples:
     CODEHUB_SERVER__BIND=:8080
     CODEHUB_SERVER__PUBLIC_BASE_URL=http://localhost:8080
-    CODEHUB_HOME_STORE__BASE_DIR=/data/home
+    CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/var/lib/codehub/homes
 """
 
 from functools import lru_cache
@@ -237,7 +237,7 @@ class HomeStoreConfig(BaseSettings):
         description="Storage backend (only 'local-dir' supported in MVP)",
     )
     control_plane_base_dir: str = Field(
-        default="/data/home",
+        default="/var/lib/codehub/homes",
         description="Base directory as seen from Control Plane container (Storage Provider uses this)",
     )
     workspace_base_dir: str | None = Field(
@@ -277,8 +277,8 @@ class Settings(BaseSettings):
     Examples:
         CODEHUB_SERVER__BIND=:8080
         CODEHUB_SERVER__PUBLIC_BASE_URL=http://localhost:8080
-        CODEHUB_HOME_STORE__BASE_DIR=/data/home
-        CODEHUB_HOME_STORE__HOST_PATH=/host/data/home
+        CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/var/lib/codehub/homes
+        CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=/host/path/to/homes
     """
 
     model_config = SettingsConfigDict(
