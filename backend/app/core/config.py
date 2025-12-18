@@ -224,6 +224,32 @@ class WorkspaceConfig(BaseSettings):
         return v
 
 
+class DatabaseConfig(BaseSettings):
+    """Database configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="CODEHUB_DATABASE__",
+        extra="ignore",
+    )
+
+    url: str = Field(
+        default="sqlite+aiosqlite:///./data/codehub.db",
+        description="Database URL (SQLite for MVP)",
+    )
+    echo: bool = Field(
+        default=False,
+        description="Echo SQL statements for debugging",
+    )
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        """Validate database URL."""
+        if not v:
+            raise ValueError("database URL cannot be empty")
+        return v
+
+
 class HomeStoreConfig(BaseSettings):
     """Home store configuration."""
 
@@ -291,6 +317,7 @@ class Settings(BaseSettings):
     auth: AuthConfig = Field(default_factory=AuthConfig)
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     home_store: HomeStoreConfig = Field(default_factory=HomeStoreConfig)
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
 
 
 @lru_cache

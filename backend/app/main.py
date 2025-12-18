@@ -7,22 +7,39 @@ from contextlib import asynccontextmanager
 import docker
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import sessionmaker
 
 from app.core.config import get_settings
 from app.core.errors import CodeHubError, InternalError
+from app.db import close_db, get_engine, init_db, seed_database
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Application lifespan handler - validates config on startup."""
+    """Application lifespan handler - initializes DB and validates config on startup."""
     settings = get_settings()
     print(f"[config] Server bind: {settings.server.bind}")
     print(f"[config] Public base URL: {settings.server.public_base_url}")
     print(f"[config] Home store backend: {settings.home_store.backend}")
     print(f"[config] Home store control_plane_base_dir: {settings.home_store.control_plane_base_dir}")
+    print(f"[config] Database URL: {settings.database.url}")
+
+    # Initialize database with WAL mode
+    await init_db(settings.database.url, settings.database.echo)
+
+    # Seed test user for MVP development
+    engine = get_engine()
+    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with async_session() as session:
+        await seed_database(session)
+
     yield
+
+    # Cleanup
+    await close_db()
 
 
 app = FastAPI(
