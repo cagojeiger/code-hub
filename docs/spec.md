@@ -189,7 +189,7 @@ GetStatus(workspace_id) -> { exists, running, healthy, port? } | error
 
 MVP는 `local-dir` 백엔드만 지원하며, 다음 특성에 의존합니다:
 
-- **결정적 경로**: `home_mount = base_dir + home_store_key`로 항상 동일
+- **결정적 경로**: `home_mount = control_plane_base_dir + home_store_key`로 항상 동일
 - **Provision 멱등성**: 같은 key에 대해 항상 같은 경로 반환
 - **StartWorkspace 단순화**: 경로가 바뀌지 않으므로 기존 컨테이너 재사용 가능
 
@@ -232,7 +232,7 @@ GetStatus(home_store_key) -> { provisioned, home_ctx?, home_mount? }
 3. 새 home_ctx 반환
 
 **백엔드별 구현:**
-- `local-dir`: base_dir + key 경로 반환, ctx는 경로 문자열
+- `local-dir`: control_plane_base_dir + key 경로 반환, ctx는 경로 문자열
 - `object-store`: 스냅샷 복원 → staging dir 생성 → ctx에 staging 정보 저장
 
 #### Deprovision
@@ -470,10 +470,12 @@ workspace:
 
 home_store:
   backend: local-dir
-  base_dir: "/data/home"
+  control_plane_base_dir: "/data/home"   # Control Plane 컨테이너 내부 경로
+  workspace_base_dir: "/host/data/home"  # 호스트 경로 (Docker bind mount용)
 ```
 
 > CreateWorkspace 시 `workspace.default_image`, `home_store.backend` 사용.
+> `control_plane_base_dir`과 `workspace_base_dir`은 같은 물리적 위치를 서로 다른 관점에서 가리킴.
 
 ---
 
