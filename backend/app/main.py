@@ -7,14 +7,44 @@ from contextlib import asynccontextmanager
 import docker
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import get_settings
 from app.core.errors import CodeHubError, InternalError
-from app.db import close_db, get_engine, init_db, seed_database
+from app.core.security import hash_password
+from app.db import User, close_db, get_engine, init_db
 
 logger = logging.getLogger(__name__)
+
+# Initial admin username (fixed)
+INITIAL_ADMIN_USERNAME = "admin"
+
+
+async def _create_initial_admin(session: AsyncSession, password: str) -> None:
+    """Create initial admin user if not exists.
+
+    Args:
+        session: Async database session
+        password: Initial admin password
+    """
+    result = await session.execute(
+        select(User).where(User.username == INITIAL_ADMIN_USERNAME)
+    )
+    existing_user = result.scalar_one_or_none()
+
+    if existing_user:
+        logger.info("Initial admin already exists: %s", INITIAL_ADMIN_USERNAME)
+        return
+
+    admin = User(
+        username=INITIAL_ADMIN_USERNAME,
+        password_hash=hash_password(password),
+    )
+    session.add(admin)
+    await session.commit()
+    logger.info("Initial admin created: %s", INITIAL_ADMIN_USERNAME)
 
 
 @asynccontextmanager
@@ -30,11 +60,11 @@ async def lifespan(_app: FastAPI):
     # Initialize database with WAL mode
     await init_db(settings.database.url, settings.database.echo)
 
-    # Seed test user for MVP development
+    # Create initial admin user
     engine = get_engine()
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with async_session() as session:
-        await seed_database(session)
+        await _create_initial_admin(session, settings.auth.initial_admin_password)
 
     yield
 

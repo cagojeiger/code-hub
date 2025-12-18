@@ -130,6 +130,10 @@ class AuthConfig(BaseSettings):
         default="local",
         description="Authentication mode (only 'local' supported in MVP)",
     )
+    initial_admin_password: str = Field(
+        default="admin",
+        description="Initial admin password (default: admin)",
+    )
     session: SessionConfig = Field(default_factory=SessionConfig)
 
 

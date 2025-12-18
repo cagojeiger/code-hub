@@ -3,8 +3,6 @@
 Tests cover:
 - SQLite WAL mode initialization
 - Model creation and relationships
-- Test user seeding
-- Password hashing and verification
 """
 
 from datetime import datetime, timedelta, timezone
@@ -15,18 +13,8 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-from app.db import (
-    TEST_USER_PASSWORD,
-    TEST_USER_USERNAME,
-    Session,
-    User,
-    Workspace,
-    WorkspaceStatus,
-    hash_password,
-    init_db,
-    seed_test_user,
-    verify_password,
-)
+from app.core.security import hash_password
+from app.db import Session, User, Workspace, WorkspaceStatus, init_db
 from app.db.session import close_db, get_engine
 
 
@@ -267,63 +255,3 @@ class TestWorkspaceModel:
         assert loaded_ws.owner.username == "ownerrel"
 
 
-class TestPasswordHashing:
-    """Tests for password hashing utilities."""
-
-    def test_hash_password(self):
-        """Test password hashing."""
-        password = "mypassword123"
-        hashed = hash_password(password)
-
-        assert hashed != password
-        assert hashed.startswith("$argon2")
-
-    def test_verify_password_correct(self):
-        """Test verifying correct password."""
-        password = "correctpassword"
-        hashed = hash_password(password)
-
-        assert verify_password(password, hashed) is True
-
-    def test_verify_password_incorrect(self):
-        """Test verifying incorrect password."""
-        password = "correctpassword"
-        hashed = hash_password(password)
-
-        assert verify_password("wrongpassword", hashed) is False
-
-    def test_hash_password_different_each_time(self):
-        """Test that hashing same password produces different hashes (salted)."""
-        password = "samepassword"
-        hash1 = hash_password(password)
-        hash2 = hash_password(password)
-
-        assert hash1 != hash2
-
-
-class TestSeedTestUser:
-    """Tests for test user seeding."""
-
-    @pytest.mark.asyncio
-    async def test_seed_test_user_creates_user(self, db_session: AsyncSession):
-        """Test that seed_test_user creates the test user."""
-        user = await seed_test_user(db_session)
-
-        assert user is not None
-        assert user.username == TEST_USER_USERNAME
-        assert verify_password(TEST_USER_PASSWORD, user.password_hash)
-
-    @pytest.mark.asyncio
-    async def test_seed_test_user_idempotent(self, db_session: AsyncSession):
-        """Test that seed_test_user is idempotent."""
-        user1 = await seed_test_user(db_session)
-        user2 = await seed_test_user(db_session)
-
-        assert user1.id == user2.id
-
-        # Verify only one user exists
-        result = await db_session.execute(
-            select(User).where(User.username == TEST_USER_USERNAME)
-        )
-        users = result.scalars().all()
-        assert len(users) == 1
