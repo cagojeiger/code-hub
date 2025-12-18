@@ -399,6 +399,7 @@ def startup_recovery():
 | 403 | `FORBIDDEN` | 권한 없음 |
 | 404 | `WORKSPACE_NOT_FOUND` | 워크스페이스 없음 |
 | 409 | `INVALID_STATE` | 현재 상태에서 불가능한 작업 |
+| 500 | `INTERNAL_ERROR` | 예상치 못한 내부 오류 |
 | 502 | `UPSTREAM_UNAVAILABLE` | 프록시 연결 실패 |
 
 ---

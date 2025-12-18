@@ -1,12 +1,17 @@
 """code-hub Backend - Minimal FastAPI Application for M1 Foundation."""
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 import docker
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
+from app.core.errors import CodeHubError, InternalError
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -26,6 +31,26 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(CodeHubError)
+async def codehub_error_handler(_request: Request, exc: CodeHubError) -> JSONResponse:
+    """Handle CodeHubError exceptions and return standardized error responses."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_response().model_dump(),
+    )
+
+
+@app.exception_handler(Exception)
+async def generic_error_handler(_request: Request, exc: Exception) -> JSONResponse:
+    """Handle unexpected exceptions and return standardized error responses."""
+    logger.exception("Unexpected error: %s", exc)
+    error = InternalError()
+    return JSONResponse(
+        status_code=error.status_code,
+        content=error.to_response().model_dump(),
+    )
 
 
 @app.get("/health")
