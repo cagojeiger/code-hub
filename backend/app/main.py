@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
-import docker  # type: ignore[import-untyped]
+import docker
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
@@ -126,15 +126,18 @@ async def list_containers() -> dict[str, Any]:
     def _list() -> list[dict[str, Any]]:
         client = docker.from_env()
         containers = client.containers.list(all=True)
-        return [
-            {
-                "name": c.name,
-                "status": c.status,
-                "image": c.image.tags[0] if c.image.tags else "unknown",
-            }
-            for c in containers
-            if c.name.startswith("codehub-")
-        ]
+        result = []
+        for c in containers:
+            if c.name and c.name.startswith("codehub-"):
+                image_tag = "unknown"
+                if c.image and c.image.tags:
+                    image_tag = c.image.tags[0]
+                result.append({
+                    "name": c.name,
+                    "status": c.status,
+                    "image": image_tag,
+                })
+        return result
 
     result = await asyncio.to_thread(_list)
     return {"containers": result}
