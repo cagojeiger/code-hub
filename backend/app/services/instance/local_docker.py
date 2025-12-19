@@ -10,7 +10,11 @@ import docker
 from docker.errors import NotFound
 from docker.models.containers import Container
 
-from app.instance.interface import InstanceController, InstanceStatus, UpstreamInfo
+from app.services.instance.interface import (
+    InstanceController,
+    InstanceStatus,
+    UpstreamInfo,
+)
 
 logger = logging.getLogger(__name__)
 
