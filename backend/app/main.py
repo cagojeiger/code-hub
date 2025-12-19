@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.api.v1 import router as api_v1_router
 from app.core.config import get_settings
 from app.core.errors import CodeHubError, InternalError
 from app.core.logging import setup_logging
@@ -85,6 +86,9 @@ app = FastAPI(
 
 # Add middleware (order matters: first added = outermost)
 app.add_middleware(RequestIdMiddleware)
+
+# Include API routers
+app.include_router(api_v1_router)
 
 
 @app.exception_handler(CodeHubError)
