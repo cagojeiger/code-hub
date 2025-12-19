@@ -5,7 +5,7 @@ Provides cross-cutting concerns like request ID tracking.
 
 import uuid
 
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -24,7 +24,9 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
     - Returns request_id in response header
     """
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def dispatch(
+        self, request: Request, call_next: RequestResponseEndpoint
+    ) -> Response:
         """Process request and add request ID."""
         # Get existing request ID or generate new one
         request_id = request.headers.get(REQUEST_ID_HEADER) or str(uuid.uuid4())

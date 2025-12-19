@@ -5,11 +5,12 @@ Tests cover:
 - Model creation and relationships
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 
@@ -43,19 +44,27 @@ class TestDatabaseInitialization:
         async with db_engine.connect() as conn:
             # Check users table exists
             result = await conn.execute(
-                text("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+                text(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
+                )
             )
             assert result.scalar() == "users"
 
             # Check sessions table exists
             result = await conn.execute(
-                text("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
+                text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='sessions'"
+                )
             )
             assert result.scalar() == "sessions"
 
             # Check workspaces table exists
             result = await conn.execute(
-                text("SELECT name FROM sqlite_master WHERE type='table' AND name='workspaces'")
+                text(
+                    "SELECT name FROM sqlite_master "
+                    "WHERE type='table' AND name='workspaces'"
+                )
             )
             assert result.scalar() == "workspaces"
 
@@ -113,7 +122,7 @@ class TestUserModel:
         user2 = User(username="sameuser", password_hash="hash2")
         db_session.add(user2)
 
-        with pytest.raises(Exception):  # IntegrityError
+        with pytest.raises(IntegrityError):
             await db_session.commit()
 
 
@@ -130,7 +139,7 @@ class TestSessionModel:
         await db_session.refresh(user)
 
         # Create session
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        expires_at = datetime.now(UTC) + timedelta(hours=24)
         session = Session(user_id=user.id, expires_at=expires_at)
         db_session.add(session)
         await db_session.commit()
@@ -140,7 +149,9 @@ class TestSessionModel:
         assert session.user_id == user.id
         assert session.created_at is not None
         # SQLite doesn't preserve timezone, so compare without tzinfo
-        assert session.expires_at.replace(tzinfo=None) == expires_at.replace(tzinfo=None)
+        assert session.expires_at.replace(tzinfo=None) == expires_at.replace(
+            tzinfo=None
+        )
         assert session.revoked_at is None
 
     @pytest.mark.asyncio
@@ -153,7 +164,7 @@ class TestSessionModel:
 
         session = Session(
             user_id=user.id,
-            expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+            expires_at=datetime.now(UTC) + timedelta(hours=24),
         )
         db_session.add(session)
         await db_session.commit()
@@ -253,5 +264,3 @@ class TestWorkspaceModel:
 
         assert loaded_ws.owner.id == user.id
         assert loaded_ws.owner.username == "ownerrel"
-
-

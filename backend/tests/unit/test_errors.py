@@ -1,7 +1,6 @@
 """Tests for the errors module."""
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.errors import (
@@ -153,7 +152,7 @@ class TestSpecificErrors:
         assert error.message == custom_msg
 
     def test_invalid_state_error_use_case(self):
-        """InvalidStateError for state transition failure (spec.md lines 104, 122, 139)."""
+        """InvalidStateError for state transition failure."""
         error = InvalidStateError("Cannot start workspace in RUNNING state")
         assert error.status_code == 409
         assert error.code == ErrorCode.INVALID_STATE
@@ -184,6 +183,7 @@ class TestExceptionHandler:
 
     def test_exception_handler_returns_json(self, test_app, client):
         """Exception handler should return JSON response."""
+
         # Add a test endpoint that raises an error
         @test_app.get("/test-error")
         async def test_error():
@@ -211,7 +211,7 @@ class TestExceptionHandler:
         assert data["error"]["code"] == "INVALID_STATE"
 
     def test_generic_exception_handler(self, monkeypatch):
-        """Generic exception handler should return INTERNAL_ERROR for unexpected exceptions."""
+        """Generic handler returns INTERNAL_ERROR for unexpected exceptions."""
         # Set required env var for config
         monkeypatch.setenv("CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR", "/tmp/test")
 

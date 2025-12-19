@@ -9,7 +9,7 @@ Tables:
 - workspaces: Workspace metadata
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -22,13 +22,11 @@ if TYPE_CHECKING:
 
 
 def generate_ulid() -> str:
-    """Generate a new ULID string."""
     return str(ULID())
 
 
 def utc_now() -> datetime:
-    """Get current UTC datetime."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class WorkspaceStatus(str, Enum):
@@ -56,14 +54,7 @@ class WorkspaceStatus(str, Enum):
 
 
 class User(SQLModel, table=True):
-    """User account model.
-
-    Attributes:
-        id: Primary key (ULID)
-        username: Login ID (unique)
-        password_hash: Argon2id hashed password
-        created_at: Account creation timestamp
-    """
+    """User account model."""
 
     __tablename__ = "users"
 
@@ -78,18 +69,7 @@ class User(SQLModel, table=True):
 
 
 class Session(SQLModel, table=True):
-    """Login session model.
-
-    Sessions are used for authentication. The session ID is stored
-    in a cookie and validated on each request.
-
-    Attributes:
-        id: Primary key (ULID, used as session cookie value)
-        user_id: Foreign key to users table
-        created_at: Session creation timestamp
-        expires_at: Session expiration timestamp
-        revoked_at: Logout/revocation timestamp (nullable)
-    """
+    """Login session model."""
 
     __tablename__ = "sessions"
 
@@ -104,27 +84,7 @@ class Session(SQLModel, table=True):
 
 
 class Workspace(SQLModel, table=True):
-    """Workspace metadata model.
-
-    A workspace represents a cloud development environment instance.
-    The actual container is managed by Instance Controller.
-
-    Attributes:
-        id: Primary key (ULID)
-        owner_user_id: Foreign key to users table
-        name: Workspace name
-        description: Short description (optional)
-        memo: Free-form memo (optional)
-        status: Current workspace status
-        image_ref: Container image reference
-        instance_backend: Instance controller backend (local-docker)
-        storage_backend: Storage provider backend (local-dir)
-        home_store_key: Logical key for home storage
-        home_ctx: Opaque context from storage provider (nullable)
-        created_at: Creation timestamp
-        updated_at: Last update timestamp
-        deleted_at: Soft delete timestamp (nullable)
-    """
+    """Workspace metadata model."""
 
     __tablename__ = "workspaces"
 
