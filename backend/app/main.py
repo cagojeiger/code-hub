@@ -13,8 +13,13 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import get_settings
 from app.core.errors import CodeHubError, InternalError
+from app.core.logging import setup_logging
+from app.core.middleware import RequestIdMiddleware
 from app.core.security import hash_password
 from app.db import User, close_db, get_engine, init_db
+
+# Setup logging before anything else
+setup_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +56,16 @@ async def _create_initial_admin(session: AsyncSession, password: str) -> None:
 async def lifespan(_app: FastAPI):
     """Application lifespan handler - initializes DB and validates config on startup."""
     settings = get_settings()
-    print(f"[config] Server bind: {settings.server.bind}")
-    print(f"[config] Public base URL: {settings.server.public_base_url}")
-    print(f"[config] Home store backend: {settings.home_store.backend}")
-    print(f"[config] Home store control_plane_base_dir: {settings.home_store.control_plane_base_dir}")
-    print(f"[config] Database URL: {settings.database.url}")
+    logger.info(
+        "Configuration loaded",
+        extra={
+            "server_bind": settings.server.bind,
+            "public_base_url": settings.server.public_base_url,
+            "home_store_backend": settings.home_store.backend,
+            "control_plane_base_dir": settings.home_store.control_plane_base_dir,
+            "database_url": settings.database.url.split("@")[-1],  # Hide credentials
+        },
+    )
 
     # Initialize database with WAL mode
     await init_db(settings.database.url, settings.database.echo)
@@ -78,6 +88,9 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Add middleware (order matters: first added = outermost)
+app.add_middleware(RequestIdMiddleware)
 
 
 @app.exception_handler(CodeHubError)
