@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from docker.errors import NotFound
 
-from app.instance import LocalDockerInstanceController
-from app.instance.local_docker import (
+from app.services.instance import LocalDockerInstanceController
+from app.services.instance.local_docker import (
     CODE_SERVER_PORT,
     CONTAINER_PREFIX,
     HOME_MOUNT_PATH,
@@ -26,7 +26,7 @@ def run_async(coro):
 @pytest.fixture
 def mock_docker_client():
     """Create a mock Docker client."""
-    with patch("app.instance.local_docker.docker") as mock_docker:
+    with patch("app.services.instance.local_docker.docker") as mock_docker:
         mock_client = MagicMock()
         mock_docker.DockerClient.return_value = mock_client
         mock_docker.from_env.return_value = mock_client

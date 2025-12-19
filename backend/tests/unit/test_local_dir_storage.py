@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from app.storage import LocalDirStorageProvider
+from app.services.storage import LocalDirStorageProvider
 
 
 def run_async(coro):

@@ -6,20 +6,17 @@ Endpoints:
 - GET /api/v1/workspaces/{id} - Get workspace detail
 - PATCH /api/v1/workspaces/{id} - Update workspace
 - DELETE /api/v1/workspaces/{id} - Delete workspace (CREATED/STOPPED/ERROR only)
+- POST /api/v1/workspaces/{id}:start - Start workspace
 """
 
 from datetime import datetime
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, BackgroundTasks, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
-from sqlmodel import col
 
-from app.api.v1.dependencies import CurrentUser, DbSession
+from app.api.v1.dependencies import CurrentUser, DbSession, WsService
 from app.core.config import get_settings
-from app.core.errors import InvalidStateError, WorkspaceNotFoundError
 from app.db import Workspace, WorkspaceStatus
-from app.db.models import generate_ulid, utc_now
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -55,6 +52,13 @@ class WorkspaceResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class WorkspaceActionResponse(BaseModel):
+    """Response schema for workspace actions (start/stop)."""
+
+    id: str
+    status: WorkspaceStatus
+
+
 def _build_workspace_url(workspace_id: str) -> str:
     """Build workspace URL from workspace ID."""
     settings = get_settings()
@@ -75,24 +79,14 @@ def _workspace_to_response(workspace: Workspace) -> WorkspaceResponse:
     )
 
 
-def _build_home_store_key(user_id: str, workspace_id: str) -> str:
-    """Build home store key from user and workspace IDs."""
-    return f"users/{user_id}/workspaces/{workspace_id}/home"
-
-
 @router.get("", response_model=list[WorkspaceResponse])
 async def list_workspaces(
     session: DbSession,
     current_user: CurrentUser,
+    ws_service: WsService,
 ) -> list[WorkspaceResponse]:
     """List workspaces owned by current user."""
-    result = await session.execute(
-        select(Workspace).where(
-            col(Workspace.owner_user_id) == current_user.id,
-            col(Workspace.deleted_at).is_(None),
-        )
-    )
-    workspaces = result.scalars().all()
+    workspaces = await ws_service.list_workspaces(session, current_user.id)
     return [_workspace_to_response(ws) for ws in workspaces]
 
 
@@ -105,51 +99,17 @@ async def create_workspace(
     body: WorkspaceCreate,
     session: DbSession,
     current_user: CurrentUser,
+    ws_service: WsService,
 ) -> WorkspaceResponse:
     """Create a new workspace."""
-    settings = get_settings()
-
-    workspace_id = generate_ulid()
-    home_store_key = _build_home_store_key(current_user.id, workspace_id)
-
-    workspace = Workspace(
-        id=workspace_id,
-        owner_user_id=current_user.id,
+    workspace = await ws_service.create_workspace(
+        session=session,
+        user_id=current_user.id,
         name=body.name,
         description=body.description,
         memo=body.memo,
-        status=WorkspaceStatus.CREATED,
-        image_ref=settings.workspace.default_image,
-        instance_backend="local-docker",
-        storage_backend=settings.home_store.backend,
-        home_store_key=home_store_key,
-        home_ctx=None,
     )
-
-    session.add(workspace)
-    await session.commit()
-    await session.refresh(workspace)
-
     return _workspace_to_response(workspace)
-
-
-async def _get_workspace_or_404(
-    session: DbSession,
-    workspace_id: str,
-    current_user: CurrentUser,
-) -> Workspace:
-    """Get workspace by ID or raise 404."""
-    result = await session.execute(
-        select(Workspace).where(
-            col(Workspace.id) == workspace_id,
-            col(Workspace.owner_user_id) == current_user.id,
-            col(Workspace.deleted_at).is_(None),
-        )
-    )
-    workspace = result.scalar_one_or_none()
-    if workspace is None:
-        raise WorkspaceNotFoundError()
-    return workspace
 
 
 @router.get("/{workspace_id}", response_model=WorkspaceResponse)
@@ -157,9 +117,10 @@ async def get_workspace(
     workspace_id: str,
     session: DbSession,
     current_user: CurrentUser,
+    ws_service: WsService,
 ) -> WorkspaceResponse:
     """Get workspace by ID."""
-    workspace = await _get_workspace_or_404(session, workspace_id, current_user)
+    workspace = await ws_service.get_workspace(session, current_user.id, workspace_id)
     return _workspace_to_response(workspace)
 
 
@@ -169,26 +130,17 @@ async def update_workspace(
     body: WorkspaceUpdate,
     session: DbSession,
     current_user: CurrentUser,
+    ws_service: WsService,
 ) -> WorkspaceResponse:
     """Update workspace metadata."""
-    workspace = await _get_workspace_or_404(session, workspace_id, current_user)
-
     update_data = body.model_dump(exclude_unset=True)
-    if update_data:
-        update_data["updated_at"] = utc_now()
-        for key, value in update_data.items():
-            setattr(workspace, key, value)
-        await session.commit()
-        await session.refresh(workspace)
-
+    workspace = await ws_service.update_workspace(
+        session=session,
+        user_id=current_user.id,
+        workspace_id=workspace_id,
+        **update_data,
+    )
     return _workspace_to_response(workspace)
-
-
-DELETABLE_STATES = {
-    WorkspaceStatus.CREATED,
-    WorkspaceStatus.STOPPED,
-    WorkspaceStatus.ERROR,
-}
 
 
 @router.delete("/{workspace_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -196,49 +148,45 @@ async def delete_workspace(
     workspace_id: str,
     session: DbSession,
     current_user: CurrentUser,
+    ws_service: WsService,
 ) -> Response:
     """Delete workspace (soft delete).
 
     Only allowed in CREATED, STOPPED, or ERROR state.
     Uses CAS pattern to prevent race conditions.
     """
-    # First verify workspace exists and is owned by current user
-    workspace = await _get_workspace_or_404(session, workspace_id, current_user)
-
-    if workspace.status not in DELETABLE_STATES:
-        raise InvalidStateError(
-            f"Cannot delete workspace in {workspace.status.value} state. "
-            f"Allowed states: {', '.join(s.value for s in DELETABLE_STATES)}"
-        )
-
-    # CAS update: atomically change to DELETING
-    now = utc_now()
-    result = await session.execute(
-        update(Workspace)
-        .where(
-            col(Workspace.id) == workspace_id,
-            col(Workspace.status).in_([s.value for s in DELETABLE_STATES]),
-        )
-        .values(
-            status=WorkspaceStatus.DELETING,
-            updated_at=now,
-        )
-    )
-
-    if result.rowcount == 0:  # type: ignore[attr-defined]
-        raise InvalidStateError("Workspace state changed during delete operation")
-
-    # For M4 CRUD API, we do synchronous soft delete
-    # Full delete flow (Instance Controller + Storage) is in DeleteWorkspace API task
-    await session.execute(
-        update(Workspace)
-        .where(col(Workspace.id) == workspace_id)
-        .values(
-            status=WorkspaceStatus.DELETED,
-            deleted_at=now,
-            updated_at=now,
-        )
-    )
-    await session.commit()
-
+    await ws_service.delete_workspace(session, current_user.id, workspace_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{workspace_id}:start", response_model=WorkspaceActionResponse)
+async def start_workspace(
+    workspace_id: str,
+    session: DbSession,
+    current_user: CurrentUser,
+    ws_service: WsService,
+    background_tasks: BackgroundTasks,
+) -> WorkspaceActionResponse:
+    """Start a workspace.
+
+    Only allowed in CREATED, STOPPED, or ERROR state.
+    Uses CAS pattern to prevent race conditions.
+
+    Returns immediately with PROVISIONING status.
+    Final status (RUNNING/ERROR) is determined asynchronously.
+    """
+    workspace = await ws_service.initiate_start(session, current_user.id, workspace_id)
+
+    # Schedule background task for provisioning (delegated to service)
+    background_tasks.add_task(
+        ws_service.start_workspace,
+        workspace_id=workspace_id,
+        home_store_key=workspace.home_store_key,
+        existing_ctx=workspace.home_ctx,
+        image_ref=workspace.image_ref,
+    )
+
+    return WorkspaceActionResponse(
+        id=workspace_id,
+        status=WorkspaceStatus.PROVISIONING,
+    )

@@ -9,7 +9,11 @@ import os
 import shutil
 from typing import Literal
 
-from app.storage.interface import ProvisionResult, StorageProvider, StorageStatus
+from app.services.storage.interface import (
+    ProvisionResult,
+    StorageProvider,
+    StorageStatus,
+)
 
 CODER_UID = 1000
 CODER_GID = 1000

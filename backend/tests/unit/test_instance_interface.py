@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.instance import InstanceController, InstanceStatus, UpstreamInfo
+from app.services.instance import InstanceController, InstanceStatus, UpstreamInfo
 
 
 class TestUpstreamInfo:

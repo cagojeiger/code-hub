@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.storage import ProvisionResult, StorageProvider, StorageStatus
+from app.services.storage import ProvisionResult, StorageProvider, StorageStatus
 
 
 class TestProvisionResult:
