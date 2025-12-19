@@ -11,27 +11,12 @@ _hasher = PasswordHasher()
 
 
 def hash_password(password: str) -> str:
-    """Hash a password using Argon2id.
-
-    Args:
-        password: Plain text password
-
-    Returns:
-        Argon2id hashed password string
-    """
+    """Hash a password using Argon2id."""
     return _hasher.hash(password)
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    """Verify a password against its hash.
-
-    Args:
-        password: Plain text password to verify
-        password_hash: Argon2id hashed password
-
-    Returns:
-        True if password matches, False otherwise
-    """
+    """Verify a password against its hash."""
     try:
         _hasher.verify(password_hash, password)
         return True

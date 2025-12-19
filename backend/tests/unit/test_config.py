@@ -151,7 +151,9 @@ class TestHealthcheckConfig:
 
     def test_custom_values(self):
         """Healthcheck config should accept custom values."""
-        config = HealthcheckConfig(type="tcp", path="/health", interval="5s", timeout="2m")
+        config = HealthcheckConfig(
+            type="tcp", path="/health", interval="5s", timeout="2m"
+        )
         assert config.type == "tcp"
         assert config.path == "/health"
         assert config.interval == "5s"
@@ -317,7 +319,9 @@ class TestSettings:
         with pytest.raises(ValidationError) as exc_info:
             Settings(
                 server=ServerConfig(bind="invalid"),
-                home_store=HomeStoreConfig(workspace_base_dir="/host/var/lib/codehub/homes"),
+                home_store=HomeStoreConfig(
+                    workspace_base_dir="/host/var/lib/codehub/homes"
+                ),
             )
         error_str = str(exc_info.value)
         assert "bind" in error_str.lower() or "host:port" in error_str
@@ -331,7 +335,9 @@ class TestEnvVarIntegration:
 
     def test_env_only_boot(self, monkeypatch):
         """Settings should boot with only required environment variables."""
-        monkeypatch.setenv("CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR", "/host/var/lib/codehub/homes")
+        monkeypatch.setenv(
+            "CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR", "/host/var/lib/codehub/homes"
+        )
 
         settings = Settings()
         assert settings.server.bind == ":8080"
@@ -340,7 +346,9 @@ class TestEnvVarIntegration:
     def test_env_override_defaults(self, monkeypatch):
         """Environment variables should override defaults."""
         monkeypatch.setenv("CODEHUB_SERVER__BIND", ":9000")
-        monkeypatch.setenv("CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR", "/host/var/lib/codehub/homes")
+        monkeypatch.setenv(
+            "CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR", "/host/var/lib/codehub/homes"
+        )
 
         settings = Settings()
         assert settings.server.bind == ":9000"
@@ -348,7 +356,9 @@ class TestEnvVarIntegration:
     def test_nested_env_vars(self, monkeypatch):
         """Nested environment variables should work correctly."""
         monkeypatch.setenv("CODEHUB_AUTH__SESSION__TTL", "7d")
-        monkeypatch.setenv("CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR", "/host/var/lib/codehub/homes")
+        monkeypatch.setenv(
+            "CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR", "/host/var/lib/codehub/homes"
+        )
 
         settings = Settings()
         assert settings.auth.session.ttl == "7d"

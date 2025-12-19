@@ -10,9 +10,9 @@ Examples:
 """
 
 from functools import lru_cache
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,14 +47,10 @@ class ServerConfig(BaseSettings):
         try:
             port = int(parts[1])
             if not 1 <= port <= 65535:
-                raise ValueError(
-                    f"Invalid port {port}: must be between 1 and 65535"
-                )
+                raise ValueError(f"Invalid port {port}: must be between 1 and 65535")
         except ValueError as e:
             if "invalid literal" in str(e):
-                raise ValueError(
-                    f"Invalid port '{parts[1]}': must be a number"
-                ) from e
+                raise ValueError(f"Invalid port '{parts[1]}': must be a number") from e
             raise
         return v
 
@@ -164,7 +160,7 @@ class HealthcheckConfig(BaseSettings):
 
     @field_validator("interval", "timeout")
     @classmethod
-    def validate_duration(cls, v: str, info) -> str:
+    def validate_duration(cls, v: str, info: ValidationInfo) -> str:
         """Validate duration format."""
         if not v:
             raise ValueError(f"{info.field_name} cannot be empty")
@@ -268,11 +264,11 @@ class HomeStoreConfig(BaseSettings):
     )
     control_plane_base_dir: str = Field(
         default="/var/lib/codehub/homes",
-        description="Base directory as seen from Control Plane container (Storage Provider uses this)",
+        description="Base directory from Control Plane container perspective",
     )
     workspace_base_dir: str | None = Field(
         default=None,
-        description="Same location as control_plane_base_dir but from host perspective (for Docker bind mount)",
+        description="Host path for Docker bind mount",
     )
 
     @field_validator("control_plane_base_dir")
@@ -283,17 +279,19 @@ class HomeStoreConfig(BaseSettings):
             raise ValueError("control_plane_base_dir cannot be empty")
         if not v.startswith("/"):
             raise ValueError(
-                f"Invalid control_plane_base_dir '{v}': must be an absolute path starting with '/'"
+                f"Invalid control_plane_base_dir '{v}': "
+                "must be an absolute path starting with '/'"
             )
         return v.rstrip("/")
 
     @model_validator(mode="after")
-    def validate_workspace_base_dir_for_local_dir(self):
+    def validate_workspace_base_dir_for_local_dir(self) -> Self:
         """Validate workspace_base_dir is set when using local-dir backend."""
         if self.backend == "local-dir" and not self.workspace_base_dir:
             raise ValueError(
-                "home_store.workspace_base_dir is required when using 'local-dir' backend. "
-                "Set CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR environment variable."
+                "home_store.workspace_base_dir is required "
+                "when using 'local-dir' backend. "
+                "Set CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR env var."
             )
         return self
 

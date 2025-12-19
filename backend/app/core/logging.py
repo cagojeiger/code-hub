@@ -2,15 +2,12 @@
 
 Provides consistent JSON structured logging across all modules.
 Supports Request ID context for request tracing.
-
-Output format (JSON):
-    {"timestamp": "2025-01-01T12:00:00.000Z", "level": "INFO", "module": "app.main", "message": "..."}
 """
 
 import logging
 import sys
 from contextvars import ContextVar
-from typing import Literal
+from typing import Any, Literal
 
 from pythonjsonlogger.json import JsonFormatter as BaseJsonFormatter
 
@@ -31,9 +28,9 @@ class CodeHubJsonFormatter(BaseJsonFormatter):
 
     def add_fields(
         self,
-        log_record: dict,
+        log_record: dict[str, Any],
         record: logging.LogRecord,
-        message_dict: dict,
+        message_dict: dict[str, Any],
     ) -> None:
         """Add custom fields to log record."""
         super().add_fields(log_record, record, message_dict)
@@ -57,25 +54,7 @@ def setup_logging(
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO",
     json_format: bool = True,
 ) -> None:
-    """Configure logging for the application.
-
-    Sets up root logger with JSON structured format including:
-    - timestamp (ISO format)
-    - level (DEBUG/INFO/WARNING/ERROR)
-    - module name
-    - message
-    - request_id (when available)
-
-    Args:
-        level: Logging level (default: INFO)
-        json_format: Use JSON format (default: True). Set False for human-readable dev logs.
-
-    Example:
-        >>> setup_logging("DEBUG")
-        >>> logger = logging.getLogger(__name__)
-        >>> logger.info("Application started")
-        {"timestamp": "2025-01-01 12:00:00", "level": "INFO", "module": "app.main", "message": "Application started"}
-    """
+    """Configure logging for the application."""
     root_logger = logging.getLogger()
 
     # Clear existing handlers to avoid duplicate logs
@@ -88,14 +67,13 @@ def setup_logging(
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(getattr(logging, level))
 
+    formatter: logging.Formatter
     if json_format:
-        # JSON format for production
         formatter = CodeHubJsonFormatter(
             fmt="%(timestamp)s %(level)s %(module)s %(message)s",
             datefmt="%Y-%m-%dT%H:%M:%S",
         )
     else:
-        # Human-readable format for development
         formatter = logging.Formatter(
             fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",

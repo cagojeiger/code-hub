@@ -4,8 +4,6 @@ import json
 import logging
 from io import StringIO
 
-import pytest
-
 from app.core.logging import (
     CodeHubJsonFormatter,
     get_request_id,

@@ -2,14 +2,15 @@
 
 import asyncio
 import logging
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
-import docker
+import docker  # type: ignore[import-untyped]
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import get_settings
 from app.core.errors import CodeHubError, InternalError
@@ -18,24 +19,18 @@ from app.core.middleware import RequestIdMiddleware
 from app.core.security import hash_password
 from app.db import User, close_db, get_engine, init_db
 
-# Setup logging before anything else
 setup_logging()
-
 logger = logging.getLogger(__name__)
 
-# Initial admin username (fixed)
 INITIAL_ADMIN_USERNAME = "admin"
 
 
 async def _create_initial_admin(session: AsyncSession, password: str) -> None:
-    """Create initial admin user if not exists.
-
-    Args:
-        session: Async database session
-        password: Initial admin password
-    """
+    """Create initial admin user if not exists."""
     result = await session.execute(
-        select(User).where(User.username == INITIAL_ADMIN_USERNAME)
+        select(User).where(
+            User.username == INITIAL_ADMIN_USERNAME  # type: ignore[arg-type]
+        )
     )
     existing_user = result.scalar_one_or_none()
 
@@ -53,7 +48,7 @@ async def _create_initial_admin(session: AsyncSession, password: str) -> None:
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     """Application lifespan handler - initializes DB and validates config on startup."""
     settings = get_settings()
     logger.info(
@@ -67,18 +62,17 @@ async def lifespan(_app: FastAPI):
         },
     )
 
-    # Initialize database with WAL mode
     await init_db(settings.database.url, settings.database.echo)
 
-    # Create initial admin user
     engine = get_engine()
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with async_session() as session:
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    async with session_factory() as session:
         await _create_initial_admin(session, settings.auth.initial_admin_password)
 
     yield
 
-    # Cleanup
     await close_db()
 
 
@@ -126,14 +120,18 @@ async def root() -> dict[str, str]:
 
 
 @app.get("/debug/containers")
-async def list_containers() -> dict:
+async def list_containers() -> dict[str, Any]:
     """List codehub namespace containers (for testing Docker socket proxy)."""
 
-    def _list():
+    def _list() -> list[dict[str, Any]]:
         client = docker.from_env()
         containers = client.containers.list(all=True)
         return [
-            {"name": c.name, "status": c.status, "image": c.image.tags[0] if c.image.tags else "unknown"}
+            {
+                "name": c.name,
+                "status": c.status,
+                "image": c.image.tags[0] if c.image.tags else "unknown",
+            }
             for c in containers
             if c.name.startswith("codehub-")
         ]
