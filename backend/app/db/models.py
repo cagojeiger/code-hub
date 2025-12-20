@@ -63,7 +63,6 @@ class User(SQLModel, table=True):
     password_hash: str
     created_at: datetime = Field(default_factory=utc_now)
 
-    # Relationships
     sessions: list["Session"] = Relationship(back_populates="user")
     workspaces: list["Workspace"] = Relationship(back_populates="owner")
 
@@ -79,7 +78,6 @@ class Session(SQLModel, table=True):
     expires_at: datetime
     revoked_at: datetime | None = Field(default=None)
 
-    # Relationships
     user: User = Relationship(back_populates="sessions")
 
 
@@ -103,5 +101,4 @@ class Workspace(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now)
     deleted_at: datetime | None = Field(default=None, index=True)
 
-    # Relationships
     owner: User = Relationship(back_populates="workspaces")

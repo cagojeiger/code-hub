@@ -50,7 +50,6 @@ async def login(
     On success, sets a session cookie and returns user info.
     On failure, returns 401 Unauthorized.
     """
-    # Find user by username
     result = await db.execute(
         select(User).where(User.username == body.username)  # type: ignore[arg-type]
     )
@@ -59,14 +58,11 @@ async def login(
     if user is None:
         raise UnauthorizedError("Invalid username or password")
 
-    # Verify password
     if not verify_password(body.password, user.password_hash):
         raise UnauthorizedError("Invalid username or password")
 
-    # Create session
     session = await SessionService.create(db, user.id)
 
-    # Set session cookie
     settings = get_settings()
     response.set_cookie(
         key=settings.auth.session.cookie_name,
@@ -93,11 +89,9 @@ async def logout(
     """
     settings = get_settings()
 
-    # Revoke session if cookie present
     if session:
         await SessionService.revoke(db, session)
 
-    # Clear cookie
     response.delete_cookie(
         key=settings.auth.session.cookie_name,
         path="/",

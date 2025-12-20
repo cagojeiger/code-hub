@@ -28,19 +28,11 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
         """Process request and add request ID."""
-        # Get existing request ID or generate new one
         request_id = request.headers.get(REQUEST_ID_HEADER) or str(uuid.uuid4())
-
-        # Store in request state for access in route handlers
         request.state.request_id = request_id
-
-        # Set in context for logging
         set_request_id(request_id)
 
-        # Process request
         response = await call_next(request)
-
-        # Add request ID to response header
         response.headers[REQUEST_ID_HEADER] = request_id
 
         return response

@@ -99,7 +99,6 @@ app = FastAPI(
 # Add middleware (order matters: first added = outermost)
 app.add_middleware(RequestIdMiddleware)
 
-# Include API routers
 app.include_router(api_v1_router)
 
 # Include proxy router (routes: /w/{workspace_id}/*)
@@ -132,7 +131,6 @@ async def health_check() -> dict[str, str]:
     return {"status": "ok"}
 
 
-# Mount static files
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
