@@ -13,12 +13,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.v1 import router as api_v1_router
+from app.api.v1.dependencies import get_instance_controller, get_storage_provider
 from app.core.config import get_settings
 from app.core.errors import CodeHubError, InternalError
 from app.core.logging import setup_logging
 from app.core.middleware import RequestIdMiddleware
 from app.core.security import hash_password
 from app.db import User, close_db, get_engine, init_db
+from app.services.recovery import startup_recovery
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -71,6 +73,14 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     )
     async with session_factory() as session:
         await _create_initial_admin(session, settings.auth.initial_admin_password)
+
+    # Startup recovery: reconcile transitional states before accepting requests
+    async with session_factory() as session:
+        recovered = await startup_recovery(
+            session, get_instance_controller(), get_storage_provider()
+        )
+        if recovered > 0:
+            logger.info("Startup recovery: %d workspace(s) recovered", recovered)
 
     yield
 
