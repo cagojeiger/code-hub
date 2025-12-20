@@ -29,11 +29,11 @@ async def startup_recovery(
     instance_controller: InstanceController,
     storage_provider: StorageProvider,
 ) -> int:
-    """Recover workspaces stuck in transitional states.
+    """Recover workspaces stuck in transitional states and verify RUNNING states.
 
     Runs at server startup to reconcile DB state with actual instance state.
-    For each stuck workspace, queries the instance controller and updates
-    the DB to a terminal state.
+    1. Recovers workspaces in transitional states (PROVISIONING, STOPPING, DELETING)
+    2. Verifies RUNNING workspaces have actual containers
 
     Recovery Matrix:
     | DB Status     | Instance State         | Result   |
@@ -44,10 +44,30 @@ async def startup_recovery(
     | STOPPING      | running                | RUNNING  |
     | DELETING      | not exists             | DELETED  |
     | DELETING      | exists                 | ERROR    |
+    | RUNNING       | not exists/running     | ERROR    |
 
     Returns:
-        Number of workspaces recovered.
+        Number of workspaces recovered/fixed.
     """
+    total_fixed = 0
+
+    # Phase 1: Recover transitional states
+    total_fixed += await _recover_transitional_workspaces(
+        session, instance_controller, storage_provider
+    )
+
+    # Phase 2: Verify RUNNING workspaces have actual containers
+    total_fixed += await _verify_running_workspaces(session, instance_controller)
+
+    return total_fixed
+
+
+async def _recover_transitional_workspaces(
+    session: AsyncSession,
+    instance_controller: InstanceController,
+    storage_provider: StorageProvider,
+) -> int:
+    """Recover workspaces stuck in transitional states."""
     # Find all workspaces in transitional states
     result = await session.execute(
         select(Workspace).where(
@@ -91,6 +111,73 @@ async def startup_recovery(
     )
 
     return recovered_count
+
+
+async def _verify_running_workspaces(
+    session: AsyncSession,
+    instance_controller: InstanceController,
+) -> int:
+    """Verify RUNNING workspaces have actual containers.
+
+    Checks all RUNNING workspaces and marks them as ERROR if their
+    containers are missing (e.g., after docker compose down/up).
+    """
+    result = await session.execute(
+        select(Workspace).where(
+            Workspace.status == WorkspaceStatus.RUNNING.value,
+            Workspace.deleted_at.is_(None),  # type: ignore[union-attr]
+        )
+    )
+    running_workspaces = list(result.scalars().all())
+
+    if not running_workspaces:
+        logger.debug("No RUNNING workspaces to verify")
+        return 0
+
+    logger.info(
+        "Verifying %d RUNNING workspace(s) have containers",
+        len(running_workspaces),
+    )
+
+    fixed_count = 0
+    now = utc_now()
+
+    for ws in running_workspaces:
+        try:
+            status = await instance_controller.get_status(ws.id)
+
+            if not status.exists or not status.running:
+                # Container is missing or not running
+                await session.execute(
+                    update(Workspace)
+                    .where(Workspace.id == ws.id)  # type: ignore[arg-type]
+                    .values(
+                        status=WorkspaceStatus.ERROR,
+                        updated_at=now,
+                    )
+                )
+                await session.commit()
+                fixed_count += 1
+                logger.warning(
+                    "Workspace %s: RUNNING -> ERROR (container missing after restart)",
+                    ws.id,
+                )
+        except Exception as e:
+            logger.exception(
+                "Failed to verify workspace %s: %s",
+                ws.id,
+                e,
+            )
+            continue
+
+    if fixed_count > 0:
+        logger.info(
+            "Verification complete: %d/%d workspace(s) marked as ERROR",
+            fixed_count,
+            len(running_workspaces),
+        )
+
+    return fixed_count
 
 
 async def _recover_workspace(

@@ -7,6 +7,7 @@ Tests cover all recovery matrix scenarios:
 - STOPPING -> RUNNING (still running)
 - DELETING -> DELETED (not exists) + deprovision
 - DELETING -> ERROR (exists)
+- RUNNING -> ERROR (container missing after restart)
 - Mixed scenarios (multiple states)
 - Empty case (no workspaces to recover)
 """
@@ -360,7 +361,7 @@ class TestStartupRecoveryMixed:
         assert mock_storage.deprovision.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_no_transitional_workspaces(
+    async def test_no_transitional_workspaces_with_healthy_running(
         self, db_session: AsyncSession, test_user: User
     ):
         """Test recovery when no workspaces are in transitional states."""
@@ -372,12 +373,18 @@ class TestStartupRecoveryMixed:
         await db_session.commit()
 
         mock_instance = AsyncMock()
+        # RUNNING workspace has healthy container
+        mock_instance.get_status.return_value = InstanceStatus(
+            exists=True, running=True, healthy=True
+        )
         mock_storage = AsyncMock()
 
         count = await startup_recovery(db_session, mock_instance, mock_storage)
 
+        # RUNNING verification runs but finds healthy container
         assert count == 0
-        mock_instance.get_status.assert_not_called()
+        # get_status called for RUNNING workspace verification
+        mock_instance.get_status.assert_called_once()
 
 
 class TestStartupRecoveryErrorHandling:
@@ -446,3 +453,136 @@ class TestStartupRecoveryErrorHandling:
         # State should still be updated even if deprovision failed
         assert ws.status == WorkspaceStatus.STOPPED
         assert ws.home_ctx is None
+
+
+class TestVerifyRunningWorkspaces:
+    """Tests for RUNNING state verification (container missing after restart)."""
+
+    @pytest.mark.asyncio
+    async def test_running_to_error_when_container_missing(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """RUNNING -> ERROR when container does not exist."""
+        ws = create_workspace(test_user.id, WorkspaceStatus.RUNNING)
+        db_session.add(ws)
+        await db_session.commit()
+        await db_session.refresh(ws)
+
+        mock_instance = AsyncMock()
+        mock_instance.get_status.return_value = InstanceStatus(
+            exists=False, running=False, healthy=False
+        )
+        mock_storage = AsyncMock()
+
+        count = await startup_recovery(db_session, mock_instance, mock_storage)
+
+        assert count == 1
+        await db_session.refresh(ws)
+        assert ws.status == WorkspaceStatus.ERROR
+
+    @pytest.mark.asyncio
+    async def test_running_to_error_when_container_not_running(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """RUNNING -> ERROR when container exists but not running."""
+        ws = create_workspace(test_user.id, WorkspaceStatus.RUNNING)
+        db_session.add(ws)
+        await db_session.commit()
+        await db_session.refresh(ws)
+
+        mock_instance = AsyncMock()
+        mock_instance.get_status.return_value = InstanceStatus(
+            exists=True, running=False, healthy=False
+        )
+        mock_storage = AsyncMock()
+
+        count = await startup_recovery(db_session, mock_instance, mock_storage)
+
+        assert count == 1
+        await db_session.refresh(ws)
+        assert ws.status == WorkspaceStatus.ERROR
+
+    @pytest.mark.asyncio
+    async def test_running_stays_running_when_container_healthy(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """RUNNING stays RUNNING when container is running and healthy."""
+        ws = create_workspace(test_user.id, WorkspaceStatus.RUNNING)
+        db_session.add(ws)
+        await db_session.commit()
+        await db_session.refresh(ws)
+
+        mock_instance = AsyncMock()
+        mock_instance.get_status.return_value = InstanceStatus(
+            exists=True, running=True, healthy=True
+        )
+        mock_storage = AsyncMock()
+
+        count = await startup_recovery(db_session, mock_instance, mock_storage)
+
+        assert count == 0  # No changes needed
+        await db_session.refresh(ws)
+        assert ws.status == WorkspaceStatus.RUNNING
+
+    @pytest.mark.asyncio
+    async def test_running_verification_with_transitional_recovery(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """Test both transitional recovery and RUNNING verification together."""
+        # Transitional workspace
+        ws_provisioning = create_workspace(test_user.id, WorkspaceStatus.PROVISIONING)
+        ws_provisioning.name = "ws-prov"
+        # RUNNING workspace with missing container
+        ws_running = create_workspace(test_user.id, WorkspaceStatus.RUNNING)
+        ws_running.name = "ws-run"
+
+        db_session.add_all([ws_provisioning, ws_running])
+        await db_session.commit()
+
+        mock_instance = AsyncMock()
+
+        async def get_status(workspace_id: str) -> InstanceStatus:
+            if workspace_id == ws_provisioning.id:
+                # PROVISIONING -> RUNNING (healthy)
+                return InstanceStatus(exists=True, running=True, healthy=True)
+            else:
+                # RUNNING -> ERROR (container missing)
+                return InstanceStatus(exists=False, running=False, healthy=False)
+
+        mock_instance.get_status.side_effect = get_status
+        mock_storage = AsyncMock()
+
+        count = await startup_recovery(db_session, mock_instance, mock_storage)
+
+        assert count == 2  # Both workspaces fixed
+
+        await db_session.refresh(ws_provisioning)
+        await db_session.refresh(ws_running)
+
+        assert ws_provisioning.status == WorkspaceStatus.RUNNING
+        assert ws_running.status == WorkspaceStatus.ERROR
+
+    @pytest.mark.asyncio
+    async def test_deleted_running_workspace_ignored(
+        self, db_session: AsyncSession, test_user: User
+    ):
+        """RUNNING workspace with deleted_at set should be ignored."""
+        from app.db.models import utc_now
+
+        ws = create_workspace(test_user.id, WorkspaceStatus.RUNNING)
+        ws.deleted_at = utc_now()  # Soft-deleted
+        db_session.add(ws)
+        await db_session.commit()
+        await db_session.refresh(ws)
+
+        mock_instance = AsyncMock()
+        mock_instance.get_status.return_value = InstanceStatus(
+            exists=False, running=False, healthy=False
+        )
+        mock_storage = AsyncMock()
+
+        count = await startup_recovery(db_session, mock_instance, mock_storage)
+
+        assert count == 0  # Should not process deleted workspace
+        await db_session.refresh(ws)
+        assert ws.status == WorkspaceStatus.RUNNING  # Unchanged
