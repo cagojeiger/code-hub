@@ -231,18 +231,18 @@ async def proxy_http(
     # Filter headers
     headers = _filter_headers(dict(request.headers))
 
-    # Read request body
-    body = await request.body() if request.method in ("POST", "PUT", "PATCH") else None
-
-    # Proxy request
+    # Proxy request with streaming body (memory-efficient for large uploads)
     http_client = await get_http_client()
+
+    # Use request.stream() for streaming - avoids buffering entire body in memory
+    content = request.stream() if request.method in ("POST", "PUT", "PATCH") else None
 
     try:
         upstream_request = http_client.build_request(
             method=request.method,
             url=target_url,
             headers=headers,
-            content=body,
+            content=content,
         )
         upstream_response = await http_client.send(upstream_request, stream=True)
 
