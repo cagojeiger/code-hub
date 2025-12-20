@@ -136,19 +136,16 @@ class WorkspaceService:
         """
         from sqlalchemy import func
 
-        # Base query filter
         base_filter = [
             col(Workspace.owner_user_id) == user_id,
             col(Workspace.deleted_at).is_(None),
         ]
 
-        # Get total count
         count_result = await session.execute(
             select(func.count()).select_from(Workspace).where(*base_filter)
         )
         total = count_result.scalar() or 0
 
-        # Get paginated results
         offset = (page - 1) * per_page
         result = await session.execute(
             select(Workspace)
@@ -226,7 +223,6 @@ class WorkspaceService:
         """Update workspace metadata."""
         workspace = await self.get_workspace(session, user_id, workspace_id)
 
-        # Build update data from non-None values
         update_data: dict[str, str | None] = {}
         if name is not None:
             update_data["name"] = name

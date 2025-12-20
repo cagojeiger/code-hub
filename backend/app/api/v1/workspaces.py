@@ -205,7 +205,6 @@ async def delete_workspace(
     """
     workspace = await ws_service.initiate_delete(session, current_user.id, workspace_id)
 
-    # Schedule background task for deletion (delegated to service)
     background_tasks.add_task(
         ws_service.delete_workspace,
         workspace_id=workspace_id,
@@ -233,7 +232,6 @@ async def start_workspace(
     """
     workspace = await ws_service.initiate_start(session, current_user.id, workspace_id)
 
-    # Schedule background task for provisioning (delegated to service)
     background_tasks.add_task(
         ws_service.start_workspace,
         workspace_id=workspace_id,
@@ -266,7 +264,6 @@ async def stop_workspace(
     """
     workspace = await ws_service.initiate_stop(session, current_user.id, workspace_id)
 
-    # Schedule background task for stopping (delegated to service)
     background_tasks.add_task(
         ws_service.stop_workspace,
         workspace_id=workspace_id,

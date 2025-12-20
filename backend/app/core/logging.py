@@ -35,17 +35,14 @@ class CodeHubJsonFormatter(BaseJsonFormatter):
         """Add custom fields to log record."""
         super().add_fields(log_record, record, message_dict)
 
-        # Rename fields for consistency
         log_record["timestamp"] = self.formatTime(record, self.datefmt)
         log_record["level"] = record.levelname
         log_record["module"] = record.name
 
-        # Add request_id if available
         request_id = request_id_ctx.get()
         if request_id:
             log_record["request_id"] = request_id
 
-        # Remove redundant fields
         log_record.pop("levelname", None)
         log_record.pop("name", None)
 
@@ -59,11 +56,8 @@ def setup_logging(
 
     # Clear existing handlers to avoid duplicate logs
     root_logger.handlers.clear()
-
-    # Set log level
     root_logger.setLevel(getattr(logging, level))
 
-    # Create console handler
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(getattr(logging, level))
 
