@@ -1,7 +1,9 @@
 """Configuration module for code-hub.
 
-Supports env-only configuration with clear validation errors.
+Supports configuration via environment variables and .env file.
 All environment variables use CODEHUB_ prefix with double underscore for nested fields.
+
+Priority: Environment variables > .env file > defaults
 
 Examples:
     CODEHUB_SERVER__BIND=:8080
@@ -320,6 +322,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CODEHUB_",
         env_nested_delimiter="__",
+        env_file=".env",
+        env_file_encoding="utf-8",
         extra="ignore",
     )
 
