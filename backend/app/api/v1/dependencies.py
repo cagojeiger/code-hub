@@ -55,7 +55,11 @@ def get_storage_provider() -> StorageProvider:
 @lru_cache
 def get_instance_controller() -> InstanceController:
     """Get instance controller singleton."""
-    return LocalDockerInstanceController()
+    settings = get_settings()
+    return LocalDockerInstanceController(
+        container_prefix=settings.workspace.container_prefix,
+        network_name=settings.workspace.network_name,
+    )
 
 
 @lru_cache

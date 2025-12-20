@@ -12,9 +12,9 @@ from docker.errors import NotFound
 from app.services.instance import LocalDockerInstanceController
 from app.services.instance.local_docker import (
     CODE_SERVER_PORT,
-    CONTAINER_PREFIX,
+    DEFAULT_CONTAINER_PREFIX,
+    DEFAULT_NETWORK_NAME,
     HOME_MOUNT_PATH,
-    NETWORK_NAME,
 )
 
 
@@ -53,11 +53,11 @@ class TestContainerNaming:
         self, controller: LocalDockerInstanceController
     ) -> None:
         workspace_id = "01HXYZ123"
-        expected = f"{CONTAINER_PREFIX}{workspace_id}"
+        expected = f"{DEFAULT_CONTAINER_PREFIX}{workspace_id}"
         assert controller._container_name(workspace_id) == expected
 
     def test_container_prefix(self) -> None:
-        assert CONTAINER_PREFIX == "codehub-ws-"
+        assert DEFAULT_CONTAINER_PREFIX == "codehub-ws-"
 
 
 class TestStartWorkspace:
@@ -78,9 +78,9 @@ class TestStartWorkspace:
 
         mock_docker_client.containers.run.assert_called_once()
         call_kwargs = mock_docker_client.containers.run.call_args.kwargs
-        assert call_kwargs["name"] == f"{CONTAINER_PREFIX}{workspace_id}"
+        assert call_kwargs["name"] == f"{DEFAULT_CONTAINER_PREFIX}{workspace_id}"
         assert call_kwargs["detach"] is True
-        assert call_kwargs["network"] == NETWORK_NAME
+        assert call_kwargs["network"] == DEFAULT_NETWORK_NAME
 
     def test_starts_existing_stopped_container(
         self, controller: LocalDockerInstanceController, mock_docker_client
@@ -131,7 +131,7 @@ class TestStartWorkspace:
         run_async(controller.start_workspace(workspace_id, image_ref, home_mount))
 
         mock_docker_client.networks.create.assert_called_once_with(
-            NETWORK_NAME, driver="bridge"
+            DEFAULT_NETWORK_NAME, driver="bridge"
         )
 
     def test_mounts_home_directory(
@@ -252,7 +252,7 @@ class TestResolveUpstream:
         result = run_async(controller.resolve_upstream(workspace_id))
 
         # Uses container name as host (for internal network)
-        assert result.host == f"{CONTAINER_PREFIX}{workspace_id}"
+        assert result.host == f"{DEFAULT_CONTAINER_PREFIX}{workspace_id}"
         # Uses internal port (not host-mapped port)
         assert result.port == CODE_SERVER_PORT
 
