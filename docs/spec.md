@@ -280,7 +280,8 @@ home_store_key에 해당하는 모든 데이터를 완전 삭제합니다.
 #### 동작 조건
 
 - 서버 프로세스 시작 시 자동 실행 (API 요청 수락 전)
-- 대상: 모든 전이 상태 (PROVISIONING, STOPPING, DELETING)
+- Phase 1: 모든 전이 상태 복구 (PROVISIONING, STOPPING, DELETING)
+- Phase 2: RUNNING 상태 검증 (컨테이너 존재 여부 확인)
 
 > MVP는 단일 프로세스이므로 서버 재시작 = 모든 백그라운드 작업 중단. 시간 제한 없이 모든 전이 상태를 복구합니다.
 
@@ -294,12 +295,13 @@ home_store_key에 해당하는 모든 데이터를 완전 삭제합니다.
 | STOPPING | running | RUNNING | 정지 명령 실패, 재시도 가능 |
 | DELETING | not exists | DELETED | 삭제 성공 후 크래시 |
 | DELETING | exists | ERROR | 삭제 실패 |
+| RUNNING | not exists/running | ERROR | 컨테이너 유실 (docker compose down 등) |
 
 #### 의사 코드
 
 ```python
 def startup_recovery():
-    # MVP: 단일 프로세스이므로 모든 전이 상태 복구 (시간 제한 없음)
+    # Phase 1: 전이 상태 복구
     stuck = db.query("""
         SELECT * FROM workspaces
         WHERE status IN ('PROVISIONING', 'STOPPING', 'DELETING')
@@ -316,6 +318,18 @@ def startup_recovery():
             ws.status = 'DELETED' if not status.exists else 'ERROR'
 
         db.save(ws)
+
+    # Phase 2: RUNNING 상태 검증 (docker compose down 등 대응)
+    running = db.query("""
+        SELECT * FROM workspaces
+        WHERE status = 'RUNNING' AND deleted_at IS NULL
+    """)
+
+    for ws in running:
+        status = instance_controller.get_status(ws.id)
+        if not status.exists or not status.running:
+            ws.status = 'ERROR'
+            db.save(ws)
 ```
 
 > Startup Recovery는 Reconciler의 경량 버전. 서버 재시작 시에만 실행되며, 주기적 실행이 필요하면 Reconciler 도입 검토.
