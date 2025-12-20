@@ -15,6 +15,19 @@ services:
     networks:
       - codehub-net
     restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.25
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:2375/_ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   backend:
     build:
@@ -22,28 +35,25 @@ services:
       dockerfile: Dockerfile
     container_name: codehub-backend
     depends_on:
-      - docker-proxy
+      docker-proxy:
+        condition: service_healthy
 
     ports:
       - "127.0.0.1:8080:8080"
 
     volumes:
-      # Source code mount (hot reload)
-      - ./backend/app:/app/app:cached
-
-      # pyproject.toml mount (reflect dependency changes)
-      - ./backend/pyproject.toml:/app/pyproject.toml:ro
-
       # data directory bind mount (not Docker volume)
       - ./data/codehub:/var/lib/codehub
 
     environment:
       - PYTHONUNBUFFERED=1
-      - CODEHUB_ENV=development
+      - CODEHUB_ENV=production
       - CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/var/lib/codehub/homes
       - CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=${PWD}/data/codehub/homes
       - CODEHUB_DATABASE__URL=sqlite+aiosqlite:////var/lib/codehub/codehub.db
       - DOCKER_HOST=tcp://docker-proxy:2375
+      # Production: Set this to your public domain
+      # - CODEHUB_SERVER__PUBLIC_BASE_URL=https://your-domain.com
 
     user: "1000:1000"
 
@@ -51,6 +61,8 @@ services:
       - codehub-net
 
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
@@ -58,6 +70,11 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
 
 networks:
   codehub-net:
