@@ -297,7 +297,7 @@
   </main>
 
   <!-- Footer -->
-  <footer class="bg-vscode-sidebar border-t border-vscode-border px-4 py-2 flex justify-between items-center text-xs shrink-0">
+  <footer class="bg-vscode-sidebar border-t border-vscode-border px-4 py-2 grid grid-cols-3 items-center text-xs shrink-0">
     <div id="footer-stats" class="flex items-center gap-4">
       <span>Total: <span id="stat-total" class="text-white">0</span></span>
       <span class="text-vscode-border">•</span>
@@ -305,7 +305,8 @@
       <span class="text-vscode-border">•</span>
       <span>Stopped: <span id="stat-stopped" class="text-white">0</span></span>
     </div>
-    <div class="flex items-center gap-4">
+    <div id="footer-date" class="text-center text-white"></div>
+    <div class="flex items-center gap-4 justify-end">
       <button id="footer-shortcuts-btn" class="hover:text-white transition-colors" title="Show keyboard shortcuts">
         <kbd class="bg-vscode-bg px-1.5 py-0.5 rounded font-mono">?</kbd> Shortcuts
       </button>

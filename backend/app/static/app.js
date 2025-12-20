@@ -332,6 +332,21 @@ function updateFooterStats() {
   document.getElementById('stat-stopped').textContent = stopped;
 }
 
+function updateFooterDate() {
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('ko-KR', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'short',
+  });
+  const timeStr = now.toLocaleTimeString('ko-KR', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  document.getElementById('footer-date').textContent = `${dateStr} ${timeStr}`;
+}
+
 // =============================================================================
 // Skeleton Loading
 // =============================================================================
@@ -972,6 +987,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Connect SSE for real-time updates
   connectSSE();
+
+  // Update footer date
+  updateFooterDate();
+  setInterval(updateFooterDate, 60000); // Update every minute
 
   // Event listeners
   document.getElementById('logout-btn').addEventListener('click', logout);
