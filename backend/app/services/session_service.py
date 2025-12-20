@@ -144,7 +144,7 @@ class SessionService:
         # Get current UTC time, handling both naive and aware datetimes
         # SQLite stores datetimes without timezone (naive), so we need to
         # compare consistently by using naive datetime for both
-        now = datetime.utcnow()
+        now = datetime.now(UTC).replace(tzinfo=None)
 
         # Make expires_at naive if it's timezone-aware
         expires_at = session.expires_at

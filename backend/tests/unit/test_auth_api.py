@@ -52,12 +52,12 @@ async def test_get_session_authenticated(async_client):
     )
     assert login_response.status_code == 200
 
-    # Get session with cookie
+    # Set session cookie on client
     session_cookie = login_response.cookies.get("session")
-    response = await async_client.get(
-        "/api/v1/session",
-        cookies={"session": session_cookie},
-    )
+    async_client.cookies.set("session", session_cookie)
+
+    # Get session with cookie
+    response = await async_client.get("/api/v1/session")
 
     assert response.status_code == 200
     data = response.json()
@@ -75,10 +75,10 @@ async def test_get_session_unauthenticated(unauthenticated_client):
 
 @pytest.mark.asyncio
 async def test_get_session_invalid_cookie(async_client):
-    response = await async_client.get(
-        "/api/v1/session",
-        cookies={"session": "invalid-session-id"},
-    )
+    # Set invalid session cookie on client
+    async_client.cookies.set("session", "invalid-session-id")
+
+    response = await async_client.get("/api/v1/session")
 
     assert response.status_code == 401
 
@@ -92,21 +92,18 @@ async def test_logout_authenticated(async_client):
     )
     session_cookie = login_response.cookies.get("session")
 
+    # Set session cookie on client
+    async_client.cookies.set("session", session_cookie)
+
     # Logout
-    response = await async_client.post(
-        "/api/v1/logout",
-        cookies={"session": session_cookie},
-    )
+    response = await async_client.post("/api/v1/logout")
 
     assert response.status_code == 200
     data = response.json()
     assert data["message"] == "Logged out"
 
     # Session should be revoked - trying to use it should fail
-    session_response = await async_client.get(
-        "/api/v1/session",
-        cookies={"session": session_cookie},
-    )
+    session_response = await async_client.get("/api/v1/session")
     assert session_response.status_code == 401
 
 
@@ -138,11 +135,11 @@ async def test_workspace_api_with_auth(async_client):
     )
     session_cookie = login_response.cookies.get("session")
 
+    # Set session cookie on client
+    async_client.cookies.set("session", session_cookie)
+
     # Access workspace API
-    response = await async_client.get(
-        "/api/v1/workspaces",
-        cookies={"session": session_cookie},
-    )
+    response = await async_client.get("/api/v1/workspaces")
 
     assert response.status_code == 200
     data = response.json()
