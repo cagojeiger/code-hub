@@ -5,7 +5,6 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_login_success(async_client):
-    """Test successful login."""
     response = await async_client.post(
         "/api/v1/login",
         json={"username": "admin", "password": "admin"},
@@ -22,7 +21,6 @@ async def test_login_success(async_client):
 
 @pytest.mark.asyncio
 async def test_login_invalid_username(async_client):
-    """Test login with invalid username."""
     response = await async_client.post(
         "/api/v1/login",
         json={"username": "nonexistent", "password": "admin"},
@@ -35,7 +33,6 @@ async def test_login_invalid_username(async_client):
 
 @pytest.mark.asyncio
 async def test_login_invalid_password(async_client):
-    """Test login with invalid password."""
     response = await async_client.post(
         "/api/v1/login",
         json={"username": "admin", "password": "wrongpassword"},
@@ -48,7 +45,6 @@ async def test_login_invalid_password(async_client):
 
 @pytest.mark.asyncio
 async def test_get_session_authenticated(async_client):
-    """Test getting session info when authenticated."""
     # Login first
     login_response = await async_client.post(
         "/api/v1/login",
@@ -70,7 +66,6 @@ async def test_get_session_authenticated(async_client):
 
 @pytest.mark.asyncio
 async def test_get_session_unauthenticated(unauthenticated_client):
-    """Test getting session info when not authenticated."""
     response = await unauthenticated_client.get("/api/v1/session")
 
     assert response.status_code == 401
@@ -80,7 +75,6 @@ async def test_get_session_unauthenticated(unauthenticated_client):
 
 @pytest.mark.asyncio
 async def test_get_session_invalid_cookie(async_client):
-    """Test getting session info with invalid cookie."""
     response = await async_client.get(
         "/api/v1/session",
         cookies={"session": "invalid-session-id"},
@@ -91,7 +85,6 @@ async def test_get_session_invalid_cookie(async_client):
 
 @pytest.mark.asyncio
 async def test_logout_authenticated(async_client):
-    """Test logout when authenticated."""
     # Login first
     login_response = await async_client.post(
         "/api/v1/login",
@@ -119,7 +112,6 @@ async def test_logout_authenticated(async_client):
 
 @pytest.mark.asyncio
 async def test_logout_unauthenticated(async_client):
-    """Test logout without session cookie."""
     response = await async_client.post("/api/v1/logout")
 
     # Should succeed (idempotent)
@@ -130,7 +122,6 @@ async def test_logout_unauthenticated(async_client):
 
 @pytest.mark.asyncio
 async def test_workspace_api_requires_auth(unauthenticated_client):
-    """Test that workspace API requires authentication."""
     response = await unauthenticated_client.get("/api/v1/workspaces")
 
     assert response.status_code == 401
@@ -140,7 +131,6 @@ async def test_workspace_api_requires_auth(unauthenticated_client):
 
 @pytest.mark.asyncio
 async def test_workspace_api_with_auth(async_client):
-    """Test that workspace API works with authentication."""
     # Login first
     login_response = await async_client.post(
         "/api/v1/login",
