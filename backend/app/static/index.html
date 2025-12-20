@@ -34,52 +34,141 @@
     .spinner {
       animation: spin 1s linear infinite;
     }
+    /* Scrollbar styling */
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #252526;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #3c3c3c;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #4c4c4c;
+    }
   </style>
 </head>
-<body class="bg-vscode-bg text-vscode-text min-h-screen">
+<body class="bg-vscode-bg text-vscode-text h-screen flex flex-col overflow-hidden">
   <!-- Header -->
-  <header class="bg-vscode-sidebar border-b border-vscode-border px-6 py-4 flex justify-between items-center">
+  <header class="bg-vscode-sidebar border-b border-vscode-border px-6 py-3 flex justify-between items-center shrink-0">
     <h1 class="text-xl font-semibold text-white">CodeHub</h1>
-    <span class="text-sm text-vscode-text">Logged in as: <span class="text-white">admin</span></span>
+    <div class="flex items-center gap-4">
+      <span class="text-sm text-vscode-text">
+        <span id="username-display" class="text-white">-</span>
+      </span>
+      <button
+        id="logout-btn"
+        class="text-sm text-vscode-text hover:text-white transition-colors"
+      >
+        Logout
+      </button>
+    </div>
   </header>
 
-  <!-- Main Content -->
-  <main class="max-w-4xl mx-auto px-6 py-8">
-    <!-- Actions -->
-    <div class="mb-6">
-      <button
-        id="new-workspace-btn"
-        class="bg-vscode-accent hover:bg-blue-600 text-white px-4 py-2 rounded flex items-center gap-2 transition-colors"
-      >
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
-        </svg>
-        New Workspace
-      </button>
-    </div>
+  <!-- Main Content: Master-Detail Layout -->
+  <div class="flex flex-1 overflow-hidden">
+    <!-- Sidebar (Master) -->
+    <aside class="w-80 bg-vscode-sidebar border-r border-vscode-border flex flex-col shrink-0">
+      <!-- New Workspace Button -->
+      <div class="p-4 border-b border-vscode-border">
+        <button
+          id="new-workspace-btn"
+          class="w-full bg-vscode-accent hover:bg-blue-600 text-white px-4 py-2 rounded flex items-center justify-center gap-2 transition-colors"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+          </svg>
+          New Workspace
+        </button>
+      </div>
 
-    <!-- Workspace List -->
-    <div id="workspace-list" class="space-y-4">
-      <!-- Workspaces will be rendered here -->
-    </div>
+      <!-- Workspace List -->
+      <div id="workspace-list" class="flex-1 overflow-y-auto">
+        <!-- Workspaces will be rendered here -->
+      </div>
 
-    <!-- Empty State -->
-    <div id="empty-state" class="hidden text-center py-12">
-      <p class="text-vscode-text mb-4">No workspaces yet</p>
-      <button
-        class="text-vscode-accent hover:underline"
-        onclick="document.getElementById('new-workspace-btn').click()"
-      >
-        Create your first workspace
-      </button>
-    </div>
+      <!-- Pagination -->
+      <div id="pagination" class="p-3 border-t border-vscode-border text-sm hidden">
+        <!-- Pagination controls will be rendered here -->
+      </div>
 
-    <!-- Loading State -->
-    <div id="loading-state" class="text-center py-12">
-      <div class="inline-block w-8 h-8 border-2 border-vscode-accent border-t-transparent rounded-full spinner"></div>
-      <p class="mt-4 text-vscode-text">Loading workspaces...</p>
-    </div>
-  </main>
+      <!-- Loading State -->
+      <div id="sidebar-loading" class="flex-1 flex items-center justify-center">
+        <div class="text-center">
+          <div class="inline-block w-6 h-6 border-2 border-vscode-accent border-t-transparent rounded-full spinner"></div>
+          <p class="mt-2 text-sm text-vscode-text">Loading...</p>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Detail Panel -->
+    <main class="flex-1 overflow-y-auto">
+      <!-- Empty State -->
+      <div id="empty-state" class="hidden h-full flex items-center justify-center">
+        <div class="text-center">
+          <p class="text-vscode-text mb-4">No workspaces yet</p>
+          <button
+            class="text-vscode-accent hover:underline"
+            onclick="document.getElementById('new-workspace-btn').click()"
+          >
+            Create your first workspace
+          </button>
+        </div>
+      </div>
+
+      <!-- No Selection State -->
+      <div id="no-selection" class="hidden h-full flex items-center justify-center">
+        <p class="text-vscode-text">Select a workspace to view details</p>
+      </div>
+
+      <!-- Workspace Detail -->
+      <div id="workspace-detail" class="hidden p-6">
+        <!-- Detail header -->
+        <div class="flex items-start justify-between mb-6">
+          <div>
+            <h2 id="detail-name" class="text-2xl font-semibold text-white"></h2>
+            <div class="flex items-center gap-2 mt-2">
+              <span id="detail-status" class="px-2 py-1 rounded text-xs font-medium"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Description -->
+        <div class="mb-6">
+          <h3 class="text-sm font-medium text-vscode-text mb-2">Description</h3>
+          <p id="detail-description" class="text-white"></p>
+        </div>
+
+        <!-- Memo -->
+        <div class="mb-6">
+          <h3 class="text-sm font-medium text-vscode-text mb-2">Memo</h3>
+          <div id="detail-memo" class="bg-vscode-sidebar border border-vscode-border rounded p-4 text-white whitespace-pre-wrap min-h-[100px]"></div>
+        </div>
+
+        <!-- Metadata -->
+        <div class="grid grid-cols-2 gap-4 text-sm mb-6">
+          <div>
+            <span class="text-vscode-text">Created:</span>
+            <span id="detail-created" class="text-white ml-2"></span>
+          </div>
+          <div>
+            <span class="text-vscode-text">Updated:</span>
+            <span id="detail-updated" class="text-white ml-2"></span>
+          </div>
+        </div>
+
+        <!-- Edit Button -->
+        <button
+          id="edit-workspace-btn"
+          class="px-4 py-2 border border-vscode-border rounded hover:bg-vscode-hover transition-colors"
+        >
+          Edit
+        </button>
+      </div>
+    </main>
+  </div>
 
   <!-- Create Workspace Modal -->
   <div id="create-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
@@ -114,6 +203,16 @@
             placeholder="Optional description"
           >
         </div>
+        <div>
+          <label for="workspace-memo" class="block text-sm mb-2">Memo</label>
+          <textarea
+            id="workspace-memo"
+            name="memo"
+            rows="3"
+            class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent resize-none"
+            placeholder="Optional notes..."
+          ></textarea>
+        </div>
         <div class="flex justify-end gap-3 pt-4">
           <button
             type="button"
@@ -127,6 +226,66 @@
             class="bg-vscode-accent hover:bg-blue-600 text-white px-4 py-2 rounded transition-colors"
           >
             Create
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Edit Workspace Modal -->
+  <div id="edit-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div class="bg-vscode-sidebar border border-vscode-border rounded-lg w-full max-w-md mx-4">
+      <div class="flex justify-between items-center px-6 py-4 border-b border-vscode-border">
+        <h2 class="text-lg font-semibold text-white">Edit Workspace</h2>
+        <button id="close-edit-modal-btn" class="text-vscode-text hover:text-white">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <form id="edit-form" class="p-6 space-y-4">
+        <input type="hidden" id="edit-workspace-id">
+        <div>
+          <label for="edit-name" class="block text-sm mb-2">Name <span class="text-vscode-error">*</span></label>
+          <input
+            type="text"
+            id="edit-name"
+            name="name"
+            required
+            class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent"
+          >
+        </div>
+        <div>
+          <label for="edit-description" class="block text-sm mb-2">Description</label>
+          <input
+            type="text"
+            id="edit-description"
+            name="description"
+            class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent"
+          >
+        </div>
+        <div>
+          <label for="edit-memo" class="block text-sm mb-2">Memo</label>
+          <textarea
+            id="edit-memo"
+            name="memo"
+            rows="3"
+            class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent resize-none"
+          ></textarea>
+        </div>
+        <div class="flex justify-end gap-3 pt-4">
+          <button
+            type="button"
+            id="cancel-edit-btn"
+            class="px-4 py-2 border border-vscode-border rounded hover:bg-vscode-hover transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="bg-vscode-accent hover:bg-blue-600 text-white px-4 py-2 rounded transition-colors"
+          >
+            Save
           </button>
         </div>
       </form>

@@ -3,7 +3,7 @@
 Provides HTTP and WebSocket reverse proxy to workspace containers.
 Routes: /w/{workspace_id}/* -> code-server container
 
-Auth is not implemented yet (M6).
+Authentication and authorization is enforced via session cookies.
 """
 
 import asyncio
@@ -14,7 +14,7 @@ from typing import Annotated
 
 import httpx
 import websockets
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Cookie, Depends, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,9 +22,15 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from websockets.asyncio.client import ClientConnection
 
 from app.api.v1.dependencies import get_instance_controller
-from app.core.errors import UpstreamUnavailableError, WorkspaceNotFoundError
+from app.core.errors import (
+    ForbiddenError,
+    UnauthorizedError,
+    UpstreamUnavailableError,
+    WorkspaceNotFoundError,
+)
 from app.db import Workspace, get_async_session
 from app.services.instance.interface import InstanceController
+from app.services.session_service import SessionService
 
 logger = logging.getLogger(__name__)
 
@@ -97,8 +103,25 @@ DbSession = Annotated[AsyncSession, Depends(get_async_session)]
 # =============================================================================
 
 
-async def _get_workspace(session: AsyncSession, workspace_id: str) -> Workspace:
-    """Get workspace by ID. Raises WorkspaceNotFoundError if not found."""
+async def _get_user_id_from_session(
+    db: AsyncSession, session_cookie: str | None
+) -> str:
+    """Get user ID from session cookie. Raises UnauthorizedError if invalid."""
+    if session_cookie is None:
+        raise UnauthorizedError()
+
+    result = await SessionService.get_valid_with_user(db, session_cookie)
+    if result is None:
+        raise UnauthorizedError()
+
+    _, user = result
+    return user.id
+
+
+async def _get_workspace_for_user(
+    session: AsyncSession, workspace_id: str, user_id: str
+) -> Workspace:
+    """Get workspace by ID and verify owner. Raises appropriate errors."""
     result = await session.execute(
         select(Workspace).where(
             Workspace.id == workspace_id,  # type: ignore[arg-type]
@@ -108,6 +131,11 @@ async def _get_workspace(session: AsyncSession, workspace_id: str) -> Workspace:
     workspace = result.scalar_one_or_none()
     if workspace is None:
         raise WorkspaceNotFoundError()
+
+    # Verify owner
+    if workspace.owner_user_id != user_id:
+        raise ForbiddenError("You don't have access to this workspace")
+
     return workspace
 
 
@@ -174,12 +202,14 @@ async def proxy_http(
     workspace_id: str,
     path: str,
     request: Request,
-    session: DbSession,
+    db: DbSession,
     instance: Instance,
+    session: Annotated[str | None, Cookie(alias="session")] = None,
 ) -> StreamingResponse:
     """Proxy HTTP requests to workspace container."""
-    # Verify workspace exists (auth check will be added in M6)
-    await _get_workspace(session, workspace_id)
+    # Authenticate user and verify workspace ownership
+    user_id = await _get_user_id_from_session(db, session)
+    await _get_workspace_for_user(db, workspace_id, user_id)
 
     # Resolve upstream
     try:
@@ -221,7 +251,9 @@ async def proxy_http(
 
         async def stream_response() -> AsyncGenerator[bytes]:
             try:
-                async for chunk in upstream_response.aiter_bytes():
+                # Use aiter_raw() to preserve original encoding (gzip, br, etc.)
+                # aiter_bytes() would decompress, causing mismatch with Content-Encoding header
+                async for chunk in upstream_response.aiter_raw():
                     yield chunk
             finally:
                 await upstream_response.aclose()
@@ -244,13 +276,23 @@ async def proxy_websocket(
     websocket: WebSocket,
     workspace_id: str,
     path: str,
-    session: DbSession,
+    db: DbSession,
     instance: Instance,
 ) -> None:
     """Proxy WebSocket connections to workspace container."""
-    # Verify workspace exists (auth check will be added in M6)
+    # Get session cookie from WebSocket headers
+    session_cookie = websocket.cookies.get("session")
+
+    # Authenticate user and verify workspace ownership
     try:
-        await _get_workspace(session, workspace_id)
+        user_id = await _get_user_id_from_session(db, session_cookie)
+        await _get_workspace_for_user(db, workspace_id, user_id)
+    except UnauthorizedError:
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+    except ForbiddenError:
+        await websocket.close(code=1008, reason="Access denied")
+        return
     except WorkspaceNotFoundError:
         await websocket.close(code=1008, reason="Workspace not found")
         return

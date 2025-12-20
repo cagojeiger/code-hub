@@ -8,14 +8,16 @@ Business logic implementations for spec components:
 
 from app.services.instance.interface import InstanceController
 from app.services.instance.local_docker import LocalDockerInstanceController
+from app.services.session_service import SessionService
 from app.services.storage.interface import StorageProvider
 from app.services.storage.local_dir import LocalDirStorageProvider
 from app.services.workspace_service import WorkspaceService
 
 __all__ = [
     "InstanceController",
-    "LocalDockerInstanceController",
-    "StorageProvider",
     "LocalDirStorageProvider",
+    "LocalDockerInstanceController",
+    "SessionService",
+    "StorageProvider",
     "WorkspaceService",
 ]

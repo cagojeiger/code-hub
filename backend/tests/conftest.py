@@ -66,7 +66,42 @@ async def test_user(db_session: AsyncSession) -> User:
 
 @pytest_asyncio.fixture
 async def async_client(db_engine, test_user) -> AsyncClient:
-    """Create an async test client with database initialized."""
+    """Create an async test client with database initialized and authenticated."""
+
+    async def override_get_async_session():
+        async_session = sessionmaker(
+            db_engine, class_=AsyncSession, expire_on_commit=False
+        )
+        async with async_session() as session:
+            yield session
+
+    app.dependency_overrides[get_async_session] = override_get_async_session
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # Authenticate to get session cookie
+        response = await client.post(
+            "/api/v1/login",
+            json={"username": "admin", "password": "admin"},
+        )
+        assert response.status_code == 200, f"Login failed: {response.text}"
+
+        # Extract session cookie and set it for all subsequent requests
+        session_cookie = response.cookies.get("session")
+        if session_cookie:
+            client.cookies.set("session", session_cookie)
+
+        yield client
+
+    app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def unauthenticated_client(db_engine, test_user) -> AsyncClient:
+    """Create an async test client without authentication.
+
+    Note: test_user is required to ensure user exists in DB for auth tests.
+    """
 
     async def override_get_async_session():
         async_session = sessionmaker(

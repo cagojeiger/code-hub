@@ -10,9 +10,10 @@ Endpoints:
 - POST /api/v1/workspaces/{id}:stop - Stop workspace
 """
 
+import math
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Response, status
+from fastapi import APIRouter, BackgroundTasks, Query, Response, status
 from pydantic import BaseModel, Field
 
 from app.api.v1.dependencies import CurrentUser, DbSession, WsService
@@ -20,6 +21,11 @@ from app.core.config import get_settings
 from app.db import Workspace, WorkspaceStatus
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
+
+# Pagination constants
+DEFAULT_PAGE = 1
+DEFAULT_PER_PAGE = 20
+MAX_PER_PAGE = 100
 
 
 class WorkspaceCreate(BaseModel):
@@ -60,6 +66,24 @@ class WorkspaceActionResponse(BaseModel):
     status: WorkspaceStatus
 
 
+class PaginationMeta(BaseModel):
+    """Pagination metadata."""
+
+    page: int
+    per_page: int
+    total: int
+    total_pages: int
+    has_next: bool
+    has_prev: bool
+
+
+class PaginatedWorkspaceResponse(BaseModel):
+    """Paginated response for workspace list."""
+
+    items: list[WorkspaceResponse]
+    pagination: PaginationMeta
+
+
 def _build_workspace_url(workspace_id: str) -> str:
     """Build workspace URL from workspace ID."""
     settings = get_settings()
@@ -80,15 +104,34 @@ def _workspace_to_response(workspace: Workspace) -> WorkspaceResponse:
     )
 
 
-@router.get("", response_model=list[WorkspaceResponse])
+@router.get("", response_model=PaginatedWorkspaceResponse)
 async def list_workspaces(
     session: DbSession,
     current_user: CurrentUser,
     ws_service: WsService,
-) -> list[WorkspaceResponse]:
-    """List workspaces owned by current user."""
-    workspaces = await ws_service.list_workspaces(session, current_user.id)
-    return [_workspace_to_response(ws) for ws in workspaces]
+    page: int = Query(default=DEFAULT_PAGE, ge=1, description="Page number"),
+    per_page: int = Query(
+        default=DEFAULT_PER_PAGE, ge=1, le=MAX_PER_PAGE, description="Items per page"
+    ),
+) -> PaginatedWorkspaceResponse:
+    """List workspaces owned by current user with pagination."""
+    workspaces, total = await ws_service.list_workspaces(
+        session, current_user.id, page=page, per_page=per_page
+    )
+
+    total_pages = math.ceil(total / per_page) if total > 0 else 0
+
+    return PaginatedWorkspaceResponse(
+        items=[_workspace_to_response(ws) for ws in workspaces],
+        pagination=PaginationMeta(
+            page=page,
+            per_page=per_page,
+            total=total,
+            total_pages=total_pages,
+            has_next=page < total_pages,
+            has_prev=page > 1,
+        ),
+    )
 
 
 @router.post(

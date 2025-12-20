@@ -151,10 +151,14 @@ class TestStartWorkspace:
             home_mount: {"bind": HOME_MOUNT_PATH, "mode": "rw"}
         }
 
-    def test_binds_port_to_localhost(
+    def test_uses_internal_network_without_port_binding(
         self, controller: LocalDockerInstanceController, mock_docker_client
     ) -> None:
-        workspace_id = "ws-port-bind"
+        """Verify container uses Docker network without host port binding.
+
+        M5 proxy connects via internal Docker network, not exposed ports.
+        """
+        workspace_id = "ws-no-port"
         image_ref = "codercom/code-server:latest"
         home_mount = "/host/path/to/home"
 
@@ -164,9 +168,9 @@ class TestStartWorkspace:
         run_async(controller.start_workspace(workspace_id, image_ref, home_mount))
 
         call_kwargs = mock_docker_client.containers.run.call_args.kwargs
-        assert call_kwargs["ports"] == {
-            f"{CODE_SERVER_PORT}/tcp": ("127.0.0.1", None)
-        }
+        # No port binding - proxy connects via internal network
+        assert "ports" not in call_kwargs
+        assert call_kwargs["network"] == "codehub-net"
 
 
 class TestStopWorkspace:
@@ -235,20 +239,21 @@ class TestDeleteWorkspace:
 
 class TestResolveUpstream:
 
-    def test_returns_container_host_and_port(
+    def test_returns_container_name_and_internal_port(
         self, controller: LocalDockerInstanceController, mock_docker_client
     ) -> None:
+        """Verify upstream uses container name for Docker network."""
         workspace_id = "ws-upstream"
 
         mock_container = MagicMock()
-        mock_container.ports = {
-            f"{CODE_SERVER_PORT}/tcp": [{"HostIp": "127.0.0.1", "HostPort": "32768"}]
-        }
+        mock_container.status = "running"
         mock_docker_client.containers.get.return_value = mock_container
 
         result = run_async(controller.resolve_upstream(workspace_id))
 
+        # Uses container name as host (for internal network)
         assert result.host == f"{CONTAINER_PREFIX}{workspace_id}"
+        # Uses internal port (not host-mapped port)
         assert result.port == CODE_SERVER_PORT
 
     def test_raises_when_container_not_found(
@@ -261,16 +266,16 @@ class TestResolveUpstream:
         with pytest.raises(ValueError, match="Container not found"):
             run_async(controller.resolve_upstream(workspace_id))
 
-    def test_raises_when_port_not_exposed(
+    def test_raises_when_container_not_running(
         self, controller: LocalDockerInstanceController, mock_docker_client
     ) -> None:
-        workspace_id = "ws-no-port"
+        workspace_id = "ws-stopped"
 
         mock_container = MagicMock()
-        mock_container.ports = {}
+        mock_container.status = "exited"
         mock_docker_client.containers.get.return_value = mock_container
 
-        with pytest.raises(ValueError, match=r"Port .* not exposed"):
+        with pytest.raises(ValueError, match=r"Container not running"):
             run_async(controller.resolve_upstream(workspace_id))
 
 
@@ -314,9 +319,6 @@ class TestGetStatus:
 
         mock_container = MagicMock()
         mock_container.status = "running"
-        mock_container.ports = {
-            f"{CODE_SERVER_PORT}/tcp": [{"HostIp": "127.0.0.1", "HostPort": "32769"}]
-        }
         mock_docker_client.containers.get.return_value = mock_container
 
         status = run_async(controller.get_status(workspace_id))
@@ -324,7 +326,8 @@ class TestGetStatus:
         assert status.exists is True
         assert status.running is True
         assert status.healthy is True
-        assert status.port == 32769
+        # Port is None since we use internal Docker network, not host port binding
+        assert status.port is None
 
 
 class TestIdempotencyFullCycle:

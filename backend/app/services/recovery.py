@@ -8,6 +8,7 @@ import logging
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col
 
 from app.db import Workspace, WorkspaceStatus
 from app.db.models import utc_now
@@ -124,8 +125,8 @@ async def _verify_running_workspaces(
     """
     result = await session.execute(
         select(Workspace).where(
-            Workspace.status == WorkspaceStatus.RUNNING.value,
-            Workspace.deleted_at.is_(None),  # type: ignore[union-attr]
+            col(Workspace.status) == WorkspaceStatus.RUNNING.value,
+            col(Workspace.deleted_at).is_(None),
         )
     )
     running_workspaces = list(result.scalars().all())
