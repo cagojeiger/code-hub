@@ -6,12 +6,16 @@
 const API = '/api/v1';
 const PER_PAGE = 20;
 
-let currentPage = 1;
-let selectedWorkspaceId = null;
-let selectedCardIndex = -1;
-let workspacesCache = {};
-let allWorkspaces = [];
-let eventSource = null;
+// Centralized state management
+const state = {
+  currentPage: 1,
+  selectedWorkspaceId: null,
+  selectedCardIndex: -1,
+  workspaces: [],
+  cache: {},
+  eventSource: null,
+  pollTimer: null,
+};
 
 // Status configuration
 const STATUS_CONFIG = {
@@ -136,40 +140,39 @@ async function deleteWorkspace(id) {
 // SSE Connection with Polling Fallback
 // =============================================================================
 
-let pollTimer = null;
 const POLL_INTERVAL = 5000;
 
 function connectSSE() {
-  if (eventSource) {
-    eventSource.close();
+  if (state.eventSource) {
+    state.eventSource.close();
   }
 
   updateConnectionStatus('connecting');
 
   try {
-    eventSource = new EventSource(`${API}/events`);
+    state.eventSource = new EventSource(`${API}/events`);
 
-    eventSource.onopen = () => {
+    state.eventSource.onopen = () => {
       updateConnectionStatus('connected');
       // Stop polling when SSE is connected
       stopPolling();
     };
 
-    eventSource.addEventListener('workspace_updated', (event) => {
+    state.eventSource.addEventListener('workspace_updated', (event) => {
       const data = JSON.parse(event.data);
       handleWorkspaceUpdate(data);
     });
 
-    eventSource.addEventListener('workspace_deleted', (event) => {
+    state.eventSource.addEventListener('workspace_deleted', (event) => {
       const data = JSON.parse(event.data);
       handleWorkspaceDeleted(data.id);
     });
 
-    eventSource.addEventListener('heartbeat', () => {
+    state.eventSource.addEventListener('heartbeat', () => {
       // Keep-alive, no action needed
     });
 
-    eventSource.onerror = () => {
+    state.eventSource.onerror = () => {
       updateConnectionStatus('disconnected');
       // Start polling as fallback
       startPolling();
@@ -183,14 +186,14 @@ function connectSSE() {
 }
 
 function startPolling() {
-  if (pollTimer) return; // Already polling
-  pollTimer = setInterval(() => loadWorkspaces(currentPage), POLL_INTERVAL);
+  if (state.pollTimer) return; // Already polling
+  state.pollTimer = setInterval(() => loadWorkspaces(state.currentPage), POLL_INTERVAL);
 }
 
 function stopPolling() {
-  if (pollTimer) {
-    clearInterval(pollTimer);
-    pollTimer = null;
+  if (state.pollTimer) {
+    clearInterval(state.pollTimer);
+    state.pollTimer = null;
   }
 }
 
@@ -225,14 +228,14 @@ function updateConnectionStatus(status) {
 
 function handleWorkspaceUpdate(workspace) {
   // Update cache
-  workspacesCache[workspace.id] = workspace;
+  state.cache[workspace.id] = workspace;
 
-  // Update allWorkspaces array
-  const index = allWorkspaces.findIndex(ws => ws.id === workspace.id);
+  // Update workspaces array
+  const index = state.workspaces.findIndex(ws => ws.id === workspace.id);
   if (index >= 0) {
-    allWorkspaces[index] = workspace;
+    state.workspaces[index] = workspace;
   } else {
-    allWorkspaces.unshift(workspace);
+    state.workspaces.unshift(workspace);
   }
 
   // Re-render
@@ -240,7 +243,7 @@ function handleWorkspaceUpdate(workspace) {
   updateFooterStats();
 
   // Update detail panel if this workspace is selected
-  if (selectedWorkspaceId === workspace.id) {
+  if (state.selectedWorkspaceId === workspace.id) {
     renderDetailPanel(workspace);
   }
 
@@ -253,17 +256,17 @@ function handleWorkspaceUpdate(workspace) {
 
 function handleWorkspaceDeleted(id) {
   // Remove from cache
-  delete workspacesCache[id];
+  delete state.cache[id];
 
-  // Remove from allWorkspaces
-  allWorkspaces = allWorkspaces.filter(ws => ws.id !== id);
+  // Remove from workspaces
+  state.workspaces = state.workspaces.filter(ws => ws.id !== id);
 
   // Re-render
   renderFilteredWorkspaces();
   updateFooterStats();
 
   // Close detail panel if this workspace was selected
-  if (selectedWorkspaceId === id) {
+  if (state.selectedWorkspaceId === id) {
     closeDetailPanel();
   }
 }
@@ -322,11 +325,30 @@ function formatDate(dateString) {
   });
 }
 
+// Compact date format for cards (no "ago" suffix)
+function formatShortDate(dateString) {
+  if (!dateString) return '-';
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now - date;
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return 'now';
+  if (diffMins < 60) return `${diffMins}m`;
+  if (diffHours < 24) return `${diffHours}h`;
+  if (diffDays < 30) return `${diffDays}d`;
+
+  // Show short date for older items
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 function updateFooterStats() {
-  const total = allWorkspaces.length;
-  const running = allWorkspaces.filter(w => w.status === 'RUNNING').length;
-  const stopped = allWorkspaces.filter(w => ['STOPPED', 'CREATED'].includes(w.status)).length;
-  const error = allWorkspaces.filter(w => w.status === 'ERROR').length;
+  const total = state.workspaces.length;
+  const running = state.workspaces.filter(w => w.status === 'RUNNING').length;
+  const stopped = state.workspaces.filter(w => ['STOPPED', 'CREATED'].includes(w.status)).length;
+  const error = state.workspaces.filter(w => w.status === 'ERROR').length;
 
   document.getElementById('stat-total').textContent = total;
   document.getElementById('stat-running').textContent = running;
@@ -382,7 +404,7 @@ function hideSkeletonLoading() {
 
 function renderWorkspaceCard(workspace, index) {
   const config = STATUS_CONFIG[workspace.status] || STATUS_CONFIG.ERROR;
-  const isSelected = workspace.id === selectedWorkspaceId;
+  const isSelected = workspace.id === state.selectedWorkspaceId;
 
   const spinnerHtml = config.isTransition
     ? '<span class="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full spinner ml-1"></span>'
@@ -392,7 +414,7 @@ function renderWorkspaceCard(workspace, index) {
 
   if (config.canOpen) {
     buttonsHtml += `
-      <button onclick="event.stopPropagation(); openWorkspace('${workspace.id}')"
+      <button data-action="open" data-id="${workspace.id}"
               class="px-3 py-1.5 bg-vscode-success hover:bg-green-600 text-white text-sm rounded transition-colors">
         Open
       </button>`;
@@ -400,7 +422,7 @@ function renderWorkspaceCard(workspace, index) {
 
   if (config.canStart) {
     buttonsHtml += `
-      <button onclick="event.stopPropagation(); handleStart('${workspace.id}')"
+      <button data-action="start" data-id="${workspace.id}"
               class="px-3 py-1.5 bg-vscode-accent hover:bg-blue-600 text-white text-sm rounded transition-colors">
         Start
       </button>`;
@@ -408,7 +430,7 @@ function renderWorkspaceCard(workspace, index) {
 
   if (config.canStop) {
     buttonsHtml += `
-      <button onclick="event.stopPropagation(); handleStop('${workspace.id}')"
+      <button data-action="stop" data-id="${workspace.id}"
               class="px-3 py-1.5 bg-vscode-hover border border-vscode-border text-white text-sm rounded transition-colors hover:border-vscode-text">
         Stop
       </button>`;
@@ -416,7 +438,7 @@ function renderWorkspaceCard(workspace, index) {
 
   if (config.canDelete) {
     buttonsHtml += `
-      <button onclick="event.stopPropagation(); openDeleteModal('${workspace.id}', '${escapeHtml(workspace.name)}')"
+      <button data-action="delete" data-id="${workspace.id}" data-name="${escapeHtml(workspace.name)}"
               class="px-3 py-1.5 bg-vscode-hover border border-vscode-border hover:border-vscode-error hover:text-vscode-error text-sm rounded transition-colors">
         Delete
       </button>`;
@@ -425,8 +447,7 @@ function renderWorkspaceCard(workspace, index) {
   buttonsHtml += '</div>';
 
   return `
-    <div onclick="selectWorkspace('${workspace.id}', ${index})"
-         data-workspace-id="${workspace.id}"
+    <div data-workspace-id="${workspace.id}"
          data-index="${index}"
          tabindex="0"
          class="workspace-card bg-vscode-sidebar border border-vscode-border rounded-lg p-4 cursor-pointer focus-ring ${isSelected ? 'selected' : ''}">
@@ -437,7 +458,10 @@ function renderWorkspaceCard(workspace, index) {
         </span>
       </div>
       <p class="text-vscode-text text-sm truncate mb-1">${escapeHtml(workspace.description) || 'No description'}</p>
-      <p class="text-gray-500 text-xs">${formatDate(workspace.updated_at)}</p>
+      <div class="text-xs text-gray-500 flex gap-3">
+        <span title="Created at ${workspace.created_at}">+ ${formatShortDate(workspace.created_at)}</span>
+        <span title="Updated at ${workspace.updated_at}">~ ${formatShortDate(workspace.updated_at)}</span>
+      </div>
       ${buttonsHtml}
     </div>
   `;
@@ -450,7 +474,7 @@ function renderWorkspaceGrid(workspaces) {
 
   hideSkeletonLoading();
 
-  if (allWorkspaces.length === 0) {
+  if (state.workspaces.length === 0) {
     gridEl.classList.add('hidden');
     noResultsEl.classList.add('hidden');
     emptyEl.classList.remove('hidden');
@@ -480,7 +504,7 @@ function getFilteredWorkspaces() {
   const statusFilter = document.getElementById('status-filter').value;
   const sortOption = document.getElementById('sort-select').value;
 
-  let filtered = [...allWorkspaces];
+  let filtered = [...state.workspaces];
 
   // Search
   if (searchQuery) {
@@ -546,13 +570,30 @@ function renderDetailPanel(workspace) {
 
   document.getElementById('detail-name').textContent = workspace.name;
   document.getElementById('detail-description').textContent = workspace.description || 'No description';
-  document.getElementById('detail-memo').textContent = workspace.memo || 'No memo';
-  document.getElementById('detail-created').textContent = formatDate(workspace.created_at);
-  document.getElementById('detail-updated').textContent = formatDate(workspace.updated_at);
 
-  const urlEl = document.getElementById('detail-url');
-  urlEl.href = workspace.url;
-  urlEl.textContent = workspace.url;
+  // Reset memo tab to Preview mode
+  const writeTab = document.getElementById('memo-tab-write');
+  const previewTab = document.getElementById('memo-tab-preview');
+  const writePanel = document.getElementById('memo-write');
+  const previewPanel = document.getElementById('memo-preview');
+  const saveBtn = document.getElementById('memo-save-btn');
+
+  writeTab.classList.remove('border-vscode-accent', 'text-white');
+  writeTab.classList.add('border-transparent', 'text-vscode-text');
+  previewTab.classList.add('border-vscode-accent', 'text-white');
+  previewTab.classList.remove('border-transparent', 'text-vscode-text');
+  writePanel.classList.add('hidden');
+  previewPanel.classList.remove('hidden');
+  saveBtn.classList.add('hidden');
+  document.getElementById('memo-textarea').value = workspace.memo || '';
+
+  // Render memo as markdown
+  const memoEl = document.getElementById('detail-memo');
+  if (workspace.memo) {
+    memoEl.innerHTML = marked.parse(workspace.memo);
+  } else {
+    memoEl.textContent = 'No memo';
+  }
 
   const statusEl = document.getElementById('detail-status');
   statusEl.textContent = config.label;
@@ -563,7 +604,7 @@ function renderDetailPanel(workspace) {
 
   if (config.canOpen) {
     actionsHtml += `
-      <button onclick="openWorkspace('${workspace.id}')"
+      <button data-action="open" data-id="${workspace.id}"
               class="px-4 py-2 bg-vscode-success hover:bg-green-600 text-white rounded transition-colors">
         Open IDE
       </button>`;
@@ -571,7 +612,7 @@ function renderDetailPanel(workspace) {
 
   if (config.canStart) {
     actionsHtml += `
-      <button onclick="handleStart('${workspace.id}')"
+      <button data-action="start" data-id="${workspace.id}"
               class="px-4 py-2 bg-vscode-accent hover:bg-blue-600 text-white rounded transition-colors">
         Start
       </button>`;
@@ -579,7 +620,7 @@ function renderDetailPanel(workspace) {
 
   if (config.canStop) {
     actionsHtml += `
-      <button onclick="handleStop('${workspace.id}')"
+      <button data-action="stop" data-id="${workspace.id}"
               class="px-4 py-2 bg-vscode-hover border border-vscode-border text-white rounded transition-colors">
         Stop
       </button>`;
@@ -587,7 +628,7 @@ function renderDetailPanel(workspace) {
 
   if (config.canDelete) {
     actionsHtml += `
-      <button onclick="openDeleteModal('${workspace.id}', '${escapeHtml(workspace.name)}')"
+      <button data-action="delete" data-id="${workspace.id}" data-name="${escapeHtml(workspace.name)}"
               class="px-4 py-2 bg-vscode-hover border border-vscode-border hover:border-vscode-error hover:text-vscode-error rounded transition-colors">
         Delete
       </button>`;
@@ -600,8 +641,8 @@ function renderDetailPanel(workspace) {
 
 function closeDetailPanel() {
   document.getElementById('detail-panel').classList.add('hidden');
-  selectedWorkspaceId = null;
-  selectedCardIndex = -1;
+  state.selectedWorkspaceId = null;
+  state.selectedCardIndex = -1;
   renderFilteredWorkspaces();
 }
 
@@ -610,18 +651,18 @@ function closeDetailPanel() {
 // =============================================================================
 
 function selectWorkspace(id, index = -1) {
-  selectedWorkspaceId = id;
-  selectedCardIndex = index >= 0 ? index : getFilteredWorkspaces().findIndex(ws => ws.id === id);
+  state.selectedWorkspaceId = id;
+  state.selectedCardIndex = index >= 0 ? index : getFilteredWorkspaces().findIndex(ws => ws.id === id);
 
   renderFilteredWorkspaces();
 
-  if (workspacesCache[id]) {
-    renderDetailPanel(workspacesCache[id]);
+  if (state.cache[id]) {
+    renderDetailPanel(state.cache[id]);
   }
 }
 
 function openWorkspace(id) {
-  const workspace = workspacesCache[id];
+  const workspace = state.cache[id];
   if (workspace && workspace.url) {
     window.open(workspace.url, '_blank');
   }
@@ -701,7 +742,7 @@ function renderPagination(pagination) {
 
 async function goToPage(page) {
   if (page < 1) return;
-  currentPage = page;
+  state.currentPage = page;
   await loadWorkspaces(page);
 }
 
@@ -715,14 +756,14 @@ async function loadWorkspaces(page = 1) {
     const workspaces = data.items;
     const pagination = data.pagination;
 
-    currentPage = pagination.page;
+    state.currentPage = pagination.page;
 
     // Cache workspaces
-    workspacesCache = {};
-    allWorkspaces = [];
+    state.cache = {};
+    state.workspaces = [];
     workspaces.forEach(ws => {
-      workspacesCache[ws.id] = ws;
-      allWorkspaces.push(ws);
+      state.cache[ws.id] = ws;
+      state.workspaces.push(ws);
     });
 
     renderFilteredWorkspaces();
@@ -762,7 +803,7 @@ async function handleCreateSubmit(e) {
     const workspace = await createWorkspace(name, description, memo);
     showToast('Workspace created', 'success');
     closeCreateModal();
-    selectedWorkspaceId = workspace.id;
+    state.selectedWorkspaceId = workspace.id;
     await loadWorkspaces(1);
   } catch (error) {
     if (error.message !== 'Session expired') {
@@ -771,43 +812,90 @@ async function handleCreateSubmit(e) {
   }
 }
 
-function openEditModal() {
-  if (!selectedWorkspaceId || !workspacesCache[selectedWorkspaceId]) return;
+// =============================================================================
+// Inline Editing
+// =============================================================================
 
-  const workspace = workspacesCache[selectedWorkspaceId];
+function enableInlineEdit(element, field) {
+  if (!state.selectedWorkspaceId) return;
+  if (element.querySelector('input, textarea')) return; // Already editing
 
-  document.getElementById('edit-workspace-id').value = workspace.id;
-  document.getElementById('edit-name').value = workspace.name;
-  document.getElementById('edit-description').value = workspace.description || '';
-  document.getElementById('edit-memo').value = workspace.memo || '';
+  const workspace = state.cache[state.selectedWorkspaceId];
+  if (!workspace) return;
 
-  document.getElementById('edit-modal').classList.remove('hidden');
-  document.getElementById('edit-name').focus();
-}
+  // Get the actual value from workspace object (important for memo which is rendered as markdown)
+  const actualValue = workspace[field] || '';
 
-function closeEditModal() {
-  document.getElementById('edit-modal').classList.add('hidden');
-  document.getElementById('edit-form').reset();
-}
+  const isMultiline = field === 'memo';
+  const input = document.createElement(isMultiline ? 'textarea' : 'input');
 
-async function handleEditSubmit(e) {
-  e.preventDefault();
+  input.value = actualValue;
+  input.className = isMultiline
+    ? 'w-full bg-vscode-bg border border-vscode-accent rounded p-2 text-white focus:outline-none resize-none min-h-[100px]'
+    : 'w-full bg-vscode-bg border border-vscode-accent rounded px-2 py-1 text-white focus:outline-none';
 
-  const id = document.getElementById('edit-workspace-id').value;
-  const name = document.getElementById('edit-name').value.trim();
-  const description = document.getElementById('edit-description').value.trim();
-  const memo = document.getElementById('edit-memo').value.trim();
-
-  try {
-    await updateWorkspace(id, { name, description, memo });
-    showToast('Workspace updated', 'success');
-    closeEditModal();
-    await loadWorkspaces(currentPage);
-  } catch (error) {
-    if (error.message !== 'Session expired') {
-      showToast(error.message, 'error');
-    }
+  if (isMultiline) {
+    input.rows = 5;
   }
+
+  const originalContent = element.innerHTML;
+  const originalClass = element.className;
+  element.innerHTML = '';
+  element.className = element.className.replace('cursor-pointer', '').replace('hover:bg-vscode-hover', '').replace('hover:border-vscode-accent', '');
+  element.appendChild(input);
+  input.focus();
+  if (!isMultiline) {
+    input.select();
+  }
+
+  let isSaving = false;
+
+  const cancelEdit = () => {
+    if (isSaving) return; // Don't cancel if we're saving
+    element.innerHTML = originalContent;
+    element.className = originalClass;
+  };
+
+  const saveEdit = async () => {
+    isSaving = true; // Prevent blur handler from canceling
+    const newValue = input.value.trim();
+    const updateData = { [field]: newValue || null };
+
+    try {
+      await updateWorkspace(state.selectedWorkspaceId, updateData);
+      showToast('Updated', 'success');
+      await loadWorkspaces(state.currentPage);
+      // Re-render detail panel with updated data
+      if (state.cache[state.selectedWorkspaceId]) {
+        renderDetailPanel(state.cache[state.selectedWorkspaceId]);
+      }
+    } catch (error) {
+      isSaving = false;
+      if (error.message !== 'Session expired') {
+        showToast(error.message, 'error');
+      }
+      cancelEdit();
+    }
+  };
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      saveEdit();
+    }
+    if (e.key === 'Escape') {
+      cancelEdit();
+    }
+  });
+
+  input.addEventListener('blur', () => {
+    // Small delay to allow click events to fire first
+    setTimeout(() => {
+      if (document.activeElement !== input) {
+        cancelEdit();
+      }
+    }, 100);
+  });
 }
 
 // Delete Modal
@@ -851,16 +939,80 @@ function closeShortcutsModal() {
 
 function closeAllModals() {
   closeCreateModal();
-  closeEditModal();
   closeDeleteModal();
   closeShortcutsModal();
 }
 
 function isModalOpen() {
   return !document.getElementById('create-modal').classList.contains('hidden') ||
-         !document.getElementById('edit-modal').classList.contains('hidden') ||
          !document.getElementById('delete-modal').classList.contains('hidden') ||
          !document.getElementById('shortcuts-modal').classList.contains('hidden');
+}
+
+// =============================================================================
+// Memo Tab Editor (GitHub-style Write/Preview)
+// =============================================================================
+
+function switchMemoTab(tab) {
+  const writeTab = document.getElementById('memo-tab-write');
+  const previewTab = document.getElementById('memo-tab-preview');
+  const writePanel = document.getElementById('memo-write');
+  const previewPanel = document.getElementById('memo-preview');
+  const saveBtn = document.getElementById('memo-save-btn');
+  const textarea = document.getElementById('memo-textarea');
+
+  if (tab === 'write') {
+    // Switch to Write tab
+    writeTab.classList.add('border-vscode-accent', 'text-white');
+    writeTab.classList.remove('border-transparent', 'text-vscode-text');
+    previewTab.classList.remove('border-vscode-accent', 'text-white');
+    previewTab.classList.add('border-transparent', 'text-vscode-text');
+    writePanel.classList.remove('hidden');
+    previewPanel.classList.add('hidden');
+    saveBtn.classList.remove('hidden');
+    // Note: textarea value is pre-loaded in renderDetailPanel
+    textarea.focus();
+  } else {
+    // Switch to Preview tab
+    previewTab.classList.add('border-vscode-accent', 'text-white');
+    previewTab.classList.remove('border-transparent', 'text-vscode-text');
+    writeTab.classList.remove('border-vscode-accent', 'text-white');
+    writeTab.classList.add('border-transparent', 'text-vscode-text');
+    previewPanel.classList.remove('hidden');
+    writePanel.classList.add('hidden');
+    saveBtn.classList.add('hidden');
+
+    // Render current textarea content as markdown preview
+    const content = textarea.value || '';
+    const memoEl = document.getElementById('detail-memo');
+    if (content.trim()) {
+      memoEl.innerHTML = marked.parse(content);
+    } else {
+      memoEl.textContent = 'No memo';
+    }
+  }
+}
+
+async function saveMemo() {
+  const textarea = document.getElementById('memo-textarea');
+  const newValue = textarea.value.trim() || null;
+
+  if (!state.selectedWorkspaceId) return;
+
+  try {
+    await updateWorkspace(state.selectedWorkspaceId, { memo: newValue });
+    showToast('Memo saved', 'success');
+
+    // Update preview immediately
+    const memoEl = document.getElementById('detail-memo');
+    if (newValue) {
+      memoEl.innerHTML = marked.parse(newValue);
+    } else {
+      memoEl.textContent = 'No memo';
+    }
+  } catch (error) {
+    showToast('Failed to save memo', 'error');
+  }
 }
 
 // =============================================================================
@@ -868,9 +1020,20 @@ function isModalOpen() {
 // =============================================================================
 
 function handleKeyboardNavigation(e) {
-  // Ignore if typing in an input
+  // Handle Ctrl+S for memo save (works even when typing in textarea)
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+    const memoTextarea = document.getElementById('memo-textarea');
+    if (e.target === memoTextarea && !document.getElementById('memo-write').classList.contains('hidden')) {
+      e.preventDefault();
+      saveMemo();
+      return;
+    }
+  }
+
+  // Ignore if typing in an input or textarea (inline editing handles its own keys)
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') {
-    if (e.key === 'Escape') {
+    // Only close modals on Escape if we're in a modal input, not inline editing
+    if (e.key === 'Escape' && isModalOpen()) {
       e.target.blur();
       closeAllModals();
     }
@@ -914,9 +1077,9 @@ function handleKeyboardNavigation(e) {
     case 'ArrowUp':
       e.preventDefault();
       if (filtered.length > 0) {
-        selectedCardIndex = selectedCardIndex <= 0 ? filtered.length - 1 : selectedCardIndex - 1;
-        selectWorkspace(filtered[selectedCardIndex].id, selectedCardIndex);
-        scrollToCard(selectedCardIndex);
+        state.selectedCardIndex = state.selectedCardIndex <= 0 ? filtered.length - 1 : state.selectedCardIndex - 1;
+        selectWorkspace(filtered[state.selectedCardIndex].id, state.selectedCardIndex);
+        scrollToCard(state.selectedCardIndex);
       }
       break;
 
@@ -924,37 +1087,37 @@ function handleKeyboardNavigation(e) {
     case 'ArrowDown':
       e.preventDefault();
       if (filtered.length > 0) {
-        selectedCardIndex = selectedCardIndex >= filtered.length - 1 ? 0 : selectedCardIndex + 1;
-        selectWorkspace(filtered[selectedCardIndex].id, selectedCardIndex);
-        scrollToCard(selectedCardIndex);
+        state.selectedCardIndex = state.selectedCardIndex >= filtered.length - 1 ? 0 : state.selectedCardIndex + 1;
+        selectWorkspace(filtered[state.selectedCardIndex].id, state.selectedCardIndex);
+        scrollToCard(state.selectedCardIndex);
       }
       break;
 
     case 'Enter':
-      if (selectedWorkspaceId) {
-        const ws = workspacesCache[selectedWorkspaceId];
+      if (state.selectedWorkspaceId) {
+        const ws = state.cache[state.selectedWorkspaceId];
         if (ws && STATUS_CONFIG[ws.status]?.canOpen) {
-          openWorkspace(selectedWorkspaceId);
+          openWorkspace(state.selectedWorkspaceId);
         }
       }
       break;
 
     case 's':
     case 'S':
-      if (selectedWorkspaceId) {
-        const ws = workspacesCache[selectedWorkspaceId];
+      if (state.selectedWorkspaceId) {
+        const ws = state.cache[state.selectedWorkspaceId];
         if (ws && STATUS_CONFIG[ws.status]?.canStart) {
-          handleStart(selectedWorkspaceId);
+          handleStart(state.selectedWorkspaceId);
         }
       }
       break;
 
     case 'x':
     case 'X':
-      if (selectedWorkspaceId) {
-        const ws = workspacesCache[selectedWorkspaceId];
+      if (state.selectedWorkspaceId) {
+        const ws = state.cache[state.selectedWorkspaceId];
         if (ws && STATUS_CONFIG[ws.status]?.canStop) {
-          handleStop(selectedWorkspaceId);
+          handleStop(state.selectedWorkspaceId);
         }
       }
       break;
@@ -1009,11 +1172,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('cancel-create-btn').addEventListener('click', closeCreateModal);
   document.getElementById('create-form').addEventListener('submit', handleCreateSubmit);
 
-  // Edit modal
-  document.getElementById('edit-workspace-btn').addEventListener('click', openEditModal);
-  document.getElementById('close-edit-modal-btn').addEventListener('click', closeEditModal);
-  document.getElementById('cancel-edit-btn').addEventListener('click', closeEditModal);
-  document.getElementById('edit-form').addEventListener('submit', handleEditSubmit);
+  // Inline editing (double-click on name, description)
+  document.getElementById('detail-name').addEventListener('dblclick', (e) => {
+    enableInlineEdit(e.currentTarget, 'name');
+  });
+  document.getElementById('detail-description').addEventListener('dblclick', (e) => {
+    enableInlineEdit(e.currentTarget, 'description');
+  });
 
   // Delete modal
   document.getElementById('close-delete-modal-btn').addEventListener('click', closeDeleteModal);
@@ -1027,6 +1192,47 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Detail panel
   document.getElementById('close-panel-btn').addEventListener('click', closeDetailPanel);
 
+  // Event delegation for workspace actions (cards + detail panel)
+  document.addEventListener('click', (e) => {
+    const actionBtn = e.target.closest('[data-action]');
+    if (actionBtn) {
+      e.stopPropagation();
+      const action = actionBtn.dataset.action;
+      const id = actionBtn.dataset.id;
+      const name = actionBtn.dataset.name;
+
+      switch (action) {
+        case 'open':
+          openWorkspace(id);
+          break;
+        case 'start':
+          handleStart(id);
+          break;
+        case 'stop':
+          handleStop(id);
+          break;
+        case 'delete':
+          openDeleteModal(id, name);
+          break;
+        case 'memo-tab':
+          switchMemoTab(actionBtn.dataset.tab);
+          break;
+        case 'memo-save':
+          saveMemo();
+          break;
+      }
+      return;
+    }
+
+    // Card click (select workspace)
+    const card = e.target.closest('.workspace-card');
+    if (card && !e.target.closest('[data-action]')) {
+      const id = card.dataset.workspaceId;
+      const index = parseInt(card.dataset.index, 10);
+      selectWorkspace(id, index);
+    }
+  });
+
   // Close detail panel on click outside (workspace grid area)
   document.getElementById('workspace-container').addEventListener('click', (e) => {
     const detailPanel = document.getElementById('detail-panel');
@@ -1039,7 +1245,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Close modals on backdrop click
-  ['create-modal', 'edit-modal', 'delete-modal', 'shortcuts-modal'].forEach(modalId => {
+  ['create-modal', 'delete-modal', 'shortcuts-modal'].forEach(modalId => {
     document.getElementById(modalId).addEventListener('click', (e) => {
       if (e.target.id === modalId) {
         closeAllModals();
@@ -1054,13 +1260,49 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       stopPolling();
-      if (eventSource) {
-        eventSource.close();
-        eventSource = null;
+      if (state.eventSource) {
+        state.eventSource.close();
+        state.eventSource = null;
       }
     } else {
-      loadWorkspaces(currentPage);
+      loadWorkspaces(state.currentPage);
       connectSSE();
+    }
+  });
+
+  // Panel resize functionality
+  const resizeHandle = document.getElementById('panel-resize-handle');
+  const detailPanel = document.getElementById('detail-panel');
+  let isResizing = false;
+
+  resizeHandle.addEventListener('mousedown', (e) => {
+    isResizing = true;
+    resizeHandle.classList.add('active');
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isResizing) return;
+
+    const containerRight = document.querySelector('main').getBoundingClientRect().right;
+    const newWidth = containerRight - e.clientX;
+
+    // Respect min/max constraints
+    const minWidth = 280;
+    const maxWidth = 600;
+    const clampedWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
+
+    detailPanel.style.width = `${clampedWidth}px`;
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (isResizing) {
+      isResizing = false;
+      resizeHandle.classList.remove('active');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
     }
   });
 });

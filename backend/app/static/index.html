@@ -9,6 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script>
     tailwind.config = {
       theme: {
@@ -95,6 +96,65 @@
     .workspace-card.selected {
       outline: 2px solid #007acc;
       outline-offset: 2px;
+    }
+    /* Markdown styles for memo */
+    .markdown-content h1, .markdown-content h2, .markdown-content h3 {
+      color: #fff;
+      font-weight: 600;
+      margin-top: 1em;
+      margin-bottom: 0.5em;
+    }
+    .markdown-content h1 { font-size: 1.5em; }
+    .markdown-content h2 { font-size: 1.25em; }
+    .markdown-content h3 { font-size: 1.1em; }
+    .markdown-content p { margin-bottom: 0.75em; }
+    .markdown-content ul, .markdown-content ol {
+      margin-left: 1.5em;
+      margin-bottom: 0.75em;
+    }
+    .markdown-content li { margin-bottom: 0.25em; }
+    .markdown-content code {
+      background: #1e1e1e;
+      padding: 0.2em 0.4em;
+      border-radius: 3px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9em;
+    }
+    .markdown-content pre {
+      background: #1e1e1e;
+      padding: 1em;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin-bottom: 0.75em;
+    }
+    .markdown-content pre code {
+      background: transparent;
+      padding: 0;
+    }
+    .markdown-content a {
+      color: #007acc;
+      text-decoration: underline;
+    }
+    .markdown-content blockquote {
+      border-left: 3px solid #3c3c3c;
+      padding-left: 1em;
+      margin-left: 0;
+      color: #999;
+    }
+    /* Resizable panel */
+    .resize-handle {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      cursor: ew-resize;
+      background: transparent;
+      transition: background 0.15s;
+    }
+    .resize-handle:hover,
+    .resize-handle.active {
+      background: #007acc;
     }
   </style>
 </head>
@@ -229,12 +289,15 @@
     </div>
 
     <!-- Slide Panel (Detail) -->
-    <aside id="detail-panel" class="hidden w-96 bg-vscode-sidebar border-l border-vscode-border overflow-y-auto shrink-0 slide-in">
-      <div class="p-6">
+    <aside id="detail-panel" class="hidden bg-vscode-sidebar border-l border-vscode-border shrink-0 slide-in relative flex flex-col" style="width: 384px; min-width: 280px; max-width: 600px;">
+      <!-- Resize Handle -->
+      <div id="panel-resize-handle" class="resize-handle"></div>
+
+      <div class="p-6 flex flex-col flex-1 overflow-hidden">
         <!-- Panel Header -->
-        <div class="flex items-start justify-between mb-6">
+        <div class="flex items-start justify-between mb-4 shrink-0">
           <div class="flex-1">
-            <h2 id="detail-name" class="text-xl font-semibold text-white break-words"></h2>
+            <h2 id="detail-name" class="text-xl font-semibold text-white break-words cursor-pointer hover:bg-vscode-hover rounded px-1 -mx-1" title="Double-click to edit"></h2>
             <div class="flex items-center gap-2 mt-2">
               <span id="detail-status" class="px-2 py-1 rounded text-xs font-medium"></span>
             </div>
@@ -247,45 +310,48 @@
         </div>
 
         <!-- Quick Actions -->
-        <div id="detail-actions" class="flex flex-wrap gap-2 mb-6">
+        <div id="detail-actions" class="flex flex-wrap gap-2 mb-4 shrink-0">
           <!-- Action buttons will be rendered here -->
         </div>
 
         <!-- Description -->
-        <div class="mb-6">
-          <h3 class="text-sm font-medium text-vscode-text mb-2">Description</h3>
-          <p id="detail-description" class="text-white"></p>
+        <div class="mb-4 shrink-0">
+          <h3 class="text-sm font-medium text-vscode-text mb-1">Description</h3>
+          <p id="detail-description" class="text-white cursor-pointer hover:bg-vscode-hover rounded px-2 py-1 -mx-2" title="Double-click to edit"></p>
         </div>
 
-        <!-- Memo -->
-        <div class="mb-6">
-          <h3 class="text-sm font-medium text-vscode-text mb-2">Memo</h3>
-          <div id="detail-memo" class="bg-vscode-bg border border-vscode-border rounded p-4 text-white whitespace-pre-wrap min-h-[100px]"></div>
+        <!-- Memo (GitHub-style Write/Preview tabs) -->
+        <div class="flex-1 flex flex-col min-h-0 mb-4">
+          <!-- Tab header -->
+          <div class="flex border-b border-vscode-border mb-2 shrink-0">
+            <button id="memo-tab-write" data-action="memo-tab" data-tab="write"
+                    class="px-3 py-1.5 text-sm text-vscode-text hover:text-white border-b-2 border-transparent transition-colors">
+              Write
+            </button>
+            <button id="memo-tab-preview" data-action="memo-tab" data-tab="preview"
+                    class="px-3 py-1.5 text-sm border-b-2 border-vscode-accent text-white">
+              Preview
+            </button>
+            <div class="flex-1"></div>
+            <button id="memo-save-btn" data-action="memo-save"
+                    class="px-3 py-1.5 text-sm text-vscode-text hover:text-white hidden">
+              Save
+            </button>
+          </div>
+
+          <!-- Write mode (textarea) -->
+          <div id="memo-write" class="flex-1 flex flex-col min-h-0 hidden">
+            <textarea id="memo-textarea"
+                      class="w-full flex-1 bg-vscode-bg border border-vscode-border rounded p-3 text-white resize-none focus:outline-none focus:border-vscode-accent font-mono text-sm"
+                      placeholder="Write your memo in Markdown..."></textarea>
+          </div>
+
+          <!-- Preview mode (markdown rendering) -->
+          <div id="memo-preview" class="flex-1 overflow-y-auto">
+            <div id="detail-memo" class="markdown-content bg-vscode-bg border border-vscode-border rounded p-4 text-white min-h-full"></div>
+          </div>
         </div>
 
-        <!-- Metadata -->
-        <div class="grid grid-cols-1 gap-3 text-sm mb-6">
-          <div>
-            <span class="text-vscode-text">Created:</span>
-            <span id="detail-created" class="text-white ml-2"></span>
-          </div>
-          <div>
-            <span class="text-vscode-text">Updated:</span>
-            <span id="detail-updated" class="text-white ml-2"></span>
-          </div>
-          <div>
-            <span class="text-vscode-text">URL:</span>
-            <a id="detail-url" href="#" target="_blank" class="text-vscode-accent hover:underline ml-2 break-all font-mono text-sm"></a>
-          </div>
-        </div>
-
-        <!-- Edit Button -->
-        <button
-          id="edit-workspace-btn"
-          class="w-full px-4 py-2 border border-vscode-border rounded hover:bg-vscode-hover transition-colors"
-        >
-          Edit Workspace
-        </button>
       </div>
     </aside>
   </main>
@@ -386,66 +452,6 @@
             class="bg-vscode-accent hover:bg-blue-600 text-white px-4 py-2 rounded transition-colors"
           >
             Create
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Edit Workspace Modal -->
-  <div id="edit-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 fade-in">
-    <div class="bg-vscode-sidebar border border-vscode-border rounded-lg w-full max-w-md mx-4 slide-in">
-      <div class="flex justify-between items-center px-6 py-4 border-b border-vscode-border">
-        <h2 class="text-lg font-semibold text-white">Edit Workspace</h2>
-        <button id="close-edit-modal-btn" class="text-vscode-text hover:text-white">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-          </svg>
-        </button>
-      </div>
-      <form id="edit-form" class="p-6 space-y-4">
-        <input type="hidden" id="edit-workspace-id">
-        <div>
-          <label for="edit-name" class="block text-sm mb-2">Name <span class="text-vscode-error">*</span></label>
-          <input
-            type="text"
-            id="edit-name"
-            name="name"
-            required
-            class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent"
-          >
-        </div>
-        <div>
-          <label for="edit-description" class="block text-sm mb-2">Description</label>
-          <input
-            type="text"
-            id="edit-description"
-            name="description"
-            class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent"
-          >
-        </div>
-        <div>
-          <label for="edit-memo" class="block text-sm mb-2">Memo</label>
-          <textarea
-            id="edit-memo"
-            name="memo"
-            rows="3"
-            class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent resize-none"
-          ></textarea>
-        </div>
-        <div class="flex justify-end gap-3 pt-4">
-          <button
-            type="button"
-            id="cancel-edit-btn"
-            class="px-4 py-2 border border-vscode-border rounded hover:bg-vscode-hover transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            class="bg-vscode-accent hover:bg-blue-600 text-white px-4 py-2 rounded transition-colors"
-          >
-            Save
           </button>
         </div>
       </form>
