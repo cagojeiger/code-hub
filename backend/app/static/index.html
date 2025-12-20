@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CodeHub</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            vscode: {
+              bg: '#1e1e1e',
+              sidebar: '#252526',
+              hover: '#2a2d2e',
+              border: '#3c3c3c',
+              text: '#cccccc',
+              accent: '#007acc',
+              success: '#89d185',
+              warning: '#cca700',
+              error: '#f14c4c',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Spinner animation */
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .spinner {
+      animation: spin 1s linear infinite;
+    }
+  </style>
+</head>
+<body class="bg-vscode-bg text-vscode-text min-h-screen">
+  <!-- Header -->
+  <header class="bg-vscode-sidebar border-b border-vscode-border px-6 py-4 flex justify-between items-center">
+    <h1 class="text-xl font-semibold text-white">CodeHub</h1>
+    <span class="text-sm text-vscode-text">Logged in as: <span class="text-white">admin</span></span>
+  </header>
+
+  <!-- Main Content -->
+  <main class="max-w-4xl mx-auto px-6 py-8">
+    <!-- Actions -->
+    <div class="mb-6">
+      <button
+        id="new-workspace-btn"
+        class="bg-vscode-accent hover:bg-blue-600 text-white px-4 py-2 rounded flex items-center gap-2 transition-colors"
+      >
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+        </svg>
+        New Workspace
+      </button>
+    </div>
+
+    <!-- Workspace List -->
+    <div id="workspace-list" class="space-y-4">
+      <!-- Workspaces will be rendered here -->
+    </div>
+
+    <!-- Empty State -->
+    <div id="empty-state" class="hidden text-center py-12">
+      <p class="text-vscode-text mb-4">No workspaces yet</p>
+      <button
+        class="text-vscode-accent hover:underline"
+        onclick="document.getElementById('new-workspace-btn').click()"
+      >
+        Create your first workspace
+      </button>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loading-state" class="text-center py-12">
+      <div class="inline-block w-8 h-8 border-2 border-vscode-accent border-t-transparent rounded-full spinner"></div>
+      <p class="mt-4 text-vscode-text">Loading workspaces...</p>
+    </div>
+  </main>
+
+  <!-- Create Workspace Modal -->
+  <div id="create-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div class="bg-vscode-sidebar border border-vscode-border rounded-lg w-full max-w-md mx-4">
+      <div class="flex justify-between items-center px-6 py-4 border-b border-vscode-border">
+        <h2 class="text-lg font-semibold text-white">New Workspace</h2>
+        <button id="close-modal-btn" class="text-vscode-text hover:text-white">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      <form id="create-form" class="p-6 space-y-4">
+        <div>
+          <label for="workspace-name" class="block text-sm mb-2">Name <span class="text-vscode-error">*</span></label>
+          <input
+            type="text"
+            id="workspace-name"
+            name="name"
+            required
+            class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent"
+            placeholder="my-workspace"
+          >
+        </div>
+        <div>
+          <label for="workspace-description" class="block text-sm mb-2">Description</label>
+          <input
+            type="text"
+            id="workspace-description"
+            name="description"
+            class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent"
+            placeholder="Optional description"
+          >
+        </div>
+        <div class="flex justify-end gap-3 pt-4">
+          <button
+            type="button"
+            id="cancel-create-btn"
+            class="px-4 py-2 border border-vscode-border rounded hover:bg-vscode-hover transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            class="bg-vscode-accent hover:bg-blue-600 text-white px-4 py-2 rounded transition-colors"
+          >
+            Create
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
