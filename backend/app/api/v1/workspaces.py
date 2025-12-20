@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from app.api.v1.dependencies import CurrentUser, DbSession, WsService
 from app.core.config import get_settings
+from app.core.events import notify_workspace_updated
 from app.db import Workspace, WorkspaceStatus
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
@@ -146,6 +147,7 @@ async def create_workspace(
     ws_service: WsService,
 ) -> WorkspaceResponse:
     """Create a new workspace."""
+    settings = get_settings()
     workspace = await ws_service.create_workspace(
         session=session,
         user_id=current_user.id,
@@ -153,6 +155,7 @@ async def create_workspace(
         description=body.description,
         memo=body.memo,
     )
+    notify_workspace_updated(workspace, settings.server.public_base_url)
     return _workspace_to_response(workspace)
 
 
@@ -177,6 +180,7 @@ async def update_workspace(
     ws_service: WsService,
 ) -> WorkspaceResponse:
     """Update workspace metadata."""
+    settings = get_settings()
     update_data = body.model_dump(exclude_unset=True)
     workspace = await ws_service.update_workspace(
         session=session,
@@ -184,6 +188,7 @@ async def update_workspace(
         workspace_id=workspace_id,
         **update_data,
     )
+    notify_workspace_updated(workspace, settings.server.public_base_url)
     return _workspace_to_response(workspace)
 
 
@@ -203,12 +208,17 @@ async def delete_workspace(
     Returns immediately with 204 status.
     Actual deletion (container + storage cleanup) happens asynchronously.
     """
+    settings = get_settings()
     workspace = await ws_service.initiate_delete(session, current_user.id, workspace_id)
+
+    # Notify DELETING state immediately
+    notify_workspace_updated(workspace, settings.server.public_base_url)
 
     background_tasks.add_task(
         ws_service.delete_workspace,
         workspace_id=workspace_id,
         home_ctx=workspace.home_ctx,
+        owner_user_id=current_user.id,
     )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -230,7 +240,11 @@ async def start_workspace(
     Returns immediately with PROVISIONING status.
     Final status (RUNNING/ERROR) is determined asynchronously.
     """
+    settings = get_settings()
     workspace = await ws_service.initiate_start(session, current_user.id, workspace_id)
+
+    # Notify PROVISIONING state immediately
+    notify_workspace_updated(workspace, settings.server.public_base_url)
 
     background_tasks.add_task(
         ws_service.start_workspace,
@@ -238,6 +252,7 @@ async def start_workspace(
         home_store_key=workspace.home_store_key,
         existing_ctx=workspace.home_ctx,
         image_ref=workspace.image_ref,
+        owner_user_id=current_user.id,
     )
 
     return WorkspaceActionResponse(
@@ -262,12 +277,17 @@ async def stop_workspace(
     Returns immediately with STOPPING status.
     Final status (STOPPED/ERROR) is determined asynchronously.
     """
+    settings = get_settings()
     workspace = await ws_service.initiate_stop(session, current_user.id, workspace_id)
+
+    # Notify STOPPING state immediately
+    notify_workspace_updated(workspace, settings.server.public_base_url)
 
     background_tasks.add_task(
         ws_service.stop_workspace,
         workspace_id=workspace_id,
         home_ctx=workspace.home_ctx,
+        owner_user_id=current_user.id,
     )
 
     return WorkspaceActionResponse(
