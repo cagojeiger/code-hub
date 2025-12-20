@@ -34,7 +34,10 @@ class TestListWorkspaces:
         """Test listing workspaces when none exist."""
         response = await async_client.get("/api/v1/workspaces")
         assert response.status_code == 200
-        assert response.json() == []
+        data = response.json()
+        assert data["items"] == []
+        assert "pagination" in data
+        assert data["pagination"]["total"] == 0
 
     @pytest.mark.asyncio
     async def test_list_workspaces(self, async_client: AsyncClient):
@@ -51,10 +54,12 @@ class TestListWorkspaces:
 
         response = await async_client.get("/api/v1/workspaces")
         assert response.status_code == 200
-        workspaces = response.json()
+        data = response.json()
+        workspaces = data["items"]
         assert len(workspaces) == 2
         names = {ws["name"] for ws in workspaces}
         assert names == {"workspace-1", "workspace-2"}
+        assert data["pagination"]["total"] == 2
 
 
 class TestCreateWorkspace:
@@ -305,7 +310,8 @@ class TestDeleteWorkspace:
 
         # List should only show one
         response = await async_client.get("/api/v1/workspaces")
-        workspaces = response.json()
+        data = response.json()
+        workspaces = data["items"]
         assert len(workspaces) == 1
         assert workspaces[0]["id"] == ws1_id
 

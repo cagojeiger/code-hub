@@ -5,6 +5,7 @@ Two paths needed:
 - workspace_base_dir: for Docker bind mount (host path)
 """
 
+import contextlib
 import os
 import shutil
 from typing import Literal
@@ -53,10 +54,8 @@ class LocalDirStorageProvider(StorageProvider):
         internal_path = self._internal_path(home_store_key)
         os.makedirs(internal_path, exist_ok=True)
 
-        try:
+        with contextlib.suppress(PermissionError):
             os.chown(internal_path, CODER_UID, CODER_GID)
-        except PermissionError:
-            pass
 
         # Return host path for Docker bind mount
         home_mount = self._external_path(home_store_key)

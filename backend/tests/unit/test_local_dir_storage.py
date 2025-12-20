@@ -143,7 +143,9 @@ class TestProvision:
 
 class TestDeprovision:
 
-    def test_is_noop(self, provider: LocalDirStorageProvider, temp_base_dir: str) -> None:
+    def test_is_noop(
+        self, provider: LocalDirStorageProvider, temp_base_dir: str
+    ) -> None:
         key = "users/grace/workspaces/ws7/home"
         run_async(provider.provision(key))
 
@@ -157,7 +159,9 @@ class TestDeprovision:
 
 class TestPurge:
 
-    def test_removes_directory(self, provider: LocalDirStorageProvider, temp_base_dir: str) -> None:
+    def test_removes_directory(
+        self, provider: LocalDirStorageProvider, temp_base_dir: str
+    ) -> None:
         key = "users/henry/workspaces/ws8/home"
         run_async(provider.provision(key))
         internal_path = f"{temp_base_dir}/{key}"

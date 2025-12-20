@@ -228,7 +228,7 @@ class TestWorkspaceConfig:
     def test_default_values(self):
         """Workspace config should have sensible defaults."""
         config = WorkspaceConfig()
-        assert config.default_image == "codercom/code-server:latest"
+        assert config.default_image == "cagojeiger/code-server:4.107.0"
         assert config.healthcheck.type == "http"
         assert config.healthcheck.interval == "2s"
 
@@ -283,7 +283,7 @@ class TestSettings:
         assert settings.server.public_base_url == "http://localhost:8080"
         assert settings.auth.mode == "local"
         assert settings.auth.session.cookie_name == "session"
-        assert settings.workspace.default_image == "codercom/code-server:latest"
+        assert settings.workspace.default_image == "cagojeiger/code-server:4.107.0"
         assert settings.home_store.backend == "local-dir"
         assert settings.home_store.control_plane_base_dir == "/var/lib/codehub/homes"
 

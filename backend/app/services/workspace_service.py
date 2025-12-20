@@ -120,15 +120,46 @@ class WorkspaceService:
         self,
         session: AsyncSession,
         user_id: str,
-    ) -> list[Workspace]:
-        """List workspaces owned by user."""
-        result = await session.execute(
-            select(Workspace).where(
-                col(Workspace.owner_user_id) == user_id,
-                col(Workspace.deleted_at).is_(None),
-            )
+        page: int = 1,
+        per_page: int = 20,
+    ) -> tuple[list[Workspace], int]:
+        """List workspaces owned by user with pagination.
+
+        Args:
+            session: Database session
+            user_id: Owner user ID
+            page: Page number (1-indexed)
+            per_page: Items per page
+
+        Returns:
+            Tuple of (workspaces list, total count)
+        """
+        from sqlalchemy import func
+
+        # Base query filter
+        base_filter = [
+            col(Workspace.owner_user_id) == user_id,
+            col(Workspace.deleted_at).is_(None),
+        ]
+
+        # Get total count
+        count_result = await session.execute(
+            select(func.count()).select_from(Workspace).where(*base_filter)
         )
-        return list(result.scalars().all())
+        total = count_result.scalar() or 0
+
+        # Get paginated results
+        offset = (page - 1) * per_page
+        result = await session.execute(
+            select(Workspace)
+            .where(*base_filter)
+            .order_by(col(Workspace.created_at).desc())
+            .offset(offset)
+            .limit(per_page)
+        )
+        workspaces = list(result.scalars().all())
+
+        return workspaces, total
 
     async def create_workspace(
         self,

@@ -1,38 +1,42 @@
 """API v1 dependencies for code-hub.
 
 Contains shared dependencies for API endpoints.
-Auth is not implemented yet (M6), so we use a test user.
 """
 
 from functools import lru_cache
 from typing import Annotated
 
-from fastapi import Depends
-from sqlalchemy import select
+from fastapi import Cookie, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import col
 
 from app.core.config import get_settings
+from app.core.errors import UnauthorizedError
 from app.db import User, get_async_session
 from app.services.instance.interface import InstanceController
 from app.services.instance.local_docker import LocalDockerInstanceController
+from app.services.session_service import SessionService
 from app.services.storage.interface import StorageProvider
 from app.services.storage.local_dir import LocalDirStorageProvider
 from app.services.workspace_service import WorkspaceService
 
-INITIAL_ADMIN_USERNAME = "admin"
-
 
 async def get_current_user(
-    session: Annotated[AsyncSession, Depends(get_async_session)],
+    db: Annotated[AsyncSession, Depends(get_async_session)],
+    session: Annotated[str | None, Cookie(alias="session")] = None,
 ) -> User:
-    """Get current user (test user for now, auth in M6)."""
-    result = await session.execute(
-        select(User).where(col(User.username) == INITIAL_ADMIN_USERNAME)
-    )
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise RuntimeError("Initial admin user not found")
+    """Get current authenticated user from session cookie.
+
+    Raises:
+        UnauthorizedError: If no session cookie or session is invalid/expired
+    """
+    if session is None:
+        raise UnauthorizedError()
+
+    result = await SessionService.get_valid_with_user(db, session)
+    if result is None:
+        raise UnauthorizedError()
+
+    _, user = result
     return user
 
 

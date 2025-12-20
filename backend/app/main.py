@@ -146,6 +146,12 @@ async def root() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/login")
+async def login_page() -> FileResponse:
+    """Serve the login page."""
+    return FileResponse(STATIC_DIR / "login.html")
+
+
 @app.get("/debug/containers")
 async def list_containers() -> dict[str, Any]:
     """List codehub namespace containers (for testing Docker socket proxy)."""
