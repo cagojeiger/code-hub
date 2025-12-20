@@ -18,8 +18,9 @@ from app.services.instance.interface import (
 
 logger = logging.getLogger(__name__)
 
-CONTAINER_PREFIX = "codehub-ws-"
-NETWORK_NAME = "codehub-net"
+# Default values (can be overridden via config)
+DEFAULT_CONTAINER_PREFIX = "codehub-ws-"
+DEFAULT_NETWORK_NAME = "codehub-net"
 HOME_MOUNT_PATH = "/home/coder"
 CODE_SERVER_PORT = 8080
 CODER_UID = 1000
@@ -29,25 +30,45 @@ CODER_GID = 1000
 class LocalDockerInstanceController(InstanceController):
     """Instance controller using local Docker engine."""
 
-    def __init__(self, docker_host: str | None = None) -> None:
-        """Initialize with optional Docker host.
+    def __init__(
+        self,
+        docker_host: str | None = None,
+        container_prefix: str | None = None,
+        network_name: str | None = None,
+    ) -> None:
+        """Initialize with optional Docker host and naming configuration.
 
         Args:
             docker_host: Docker host URL (e.g., 'tcp://docker-proxy:2375').
                         If None, uses DOCKER_HOST env var or default socket.
+            container_prefix: Prefix for container names (default: 'codehub-ws-').
+            network_name: Docker network name (default: 'codehub-net').
         """
         if docker_host:
             self._client = docker.DockerClient(base_url=docker_host)
         else:
             self._client = docker.from_env()
 
+        self._container_prefix = container_prefix or DEFAULT_CONTAINER_PREFIX
+        self._network_name = network_name or DEFAULT_NETWORK_NAME
+
     @property
     def backend_name(self) -> Literal["local-docker"]:
         return "local-docker"
 
+    @property
+    def container_prefix(self) -> str:
+        """Get the container name prefix."""
+        return self._container_prefix
+
+    @property
+    def network_name(self) -> str:
+        """Get the Docker network name."""
+        return self._network_name
+
     def _container_name(self, workspace_id: str) -> str:
         """Generate container name from workspace ID."""
-        return f"{CONTAINER_PREFIX}{workspace_id}"
+        return f"{self._container_prefix}{workspace_id}"
 
     def _get_container(self, workspace_id: str) -> Container | None:
         """Get container by workspace ID, or None if not found."""
@@ -57,12 +78,12 @@ class LocalDockerInstanceController(InstanceController):
             return None
 
     def _ensure_network_sync(self) -> None:
-        """Ensure codehub-net network exists (sync)."""
+        """Ensure Docker network exists (sync)."""
         try:
-            self._client.networks.get(NETWORK_NAME)
+            self._client.networks.get(self._network_name)
         except NotFound:
-            logger.info("Creating network: %s", NETWORK_NAME)
-            self._client.networks.create(NETWORK_NAME, driver="bridge")
+            logger.info("Creating network: %s", self._network_name)
+            self._client.networks.create(self._network_name, driver="bridge")
 
     def _start_workspace_sync(
         self,
@@ -97,7 +118,7 @@ class LocalDockerInstanceController(InstanceController):
                 command=["--auth", "none"],  # Disable password authentication
                 name=container_name,
                 detach=True,
-                network=NETWORK_NAME,
+                network=self._network_name,
                 # No host port binding - proxy connects via internal network
                 volumes={home_mount: {"bind": HOME_MOUNT_PATH, "mode": "rw"}},
                 user=f"{CODER_UID}:{CODER_GID}",

@@ -209,6 +209,14 @@ class WorkspaceConfig(BaseSettings):
         default="cagojeiger/code-server:4.107.0",
         description="Default container image for workspaces",
     )
+    container_prefix: str = Field(
+        default="codehub-ws-",
+        description="Prefix for Docker container names",
+    )
+    network_name: str = Field(
+        default="codehub-net",
+        description="Docker network name for workspaces",
+    )
     healthcheck: HealthcheckConfig = Field(default_factory=HealthcheckConfig)
 
     @field_validator("default_image")
