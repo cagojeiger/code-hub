@@ -309,6 +309,267 @@ class TestDeleteWorkspace:
         assert len(workspaces) == 1
         assert workspaces[0]["id"] == ws1_id
 
+    @pytest.fixture
+    def mock_storage(self):
+        """Create a mock storage provider."""
+        storage = AsyncMock()
+        storage.provision = AsyncMock(
+            return_value=ProvisionResult(
+                home_mount="/mock/path/home",
+                home_ctx="/mock/path/home",
+            )
+        )
+        storage.deprovision = AsyncMock()
+        return storage
+
+    @pytest.fixture
+    def mock_instance(self):
+        """Create a mock instance controller."""
+        instance = AsyncMock()
+        instance.start_workspace = AsyncMock()
+        instance.stop_workspace = AsyncMock()
+        instance.delete_workspace = AsyncMock()
+        instance.get_status = AsyncMock(
+            return_value=InstanceStatus(
+                exists=True,
+                running=True,
+                healthy=True,
+                port=8080,
+            )
+        )
+        return instance
+
+    @pytest.fixture
+    def client_with_mocks(self, async_client, mock_storage, mock_instance):
+        """Client with mocked storage and instance dependencies."""
+        app.dependency_overrides[get_storage_provider] = lambda: mock_storage
+        app.dependency_overrides[get_instance_controller] = lambda: mock_instance
+        yield async_client
+        # Cleanup is done in async_client fixture
+
+    @pytest.mark.asyncio
+    async def test_delete_workspace_from_stopped(
+        self, client_with_mocks: AsyncClient, db_session: AsyncSession
+    ):
+        """Test deleting workspace from STOPPED state."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "delete-stopped-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Manually set to STOPPED with home_ctx
+        await db_session.execute(
+            update(Workspace)
+            .where(col(Workspace.id) == workspace_id)
+            .values(status=WorkspaceStatus.STOPPED, home_ctx="/mock/path/home")
+        )
+        await db_session.commit()
+
+        # Delete workspace
+        response = await client_with_mocks.delete(
+            f"/api/v1/workspaces/{workspace_id}"
+        )
+        assert response.status_code == 204
+
+        # Verify it's gone
+        get_response = await client_with_mocks.get(
+            f"/api/v1/workspaces/{workspace_id}"
+        )
+        assert get_response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_workspace_from_error(
+        self, client_with_mocks: AsyncClient, db_session: AsyncSession
+    ):
+        """Test deleting workspace from ERROR state."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "delete-error-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Manually set to ERROR
+        await db_session.execute(
+            update(Workspace)
+            .where(col(Workspace.id) == workspace_id)
+            .values(status=WorkspaceStatus.ERROR)
+        )
+        await db_session.commit()
+
+        # Delete workspace - should succeed
+        response = await client_with_mocks.delete(
+            f"/api/v1/workspaces/{workspace_id}"
+        )
+        assert response.status_code == 204
+
+    @pytest.mark.asyncio
+    async def test_delete_workspace_invalid_state_running(
+        self, client_with_mocks: AsyncClient, db_session: AsyncSession
+    ):
+        """Test deleting workspace in RUNNING state fails."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "delete-running-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Manually set to RUNNING
+        await db_session.execute(
+            update(Workspace)
+            .where(col(Workspace.id) == workspace_id)
+            .values(status=WorkspaceStatus.RUNNING)
+        )
+        await db_session.commit()
+
+        # Try to delete - should fail
+        response = await client_with_mocks.delete(
+            f"/api/v1/workspaces/{workspace_id}"
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "INVALID_STATE"
+
+    @pytest.mark.asyncio
+    async def test_delete_workspace_invalid_state_provisioning(
+        self, client_with_mocks: AsyncClient, db_session: AsyncSession
+    ):
+        """Test deleting workspace in PROVISIONING state fails."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "delete-provisioning-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Manually set to PROVISIONING
+        await db_session.execute(
+            update(Workspace)
+            .where(col(Workspace.id) == workspace_id)
+            .values(status=WorkspaceStatus.PROVISIONING)
+        )
+        await db_session.commit()
+
+        # Try to delete - should fail
+        response = await client_with_mocks.delete(
+            f"/api/v1/workspaces/{workspace_id}"
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "INVALID_STATE"
+
+    @pytest.mark.asyncio
+    async def test_delete_workspace_invalid_state_stopping(
+        self, client_with_mocks: AsyncClient, db_session: AsyncSession
+    ):
+        """Test deleting workspace in STOPPING state fails."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "delete-stopping-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Manually set to STOPPING
+        await db_session.execute(
+            update(Workspace)
+            .where(col(Workspace.id) == workspace_id)
+            .values(status=WorkspaceStatus.STOPPING)
+        )
+        await db_session.commit()
+
+        # Try to delete - should fail
+        response = await client_with_mocks.delete(
+            f"/api/v1/workspaces/{workspace_id}"
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "INVALID_STATE"
+
+    @pytest.mark.asyncio
+    async def test_delete_workspace_invalid_state_deleting(
+        self, client_with_mocks: AsyncClient, db_session: AsyncSession
+    ):
+        """Test deleting workspace in DELETING state fails."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "delete-deleting-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Manually set to DELETING
+        await db_session.execute(
+            update(Workspace)
+            .where(col(Workspace.id) == workspace_id)
+            .values(status=WorkspaceStatus.DELETING)
+        )
+        await db_session.commit()
+
+        # Try to delete - should fail
+        response = await client_with_mocks.delete(
+            f"/api/v1/workspaces/{workspace_id}"
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "INVALID_STATE"
+
+    @pytest.mark.asyncio
+    async def test_delete_workspace_cas_prevents_double_delete(
+        self, client_with_mocks: AsyncClient
+    ):
+        """Test that CAS prevents concurrent delete requests."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "cas-delete-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # First delete succeeds
+        response1 = await client_with_mocks.delete(
+            f"/api/v1/workspaces/{workspace_id}"
+        )
+        assert response1.status_code == 204
+
+        # Second delete fails (workspace is now DELETING/DELETED)
+        response2 = await client_with_mocks.delete(
+            f"/api/v1/workspaces/{workspace_id}"
+        )
+        assert response2.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_workspace_concurrent_requests(
+        self, client_with_mocks: AsyncClient
+    ):
+        """Test concurrent delete requests - only one should succeed."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "concurrent-delete-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Send two concurrent delete requests
+        responses = await asyncio.gather(
+            client_with_mocks.delete(f"/api/v1/workspaces/{workspace_id}"),
+            client_with_mocks.delete(f"/api/v1/workspaces/{workspace_id}"),
+            return_exceptions=True,
+        )
+
+        # Count successes and failures
+        successes = sum(
+            1 for r in responses if hasattr(r, "status_code") and r.status_code == 204
+        )
+        failures = sum(
+            1
+            for r in responses
+            if hasattr(r, "status_code") and r.status_code in (404, 409)
+        )
+
+        # Exactly one should succeed due to CAS
+        assert successes == 1
+        assert failures == 1
+
 
 class TestWorkspaceIdempotency:
     """Tests for idempotency and edge cases."""
