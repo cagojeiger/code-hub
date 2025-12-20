@@ -7,6 +7,7 @@ Endpoints:
 - PATCH /api/v1/workspaces/{id} - Update workspace
 - DELETE /api/v1/workspaces/{id} - Delete workspace (CREATED/STOPPED/ERROR only)
 - POST /api/v1/workspaces/{id}:start - Start workspace
+- POST /api/v1/workspaces/{id}:stop - Stop workspace
 """
 
 from datetime import datetime
@@ -189,4 +190,35 @@ async def start_workspace(
     return WorkspaceActionResponse(
         id=workspace_id,
         status=WorkspaceStatus.PROVISIONING,
+    )
+
+
+@router.post("/{workspace_id}:stop", response_model=WorkspaceActionResponse)
+async def stop_workspace(
+    workspace_id: str,
+    session: DbSession,
+    current_user: CurrentUser,
+    ws_service: WsService,
+    background_tasks: BackgroundTasks,
+) -> WorkspaceActionResponse:
+    """Stop a workspace.
+
+    Only allowed in RUNNING or ERROR state.
+    Uses CAS pattern to prevent race conditions.
+
+    Returns immediately with STOPPING status.
+    Final status (STOPPED/ERROR) is determined asynchronously.
+    """
+    workspace = await ws_service.initiate_stop(session, current_user.id, workspace_id)
+
+    # Schedule background task for stopping (delegated to service)
+    background_tasks.add_task(
+        ws_service.stop_workspace,
+        workspace_id=workspace_id,
+        home_ctx=workspace.home_ctx,
+    )
+
+    return WorkspaceActionResponse(
+        id=workspace_id,
+        status=WorkspaceStatus.STOPPING,
     )

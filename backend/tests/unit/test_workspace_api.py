@@ -7,6 +7,7 @@ Tests cover:
 - PATCH /api/v1/workspaces/{id} - Update workspace
 - DELETE /api/v1/workspaces/{id} - Delete workspace
 - POST /api/v1/workspaces/{id}:start - Start workspace
+- POST /api/v1/workspaces/{id}:stop - Stop workspace
 """
 
 import asyncio
@@ -622,6 +623,312 @@ class TestStartWorkspace:
         responses = await asyncio.gather(
             client_with_mocks.post(f"/api/v1/workspaces/{workspace_id}:start"),
             client_with_mocks.post(f"/api/v1/workspaces/{workspace_id}:start"),
+            return_exceptions=True,
+        )
+
+        # Count successes and failures
+        successes = sum(
+            1 for r in responses if hasattr(r, "status_code") and r.status_code == 200
+        )
+        failures = sum(
+            1 for r in responses if hasattr(r, "status_code") and r.status_code == 409
+        )
+
+        # Exactly one should succeed due to CAS
+        assert successes == 1
+        assert failures == 1
+
+
+class TestStopWorkspace:
+    """Tests for POST /api/v1/workspaces/{id}:stop."""
+
+    @pytest.fixture
+    def mock_storage(self):
+        """Create a mock storage provider."""
+        storage = AsyncMock()
+        storage.provision = AsyncMock(
+            return_value=ProvisionResult(
+                home_mount="/mock/path/home",
+                home_ctx="/mock/path/home",
+            )
+        )
+        storage.deprovision = AsyncMock()
+        return storage
+
+    @pytest.fixture
+    def mock_instance(self):
+        """Create a mock instance controller."""
+        instance = AsyncMock()
+        instance.start_workspace = AsyncMock()
+        instance.stop_workspace = AsyncMock()
+        instance.get_status = AsyncMock(
+            return_value=InstanceStatus(
+                exists=True,
+                running=True,
+                healthy=True,
+                port=8080,
+            )
+        )
+        return instance
+
+    @pytest.fixture
+    def client_with_mocks(self, async_client, mock_storage, mock_instance):
+        """Client with mocked storage and instance dependencies."""
+        app.dependency_overrides[get_storage_provider] = lambda: mock_storage
+        app.dependency_overrides[get_instance_controller] = lambda: mock_instance
+        yield async_client
+        # Cleanup is done in async_client fixture
+
+    @pytest.mark.asyncio
+    async def test_stop_workspace_from_running(
+        self, client_with_mocks: AsyncClient, db_session: AsyncSession
+    ):
+        """Test stopping workspace from RUNNING state."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "stop-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Manually set to RUNNING
+        await db_session.execute(
+            update(Workspace)
+            .where(col(Workspace.id) == workspace_id)
+            .values(status=WorkspaceStatus.RUNNING)
+        )
+        await db_session.commit()
+
+        # Stop workspace
+        response = await client_with_mocks.post(
+            f"/api/v1/workspaces/{workspace_id}:stop"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == workspace_id
+        assert data["status"] == "STOPPING"
+
+    @pytest.mark.asyncio
+    async def test_stop_workspace_not_found(self, client_with_mocks: AsyncClient):
+        """Test stopping a non-existent workspace."""
+        response = await client_with_mocks.post(
+            "/api/v1/workspaces/nonexistent:stop"
+        )
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "WORKSPACE_NOT_FOUND"
+
+    @pytest.mark.asyncio
+    async def test_stop_workspace_invalid_state_created(
+        self, client_with_mocks: AsyncClient
+    ):
+        """Test stopping workspace in CREATED state fails."""
+        # Create workspace (starts in CREATED state)
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "created-stop-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Try to stop - should fail
+        response = await client_with_mocks.post(
+            f"/api/v1/workspaces/{workspace_id}:stop"
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "INVALID_STATE"
+
+    @pytest.mark.asyncio
+    async def test_stop_workspace_invalid_state_provisioning(
+        self, client_with_mocks: AsyncClient, db_session: AsyncSession
+    ):
+        """Test stopping workspace in PROVISIONING state fails."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "provisioning-stop-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Manually set to PROVISIONING
+        await db_session.execute(
+            update(Workspace)
+            .where(col(Workspace.id) == workspace_id)
+            .values(status=WorkspaceStatus.PROVISIONING)
+        )
+        await db_session.commit()
+
+        # Try to stop - should fail
+        response = await client_with_mocks.post(
+            f"/api/v1/workspaces/{workspace_id}:stop"
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "INVALID_STATE"
+
+    @pytest.mark.asyncio
+    async def test_stop_workspace_invalid_state_stopping(
+        self, client_with_mocks: AsyncClient, db_session: AsyncSession
+    ):
+        """Test stopping workspace in STOPPING state fails."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "stopping-stop-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Manually set to STOPPING
+        await db_session.execute(
+            update(Workspace)
+            .where(col(Workspace.id) == workspace_id)
+            .values(status=WorkspaceStatus.STOPPING)
+        )
+        await db_session.commit()
+
+        # Try to stop - should fail
+        response = await client_with_mocks.post(
+            f"/api/v1/workspaces/{workspace_id}:stop"
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "INVALID_STATE"
+
+    @pytest.mark.asyncio
+    async def test_stop_workspace_invalid_state_stopped(
+        self, client_with_mocks: AsyncClient, db_session: AsyncSession
+    ):
+        """Test stopping workspace in STOPPED state fails."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "stopped-stop-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Manually set to STOPPED
+        await db_session.execute(
+            update(Workspace)
+            .where(col(Workspace.id) == workspace_id)
+            .values(status=WorkspaceStatus.STOPPED)
+        )
+        await db_session.commit()
+
+        # Try to stop - should fail
+        response = await client_with_mocks.post(
+            f"/api/v1/workspaces/{workspace_id}:stop"
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "INVALID_STATE"
+
+    @pytest.mark.asyncio
+    async def test_stop_workspace_invalid_state_deleting(
+        self, client_with_mocks: AsyncClient, db_session: AsyncSession
+    ):
+        """Test stopping workspace in DELETING state fails."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "deleting-stop-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Manually set to DELETING
+        await db_session.execute(
+            update(Workspace)
+            .where(col(Workspace.id) == workspace_id)
+            .values(status=WorkspaceStatus.DELETING)
+        )
+        await db_session.commit()
+
+        # Try to stop - should fail
+        response = await client_with_mocks.post(
+            f"/api/v1/workspaces/{workspace_id}:stop"
+        )
+        assert response.status_code == 409
+        assert response.json()["error"]["code"] == "INVALID_STATE"
+
+    @pytest.mark.asyncio
+    async def test_stop_workspace_from_error(
+        self, client_with_mocks: AsyncClient, db_session: AsyncSession
+    ):
+        """Test stopping workspace from ERROR state (retry/cleanup)."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "error-stop-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Manually set to ERROR
+        await db_session.execute(
+            update(Workspace)
+            .where(col(Workspace.id) == workspace_id)
+            .values(status=WorkspaceStatus.ERROR)
+        )
+        await db_session.commit()
+
+        # Stop workspace - should succeed (cleanup from error)
+        response = await client_with_mocks.post(
+            f"/api/v1/workspaces/{workspace_id}:stop"
+        )
+        assert response.status_code == 200
+        assert response.json()["status"] == "STOPPING"
+
+    @pytest.mark.asyncio
+    async def test_stop_workspace_cas_prevents_double_stop(
+        self, client_with_mocks: AsyncClient, db_session: AsyncSession
+    ):
+        """Test that CAS prevents concurrent stop requests."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "cas-stop-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Set to RUNNING
+        await db_session.execute(
+            update(Workspace)
+            .where(col(Workspace.id) == workspace_id)
+            .values(status=WorkspaceStatus.RUNNING)
+        )
+        await db_session.commit()
+
+        # First stop succeeds
+        response1 = await client_with_mocks.post(
+            f"/api/v1/workspaces/{workspace_id}:stop"
+        )
+        assert response1.status_code == 200
+        assert response1.json()["status"] == "STOPPING"
+
+        # Second stop fails (workspace is now STOPPING)
+        response2 = await client_with_mocks.post(
+            f"/api/v1/workspaces/{workspace_id}:stop"
+        )
+        assert response2.status_code == 409
+        assert response2.json()["error"]["code"] == "INVALID_STATE"
+
+    @pytest.mark.asyncio
+    async def test_stop_workspace_concurrent_requests(
+        self, client_with_mocks: AsyncClient, db_session: AsyncSession
+    ):
+        """Test concurrent stop requests - only one should succeed."""
+        # Create workspace
+        create_response = await client_with_mocks.post(
+            "/api/v1/workspaces",
+            json={"name": "concurrent-stop-test"},
+        )
+        workspace_id = create_response.json()["id"]
+
+        # Set to RUNNING
+        await db_session.execute(
+            update(Workspace)
+            .where(col(Workspace.id) == workspace_id)
+            .values(status=WorkspaceStatus.RUNNING)
+        )
+        await db_session.commit()
+
+        # Send two concurrent stop requests
+        responses = await asyncio.gather(
+            client_with_mocks.post(f"/api/v1/workspaces/{workspace_id}:stop"),
+            client_with_mocks.post(f"/api/v1/workspaces/{workspace_id}:stop"),
             return_exceptions=True,
         )
 

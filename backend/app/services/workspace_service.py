@@ -34,6 +34,12 @@ STARTABLE_STATES = {
     WorkspaceStatus.ERROR,
 }
 
+# States that allow stopping
+STOPPABLE_STATES = {
+    WorkspaceStatus.RUNNING,
+    WorkspaceStatus.ERROR,
+}
+
 
 class WorkspaceService:
     """Service for workspace CRUD and lifecycle operations."""
@@ -239,6 +245,47 @@ class WorkspaceService:
 
         return workspace
 
+    async def initiate_stop(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        workspace_id: str,
+    ) -> Workspace:
+        """Initiate workspace stop (CAS transition to STOPPING).
+
+        Only allowed in RUNNING or ERROR state.
+        Returns workspace with STOPPING status.
+        Caller should schedule background task for actual stopping.
+        """
+        workspace = await self.get_workspace(session, user_id, workspace_id)
+
+        if workspace.status not in STOPPABLE_STATES:
+            raise InvalidStateError(
+                f"Cannot stop workspace in {workspace.status.value} state. "
+                f"Allowed states: {', '.join(s.value for s in STOPPABLE_STATES)}"
+            )
+
+        # CAS update: atomically change to STOPPING
+        result = await session.execute(
+            update(Workspace)
+            .where(
+                col(Workspace.id) == workspace_id,
+                col(Workspace.status).in_([s.value for s in STOPPABLE_STATES]),
+            )
+            .values(
+                status=WorkspaceStatus.STOPPING,
+                updated_at=utc_now(),
+            )
+        )
+
+        if result.rowcount == 0:  # type: ignore[attr-defined]
+            raise InvalidStateError("Workspace state changed during stop operation")
+
+        await session.commit()
+        await session.refresh(workspace)
+
+        return workspace
+
     async def start_workspace(
         self,
         workspace_id: str,
@@ -341,6 +388,60 @@ class WorkspaceService:
             except Exception as e:
                 # Any error - update to ERROR
                 logger.exception("Failed to start workspace %s: %s", workspace_id, e)
+                await session.execute(
+                    update(Workspace)
+                    .where(col(Workspace.id) == workspace_id)
+                    .values(
+                        status=WorkspaceStatus.ERROR,
+                        updated_at=utc_now(),
+                    )
+                )
+                await session.commit()
+
+    async def stop_workspace(
+        self,
+        workspace_id: str,
+        home_ctx: str | None,
+    ) -> None:
+        """Stop a workspace (background task).
+
+        Flow:
+        1. Instance Controller.StopWorkspace(workspace_id)
+        2. Storage Provider.Deprovision(home_ctx)
+        3. Clear home_ctx in DB
+        4. Update status to STOPPED or ERROR
+        """
+        engine = get_engine()
+        session_factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False
+        )
+
+        async with session_factory() as session:
+            try:
+                # Step 1: Stop container
+                logger.info("Stopping container for workspace %s", workspace_id)
+                await self._instance.stop_workspace(workspace_id)
+
+                # Step 2: Deprovision storage (no-op for local-dir)
+                logger.info("Deprovisioning storage for workspace %s", workspace_id)
+                await self._storage.deprovision(home_ctx)
+
+                # Step 3 & 4: Clear home_ctx and update status to STOPPED
+                logger.info("Workspace %s is now STOPPED", workspace_id)
+                await session.execute(
+                    update(Workspace)
+                    .where(col(Workspace.id) == workspace_id)
+                    .values(
+                        status=WorkspaceStatus.STOPPED,
+                        home_ctx=None,
+                        updated_at=utc_now(),
+                    )
+                )
+                await session.commit()
+
+            except Exception as e:
+                # Any error - update to ERROR
+                logger.exception("Failed to stop workspace %s: %s", workspace_id, e)
                 await session.execute(
                     update(Workspace)
                     .where(col(Workspace.id) == workspace_id)
