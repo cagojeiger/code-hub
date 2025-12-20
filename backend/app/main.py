@@ -1,13 +1,10 @@
 """code-hub Backend - Minimal FastAPI Application for M1 Foundation."""
 
-import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
 
-import docker
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -150,27 +147,3 @@ async def root() -> FileResponse:
 async def login_page() -> FileResponse:
     """Serve the login page."""
     return FileResponse(STATIC_DIR / "login.html")
-
-
-@app.get("/debug/containers")
-async def list_containers() -> dict[str, Any]:
-    """List codehub namespace containers (for testing Docker socket proxy)."""
-
-    def _list() -> list[dict[str, Any]]:
-        client = docker.from_env()
-        containers = client.containers.list(all=True)
-        result = []
-        for c in containers:
-            if c.name and c.name.startswith("codehub-"):
-                image_tag = "unknown"
-                if c.image and c.image.tags:
-                    image_tag = c.image.tags[0]
-                result.append({
-                    "name": c.name,
-                    "status": c.status,
-                    "image": image_tag,
-                })
-        return result
-
-    result = await asyncio.to_thread(_list)
-    return {"containers": result}
