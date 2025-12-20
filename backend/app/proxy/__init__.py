@@ -58,6 +58,7 @@ HOP_BY_HOP_HEADERS = frozenset({
 WS_HOP_BY_HOP_HEADERS = HOP_BY_HOP_HEADERS | frozenset({
     "sec-websocket-key",      # websockets library generates
     "sec-websocket-version",  # websockets library sets
+    "origin",                 # Don't forward - causes 403 on code-server
 })
 
 # =============================================================================
