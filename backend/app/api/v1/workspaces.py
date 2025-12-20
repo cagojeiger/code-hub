@@ -17,8 +17,8 @@ from fastapi import APIRouter, BackgroundTasks, Query, Response, status
 from pydantic import BaseModel, Field
 
 from app.api.v1.dependencies import CurrentUser, DbSession, WsService
-from app.api.v1.events import notify_workspace_deleted, notify_workspace_updated
 from app.core.config import get_settings
+from app.core.events import notify_workspace_updated
 from app.db import Workspace, WorkspaceStatus
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])

@@ -13,8 +13,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlmodel import col
 
-from app.api.v1.events import notify_workspace_deleted, notify_workspace_updated
 from app.core.config import get_settings
+from app.core.events import notify_workspace_deleted, notify_workspace_updated
 from app.core.errors import InvalidStateError, WorkspaceNotFoundError
 from app.db import Workspace, WorkspaceStatus, get_engine
 from app.db.models import generate_ulid, utc_now
