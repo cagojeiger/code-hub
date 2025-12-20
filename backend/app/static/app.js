@@ -1027,6 +1027,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Detail panel
   document.getElementById('close-panel-btn').addEventListener('click', closeDetailPanel);
 
+  // Close detail panel on click outside (workspace grid area)
+  document.getElementById('workspace-container').addEventListener('click', (e) => {
+    const detailPanel = document.getElementById('detail-panel');
+    if (detailPanel.classList.contains('hidden')) return;
+    // Don't close if clicking on a card (cards open/switch the panel)
+    if (e.target.closest('.workspace-card')) return;
+    // Don't close if clicking inside the panel itself
+    if (detailPanel.contains(e.target)) return;
+    closeDetailPanel();
+  });
+
   // Close modals on backdrop click
   ['create-modal', 'edit-modal', 'delete-modal', 'shortcuts-modal'].forEach(modalId => {
     document.getElementById(modalId).addEventListener('click', (e) => {
