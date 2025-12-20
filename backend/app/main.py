@@ -22,6 +22,8 @@ from app.core.logging import setup_logging
 from app.core.middleware import RequestIdMiddleware
 from app.core.security import hash_password
 from app.db import User, close_db, get_engine, init_db
+from app.proxy import close_http_client
+from app.proxy import router as proxy_router
 from app.services.recovery import startup_recovery
 
 setup_logging()
@@ -86,6 +88,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
     yield
 
+    await close_http_client()
     await close_db()
 
 
@@ -101,6 +104,9 @@ app.add_middleware(RequestIdMiddleware)
 
 # Include API routers
 app.include_router(api_v1_router)
+
+# Include proxy router (routes: /w/{workspace_id}/*)
+app.include_router(proxy_router)
 
 
 @app.exception_handler(CodeHubError)

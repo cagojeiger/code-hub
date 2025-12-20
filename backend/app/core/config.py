@@ -206,7 +206,7 @@ class WorkspaceConfig(BaseSettings):
     )
 
     default_image: str = Field(
-        default="codercom/code-server:latest",
+        default="cagojeiger/code-server:4.107.0",
         description="Default container image for workspaces",
     )
     healthcheck: HealthcheckConfig = Field(default_factory=HealthcheckConfig)

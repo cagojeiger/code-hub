@@ -56,25 +56,21 @@ class LocalDockerInstanceController(InstanceController):
         except NotFound:
             return None
 
-    def _ensure_network(self) -> None:
-        """Ensure codehub-net network exists."""
+    def _ensure_network_sync(self) -> None:
+        """Ensure codehub-net network exists (sync)."""
         try:
             self._client.networks.get(NETWORK_NAME)
         except NotFound:
             logger.info("Creating network: %s", NETWORK_NAME)
             self._client.networks.create(NETWORK_NAME, driver="bridge")
 
-    async def start_workspace(
+    def _start_workspace_sync(
         self,
         workspace_id: str,
         image_ref: str,
         home_mount: str,
     ) -> None:
-        """Start workspace container. Idempotent.
-
-        If container exists: start it.
-        If container doesn't exist: create and start.
-        """
+        """Start workspace container (sync)."""
         container_name = self._container_name(workspace_id)
         container = self._get_container(workspace_id)
 
@@ -87,7 +83,7 @@ class LocalDockerInstanceController(InstanceController):
                 logger.info("Container already running: %s", container_name)
         else:
             # Container doesn't exist - create and start
-            self._ensure_network()
+            self._ensure_network_sync()
 
             logger.info(
                 "Creating container: %s (image=%s, home=%s)",
@@ -96,26 +92,37 @@ class LocalDockerInstanceController(InstanceController):
                 home_mount,
             )
 
-            # None for port means random - valid docker-py but not in type stubs
-            self._client.containers.run(  # type: ignore[call-overload]
+            self._client.containers.run(
                 image_ref,
+                command=["--auth", "none"],  # Disable password authentication
                 name=container_name,
                 detach=True,
                 network=NETWORK_NAME,
-                # Bind to 127.0.0.1 with random port (security: no external exposure)
-                ports={f"{CODE_SERVER_PORT}/tcp": ("127.0.0.1", None)},
+                # No host port binding - proxy connects via internal network
                 volumes={home_mount: {"bind": HOME_MOUNT_PATH, "mode": "rw"}},
-                # Run as coder user (1000:1000)
                 user=f"{CODER_UID}:{CODER_GID}",
                 environment={"HOME": HOME_MOUNT_PATH},
             )
             logger.info("Container created and started: %s", container_name)
 
-    async def stop_workspace(self, workspace_id: str) -> None:
-        """Stop workspace container. Idempotent.
+    async def start_workspace(
+        self,
+        workspace_id: str,
+        image_ref: str,
+        home_mount: str,
+    ) -> None:
+        """Start workspace container. Idempotent.
 
-        If container doesn't exist or already stopped: success.
+        Execute synchronous docker-py calls in a thread pool.
         """
+        import asyncio
+
+        await asyncio.to_thread(
+            self._start_workspace_sync, workspace_id, image_ref, home_mount
+        )
+
+    def _stop_workspace_sync(self, workspace_id: str) -> None:
+        """Stop workspace container (sync)."""
         container = self._get_container(workspace_id)
 
         if not container:
@@ -132,11 +139,17 @@ class LocalDockerInstanceController(InstanceController):
                 "Container already stopped: %s", self._container_name(workspace_id)
             )
 
-    async def delete_workspace(self, workspace_id: str) -> None:
-        """Delete workspace container. Idempotent.
+    async def stop_workspace(self, workspace_id: str) -> None:
+        """Stop workspace container. Idempotent.
 
-        If container doesn't exist: success (no-op).
+        Execute synchronous docker-py calls in a thread pool.
         """
+        import asyncio
+
+        await asyncio.to_thread(self._stop_workspace_sync, workspace_id)
+
+    def _delete_workspace_sync(self, workspace_id: str) -> None:
+        """Delete workspace container (sync)."""
         container = self._get_container(workspace_id)
 
         if not container:
@@ -148,43 +161,47 @@ class LocalDockerInstanceController(InstanceController):
         logger.info("Deleting container: %s", self._container_name(workspace_id))
         container.remove(force=True)
 
-    async def resolve_upstream(self, workspace_id: str) -> UpstreamInfo:
-        """Resolve upstream connection info via docker inspect."""
+    async def delete_workspace(self, workspace_id: str) -> None:
+        """Delete workspace container. Idempotent.
+
+        Execute synchronous docker-py calls in a thread pool.
+        """
+        import asyncio
+
+        await asyncio.to_thread(self._delete_workspace_sync, workspace_id)
+
+    def _resolve_upstream_sync(self, workspace_id: str) -> UpstreamInfo:
+        """Resolve upstream connection info (sync)."""
         container = self._get_container(workspace_id)
 
         container_name = self._container_name(workspace_id)
         if not container:
             raise ValueError(f"Container not found: {container_name}")
 
-        # Get port mapping from container
-        ports = container.ports
-        port_key = f"{CODE_SERVER_PORT}/tcp"
-        port_bindings = ports.get(port_key)
-
-        if not port_bindings:
-            raise ValueError(f"Port {CODE_SERVER_PORT} not exposed: {container_name}")
+        if container.status != "running":
+            raise ValueError(f"Container not running: {container_name}")
 
         # Return container name as host (for internal network communication)
         # The proxy will connect via codehub-net network
         return UpstreamInfo(host=container_name, port=CODE_SERVER_PORT)
 
-    async def get_status(self, workspace_id: str) -> InstanceStatus:
-        """Query current container status."""
+    async def resolve_upstream(self, workspace_id: str) -> UpstreamInfo:
+        """Resolve upstream connection info via docker inspect.
+
+        Execute synchronous docker-py calls in a thread pool.
+        """
+        import asyncio
+
+        return await asyncio.to_thread(self._resolve_upstream_sync, workspace_id)
+
+    def _get_status_sync(self, workspace_id: str) -> InstanceStatus:
+        """Query current container status (sync)."""
         container = self._get_container(workspace_id)
 
         if not container:
             return InstanceStatus(exists=False, running=False, healthy=False)
 
         running = container.status == "running"
-        port: int | None = None
-
-        if running:
-            # Get exposed port
-            ports = container.ports
-            port_key = f"{CODE_SERVER_PORT}/tcp"
-            port_bindings = ports.get(port_key)
-            if port_bindings:
-                port = int(port_bindings[0]["HostPort"])
 
         # Health check: for MVP, consider running as healthy
         # Real health check will be done by Control Plane via HTTP probe
@@ -194,5 +211,13 @@ class LocalDockerInstanceController(InstanceController):
             exists=True,
             running=running,
             healthy=healthy,
-            port=port,
         )
+
+    async def get_status(self, workspace_id: str) -> InstanceStatus:
+        """Query current container status.
+
+        Execute synchronous docker-py calls in a thread pool.
+        """
+        import asyncio
+
+        return await asyncio.to_thread(self._get_status_sync, workspace_id)

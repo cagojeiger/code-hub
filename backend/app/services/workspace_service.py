@@ -6,6 +6,8 @@ Coordinates between Storage Provider, Instance Controller, and DB.
 
 import asyncio
 import logging
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -39,6 +41,63 @@ STOPPABLE_STATES = {
     WorkspaceStatus.RUNNING,
     WorkspaceStatus.ERROR,
 }
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+
+@asynccontextmanager
+async def _background_session() -> AsyncGenerator[AsyncSession]:
+    """Create a new session for background tasks.
+
+    Background tasks need their own session since they run outside
+    the request lifecycle and the request session is already closed.
+    """
+    engine = get_engine()
+    session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+    async with session_factory() as session:
+        yield session
+
+
+async def _cas_transition(
+    session: AsyncSession,
+    workspace: Workspace,
+    from_states: set[WorkspaceStatus],
+    to_state: WorkspaceStatus,
+    action_name: str,
+) -> None:
+    """Compare-and-swap state transition with optimistic locking.
+
+    Atomically updates workspace status if current status is in from_states.
+    Raises InvalidStateError if the state changed during the operation.
+
+    Args:
+        session: Database session
+        workspace: Workspace to transition
+        from_states: Allowed source states
+        to_state: Target state
+        action_name: Action name for error message (e.g., "delete", "start")
+    """
+    result = await session.execute(
+        update(Workspace)
+        .where(
+            col(Workspace.id) == workspace.id,
+            col(Workspace.status).in_([s.value for s in from_states]),
+        )
+        .values(status=to_state, updated_at=utc_now())
+    )
+
+    if result.rowcount == 0:  # type: ignore[attr-defined]
+        raise InvalidStateError(
+            f"Workspace state changed during {action_name} operation"
+        )
+
+    await session.commit()
+    await session.refresh(workspace)
 
 
 class WorkspaceService:
@@ -174,25 +233,9 @@ class WorkspaceService:
                 f"Allowed states: {', '.join(s.value for s in DELETABLE_STATES)}"
             )
 
-        # CAS update: atomically change to DELETING
-        result = await session.execute(
-            update(Workspace)
-            .where(
-                col(Workspace.id) == workspace_id,
-                col(Workspace.status).in_([s.value for s in DELETABLE_STATES]),
-            )
-            .values(
-                status=WorkspaceStatus.DELETING,
-                updated_at=utc_now(),
-            )
+        await _cas_transition(
+            session, workspace, DELETABLE_STATES, WorkspaceStatus.DELETING, "delete"
         )
-
-        if result.rowcount == 0:  # type: ignore[attr-defined]
-            raise InvalidStateError("Workspace state changed during delete operation")
-
-        await session.commit()
-        await session.refresh(workspace)
-
         return workspace
 
     async def initiate_start(
@@ -215,25 +258,9 @@ class WorkspaceService:
                 f"Allowed states: {', '.join(s.value for s in STARTABLE_STATES)}"
             )
 
-        # CAS update: atomically change to PROVISIONING
-        result = await session.execute(
-            update(Workspace)
-            .where(
-                col(Workspace.id) == workspace_id,
-                col(Workspace.status).in_([s.value for s in STARTABLE_STATES]),
-            )
-            .values(
-                status=WorkspaceStatus.PROVISIONING,
-                updated_at=utc_now(),
-            )
+        await _cas_transition(
+            session, workspace, STARTABLE_STATES, WorkspaceStatus.PROVISIONING, "start"
         )
-
-        if result.rowcount == 0:  # type: ignore[attr-defined]
-            raise InvalidStateError("Workspace state changed during start operation")
-
-        await session.commit()
-        await session.refresh(workspace)
-
         return workspace
 
     async def initiate_stop(
@@ -256,25 +283,9 @@ class WorkspaceService:
                 f"Allowed states: {', '.join(s.value for s in STOPPABLE_STATES)}"
             )
 
-        # CAS update: atomically change to STOPPING
-        result = await session.execute(
-            update(Workspace)
-            .where(
-                col(Workspace.id) == workspace_id,
-                col(Workspace.status).in_([s.value for s in STOPPABLE_STATES]),
-            )
-            .values(
-                status=WorkspaceStatus.STOPPING,
-                updated_at=utc_now(),
-            )
+        await _cas_transition(
+            session, workspace, STOPPABLE_STATES, WorkspaceStatus.STOPPING, "stop"
         )
-
-        if result.rowcount == 0:  # type: ignore[attr-defined]
-            raise InvalidStateError("Workspace state changed during stop operation")
-
-        await session.commit()
-        await session.refresh(workspace)
-
         return workspace
 
     async def start_workspace(
@@ -294,12 +305,8 @@ class WorkspaceService:
         5. Update status to RUNNING or ERROR
         """
         settings = get_settings()
-        engine = get_engine()
-        session_factory = async_sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
-        )
 
-        async with session_factory() as session:
+        async with _background_session() as session:
             try:
                 # Step 1: Provision storage
                 logger.info("Provisioning storage for workspace %s", workspace_id)
@@ -402,12 +409,7 @@ class WorkspaceService:
         3. Clear home_ctx in DB
         4. Update status to STOPPED or ERROR
         """
-        engine = get_engine()
-        session_factory = async_sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
-        )
-
-        async with session_factory() as session:
+        async with _background_session() as session:
             try:
                 # Step 1: Stop container
                 logger.info("Stopping container for workspace %s", workspace_id)
@@ -457,12 +459,7 @@ class WorkspaceService:
         4. Soft delete (status = DELETED, deleted_at = now)
         5. On failure: status = ERROR
         """
-        engine = get_engine()
-        session_factory = async_sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
-        )
-
-        async with session_factory() as session:
+        async with _background_session() as session:
             try:
                 # Step 1: Delete container
                 logger.info("Deleting container for workspace %s", workspace_id)
