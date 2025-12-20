@@ -32,7 +32,7 @@ router = APIRouter(tags=["proxy"])
 # Shared httpx client for connection pooling
 _http_client: httpx.AsyncClient | None = None
 
-# Headers to remove before forwarding (hop-by-hop headers)
+# HTTP hop-by-hop headers to remove before forwarding (RFC 7230)
 HOP_BY_HOP_HEADERS = frozenset({
     "connection",
     "keep-alive",
@@ -43,6 +43,12 @@ HOP_BY_HOP_HEADERS = frozenset({
     "transfer-encoding",
     "upgrade",
     "host",
+})
+
+# WebSocket hop-by-hop headers (RFC 7230 + websockets library handles)
+WS_HOP_BY_HOP_HEADERS = HOP_BY_HOP_HEADERS | frozenset({
+    "sec-websocket-key",      # websockets library generates
+    "sec-websocket-version",  # websockets library sets
 })
 
 
@@ -201,11 +207,12 @@ async def proxy_websocket(
         target_path = f"{target_path}?{query_string}"
     upstream_ws_uri = f"ws://{upstream.host}:{upstream.port}{target_path}"
 
-    # Forward cookies from client to upstream
+    # Forward all headers except hop-by-hop (RFC 6455/7230 compliance)
     client_headers = dict(websocket.headers)
-    extra_headers: dict[str, str] = {}
-    if "cookie" in client_headers:
-        extra_headers["Cookie"] = client_headers["cookie"]
+    extra_headers = {
+        k: v for k, v in client_headers.items()
+        if k.lower() not in WS_HOP_BY_HOP_HEADERS
+    }
 
     # Accept client connection
     await websocket.accept()
