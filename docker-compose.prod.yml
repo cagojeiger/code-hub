@@ -1,0 +1,92 @@
+services:
+  # Docker Socket Proxy - secure access to Docker API
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy
+    container_name: codehub-docker-proxy
+    environment:
+      - CONTAINERS=1
+      - NETWORKS=1
+      - IMAGES=1
+      - INFO=1
+      - VERSION=1
+      - POST=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - codehub-net
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+        reservations:
+          memory: 64M
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:2375/_ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: codehub-backend
+    depends_on:
+      docker-proxy:
+        condition: service_healthy
+
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    volumes:
+      # data directory bind mount
+      - ./data/codehub:/var/lib/codehub
+
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CODEHUB_ENV=production
+      - CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/var/lib/codehub/homes
+      - CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=${PWD}/data/codehub/homes
+      - CODEHUB_DATABASE__URL=sqlite+aiosqlite:////var/lib/codehub/codehub.db
+      - DOCKER_HOST=tcp://docker-proxy:2375
+
+    user: "1000:1000"
+
+    networks:
+      - codehub-net
+
+    restart: unless-stopped
+
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  codehub-net:
+    name: codehub-net
+    driver: bridge
