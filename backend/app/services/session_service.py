@@ -9,7 +9,7 @@ Provides session lifecycle management:
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -23,6 +23,9 @@ class SessionService:
     async def create(db: AsyncSession, user_id: str) -> Session:
         """Create a new session for a user.
 
+        Enforces single-session policy: deletes all existing sessions
+        for the user before creating a new one.
+
         Args:
             db: Database session
             user_id: User ID to create session for
@@ -30,6 +33,8 @@ class SessionService:
         Returns:
             Created session with expires_at set based on config TTL
         """
+        await db.execute(delete(Session).where(Session.user_id == user_id))
+
         settings = get_settings()
         ttl_seconds = settings.auth.session.ttl_seconds()
 
