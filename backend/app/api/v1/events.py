@@ -6,13 +6,11 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.v1.dependencies import get_current_user, get_db
-from app.db import User, Workspace
+from app.api.v1.dependencies import CurrentUser
+from app.db import Workspace
 
 logger = logging.getLogger(__name__)
 
@@ -33,29 +31,11 @@ def publish_workspace_event(event_type: str, workspace_data: dict[str, Any]) -> 
             logger.warning("Event queue full, dropping event")
 
 
-async def _get_workspace_dict(workspace: Workspace, public_base_url: str) -> dict[str, Any]:
-    """Convert workspace to API response dict."""
-    return {
-        "id": workspace.id,
-        "name": workspace.name,
-        "description": workspace.description,
-        "memo": workspace.memo,
-        "status": workspace.status.value,
-        "url": f"{public_base_url}/w/{workspace.id}/",
-        "created_at": workspace.created_at.isoformat() if workspace.created_at else None,
-        "updated_at": workspace.updated_at.isoformat() if workspace.updated_at else None,
-    }
-
-
 async def _event_generator(
     request: Request,
     user_id: str,
-    db: AsyncSession,
 ) -> AsyncGenerator[str, None]:
     """Generate SSE events for a connected client."""
-    from app.core.config import get_settings
-
-    settings = get_settings()
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=100)
     queue_id = f"{user_id}_{id(queue)}"
     _event_queues[queue_id] = queue
@@ -102,8 +82,7 @@ async def _event_generator(
 @router.get("/events")
 async def workspace_events(
     request: Request,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    current_user: CurrentUser,
 ) -> StreamingResponse:
     """
     SSE endpoint for real-time workspace updates.
@@ -115,7 +94,7 @@ async def workspace_events(
     - heartbeat: Keep-alive signal (every 30s)
     """
     return StreamingResponse(
-        _event_generator(request, current_user.id, db),
+        _event_generator(request, current_user.id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
