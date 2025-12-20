@@ -237,6 +237,7 @@ function handleWorkspaceUpdate(workspace) {
 
   // Re-render
   renderFilteredWorkspaces();
+  updateFooterStats();
 
   // Update detail panel if this workspace is selected
   if (selectedWorkspaceId === workspace.id) {
@@ -259,6 +260,7 @@ function handleWorkspaceDeleted(id) {
 
   // Re-render
   renderFilteredWorkspaces();
+  updateFooterStats();
 
   // Close detail panel if this workspace was selected
   if (selectedWorkspaceId === id) {
@@ -296,8 +298,38 @@ function escapeHtml(text) {
 }
 
 function formatDate(dateString) {
+  if (!dateString) return '-';
   const date = new Date(dateString);
-  return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const now = new Date();
+  const diffMs = now - date;
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  // Show relative time for recent dates
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+
+  // Show full date for older dates (in local timezone)
+  return date.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function updateFooterStats() {
+  const total = allWorkspaces.length;
+  const running = allWorkspaces.filter(w => w.status === 'RUNNING').length;
+  const stopped = allWorkspaces.filter(w => ['STOPPED', 'CREATED'].includes(w.status)).length;
+
+  document.getElementById('stat-total').textContent = total;
+  document.getElementById('stat-running').textContent = running;
+  document.getElementById('stat-stopped').textContent = stopped;
 }
 
 // =============================================================================
@@ -678,6 +710,7 @@ async function loadWorkspaces(page = 1) {
 
     renderFilteredWorkspaces();
     renderPagination(pagination);
+    updateFooterStats();
 
   } catch (error) {
     hideSkeletonLoading();
@@ -943,6 +976,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Event listeners
   document.getElementById('logout-btn').addEventListener('click', logout);
   document.getElementById('help-btn').addEventListener('click', openShortcutsModal);
+  document.getElementById('footer-shortcuts-btn').addEventListener('click', openShortcutsModal);
 
   // Search and filter
   document.getElementById('search-input').addEventListener('input', renderFilteredWorkspaces);

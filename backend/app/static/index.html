@@ -296,6 +296,24 @@
     </aside>
   </main>
 
+  <!-- Footer -->
+  <footer class="bg-vscode-sidebar border-t border-vscode-border px-4 py-2 flex justify-between items-center text-xs shrink-0">
+    <div id="footer-stats" class="flex items-center gap-4">
+      <span>Total: <span id="stat-total" class="text-white">0</span></span>
+      <span class="text-vscode-border">•</span>
+      <span class="text-vscode-success">Running: <span id="stat-running" class="text-white">0</span></span>
+      <span class="text-vscode-border">•</span>
+      <span>Stopped: <span id="stat-stopped" class="text-white">0</span></span>
+    </div>
+    <div class="flex items-center gap-4">
+      <button id="footer-shortcuts-btn" class="hover:text-white transition-colors" title="Show keyboard shortcuts">
+        <kbd class="bg-vscode-bg px-1.5 py-0.5 rounded font-mono">?</kbd> Shortcuts
+      </button>
+      <span class="text-vscode-border">•</span>
+      <span class="text-vscode-text">CodeHub <span class="text-white font-mono">v1.0.0</span></span>
+    </div>
+  </footer>
+
   <!-- Create Workspace Modal -->
   <div id="create-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 fade-in">
     <div class="bg-vscode-sidebar border border-vscode-border rounded-lg w-full max-w-md mx-4 slide-in">
