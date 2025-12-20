@@ -512,12 +512,12 @@ function getFilteredWorkspaces() {
     case 'name':
       filtered.sort((a, b) => a.name.localeCompare(b.name));
       break;
-    case 'status':
-      filtered.sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status));
-      break;
     case 'recent':
-    default:
       filtered.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+      break;
+    case 'status':
+    default:
+      filtered.sort((a, b) => STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status));
       break;
   }
 
@@ -994,7 +994,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Event listeners
   document.getElementById('logout-btn').addEventListener('click', logout);
-  document.getElementById('help-btn').addEventListener('click', openShortcutsModal);
   document.getElementById('footer-shortcuts-btn').addEventListener('click', openShortcutsModal);
 
   // Search and filter

@@ -101,7 +101,10 @@
 <body class="bg-vscode-bg text-vscode-text font-sans h-screen flex flex-col overflow-hidden">
   <!-- Header -->
   <header class="bg-vscode-sidebar border-b border-vscode-border px-4 py-3 flex justify-between items-center shrink-0">
-    <h1 class="text-xl font-semibold text-white">CodeHub</h1>
+    <h1 class="text-xl font-semibold text-white flex items-baseline gap-2">
+      CodeHub
+      <span class="text-xs font-normal text-vscode-text font-mono">v0.1.0</span>
+    </h1>
 
     <!-- Search Bar -->
     <div class="flex-1 max-w-md mx-8">
@@ -118,19 +121,16 @@
       </div>
     </div>
 
-    <div class="flex items-center gap-4">
-      <!-- Keyboard shortcuts help -->
-      <button id="help-btn" class="text-vscode-text hover:text-white p-2" title="Keyboard shortcuts (?)">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+    <div class="flex items-center gap-3">
+      <span class="text-sm text-vscode-text flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
         </svg>
-      </button>
-      <span class="text-sm text-vscode-text">
         <span id="username-display" class="text-white">-</span>
       </span>
       <button
         id="logout-btn"
-        class="text-sm text-vscode-text hover:text-white transition-colors"
+        class="text-sm text-vscode-text hover:text-white px-2 py-1 rounded hover:bg-vscode-hover transition-colors"
       >
         Logout
       </button>
@@ -138,49 +138,45 @@
   </header>
 
   <!-- Toolbar -->
-  <div class="bg-vscode-sidebar border-b border-vscode-border px-4 py-3 flex items-center gap-4 shrink-0">
+  <div class="bg-vscode-sidebar border-b border-vscode-border px-4 py-2 flex items-center gap-3 shrink-0">
     <!-- New Workspace Button -->
     <button
       id="new-workspace-btn"
-      class="bg-vscode-accent hover:bg-blue-600 text-white px-4 py-2 rounded flex items-center gap-2 transition-colors focus-ring"
+      class="bg-vscode-accent hover:bg-blue-600 text-white px-3 py-1.5 rounded flex items-center gap-2 transition-colors focus-ring text-sm"
     >
-      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
       </svg>
-      <span>New <span class="text-xs opacity-75">(N)</span></span>
+      <span>New</span>
     </button>
 
+    <span class="text-vscode-border">│</span>
+
     <!-- Filter -->
-    <div class="flex items-center gap-2">
-      <label class="text-sm text-vscode-text">Status:</label>
-      <select
-        id="status-filter"
-        class="bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent"
-      >
-        <option value="all">All</option>
-        <option value="running">Running</option>
-        <option value="stopped">Stopped</option>
-        <option value="error">Error</option>
-        <option value="transitioning">Starting/Stopping</option>
-      </select>
-    </div>
+    <select
+      id="status-filter"
+      class="bg-vscode-bg border border-vscode-border rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-vscode-accent cursor-pointer"
+    >
+      <option value="all">All Status</option>
+      <option value="running">Running</option>
+      <option value="stopped">Stopped</option>
+      <option value="error">Error</option>
+      <option value="transitioning">Starting/Stopping</option>
+    </select>
 
     <!-- Sort -->
-    <div class="flex items-center gap-2">
-      <label class="text-sm text-vscode-text">Sort:</label>
-      <select
-        id="sort-select"
-        class="bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent"
-      >
-        <option value="recent">Recent</option>
-        <option value="name">Name A-Z</option>
-        <option value="status">Status</option>
-      </select>
-    </div>
+    <select
+      id="sort-select"
+      class="bg-vscode-bg border border-vscode-border rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-vscode-accent cursor-pointer"
+    >
+      <option value="status">By Status</option>
+      <option value="recent">Recent</option>
+      <option value="name">Name A-Z</option>
+    </select>
 
     <!-- Connection Status -->
     <div class="ml-auto flex items-center gap-2 text-sm">
-      <span id="connection-status" class="flex items-center gap-1">
+      <span id="connection-status" class="flex items-center gap-1.5">
         <span class="w-2 h-2 rounded-full bg-gray-500"></span>
         <span class="text-gray-500">Connecting...</span>
       </span>
@@ -297,21 +293,36 @@
   </main>
 
   <!-- Footer -->
-  <footer class="bg-vscode-sidebar border-t border-vscode-border px-4 py-2 grid grid-cols-3 items-center text-xs shrink-0">
-    <div id="footer-stats" class="flex items-center gap-4">
-      <span>Total: <span id="stat-total" class="text-white">0</span></span>
-      <span class="text-vscode-border">•</span>
-      <span class="text-vscode-success">Running: <span id="stat-running" class="text-white">0</span></span>
-      <span class="text-vscode-border">•</span>
-      <span>Stopped: <span id="stat-stopped" class="text-white">0</span></span>
+  <footer class="bg-vscode-sidebar border-t border-vscode-border px-4 py-1.5 grid grid-cols-3 items-center text-xs shrink-0">
+    <div id="footer-stats" class="flex items-center gap-3">
+      <span class="flex items-center gap-1.5" title="Total workspaces">
+        <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+        </svg>
+        <span id="stat-total" class="text-white">0</span>
+      </span>
+      <span class="flex items-center gap-1.5 text-vscode-success" title="Running">
+        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M8 5v14l11-7z"></path>
+        </svg>
+        <span id="stat-running" class="text-white">0</span>
+      </span>
+      <span class="flex items-center gap-1.5" title="Stopped">
+        <svg class="w-3.5 h-3.5 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
+          <rect x="6" y="6" width="12" height="12"></rect>
+        </svg>
+        <span id="stat-stopped" class="text-white">0</span>
+      </span>
     </div>
-    <div id="footer-date" class="text-center text-white"></div>
-    <div class="flex items-center gap-4 justify-end">
-      <button id="footer-shortcuts-btn" class="hover:text-white transition-colors" title="Show keyboard shortcuts">
-        <kbd class="bg-vscode-bg px-1.5 py-0.5 rounded font-mono">?</kbd> Shortcuts
+    <div id="footer-date" class="text-center text-vscode-text"></div>
+    <div class="flex items-center justify-end">
+      <button id="footer-shortcuts-btn" class="flex items-center gap-1.5 hover:text-white transition-colors px-2 py-1 rounded hover:bg-vscode-hover" title="Keyboard shortcuts (?)">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707"></path>
+        </svg>
+        <span>Shortcuts</span>
+        <kbd class="bg-vscode-bg px-1 py-0.5 rounded text-[10px] font-mono ml-1">?</kbd>
       </button>
-      <span class="text-vscode-border">•</span>
-      <span class="text-vscode-text">CodeHub <span class="text-white font-mono">v1.0.0</span></span>
     </div>
   </footer>
 
