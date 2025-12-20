@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlmodel import col
 
 from app.core.config import get_settings
 from app.db import Session, User
@@ -33,7 +34,7 @@ class SessionService:
         Returns:
             Created session with expires_at set based on config TTL
         """
-        await db.execute(delete(Session).where(Session.user_id == user_id))
+        await db.execute(delete(Session).where(col(Session.user_id) == user_id))
 
         settings = get_settings()
         ttl_seconds = settings.auth.session.ttl_seconds()
