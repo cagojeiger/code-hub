@@ -19,6 +19,7 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocket, WebSocketDisconnect
+from websockets.asyncio.client import ClientConnection
 
 from app.api.v1.dependencies import get_instance_controller
 from app.core.errors import UpstreamUnavailableError, WorkspaceNotFoundError
@@ -28,6 +29,14 @@ from app.services.instance.interface import InstanceController
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["proxy"])
+
+# =============================================================================
+# Constants
+# =============================================================================
+
+# Proxy timeouts (seconds)
+PROXY_TIMEOUT_TOTAL = 30.0  # Total request timeout
+PROXY_TIMEOUT_CONNECT = 10.0  # Connection timeout
 
 # Shared httpx client for connection pooling
 _http_client: httpx.AsyncClient | None = None
@@ -51,12 +60,18 @@ WS_HOP_BY_HOP_HEADERS = HOP_BY_HOP_HEADERS | frozenset({
     "sec-websocket-version",  # websockets library sets
 })
 
+# =============================================================================
+# HTTP Client Management
+# =============================================================================
+
 
 async def get_http_client() -> httpx.AsyncClient:
     """Get or create shared httpx AsyncClient."""
     global _http_client
     if _http_client is None:
-        _http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
+        _http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(PROXY_TIMEOUT_TOTAL, connect=PROXY_TIMEOUT_CONNECT)
+        )
     return _http_client
 
 
@@ -68,8 +83,17 @@ async def close_http_client() -> None:
         _http_client = None
 
 
+# =============================================================================
+# Dependencies
+# =============================================================================
+
 Instance = Annotated[InstanceController, Depends(get_instance_controller)]
 DbSession = Annotated[AsyncSession, Depends(get_async_session)]
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
 
 
 async def _get_workspace(session: AsyncSession, workspace_id: str) -> Workspace:
@@ -92,6 +116,44 @@ def _filter_headers(headers: dict[str, str]) -> dict[str, str]:
         k: v for k, v in headers.items()
         if k.lower() not in HOP_BY_HOP_HEADERS
     }
+
+
+# =============================================================================
+# WebSocket Relay Functions (module-level for better performance)
+# =============================================================================
+
+
+async def _relay_client_to_backend(
+    client_ws: WebSocket,
+    backend_ws: ClientConnection,
+) -> None:
+    """Relay messages from client WebSocket to backend WebSocket."""
+    while True:
+        data = await client_ws.receive()
+        if data["type"] == "websocket.receive":
+            if "text" in data:
+                await backend_ws.send(data["text"])
+            elif "bytes" in data:
+                await backend_ws.send(data["bytes"])
+        elif data["type"] == "websocket.disconnect":
+            break
+
+
+async def _relay_backend_to_client(
+    client_ws: WebSocket,
+    backend_ws: ClientConnection,
+) -> None:
+    """Relay messages from backend WebSocket to client WebSocket."""
+    async for message in backend_ws:
+        if isinstance(message, str):
+            await client_ws.send_text(message)
+        else:
+            await client_ws.send_bytes(message)
+
+
+# =============================================================================
+# Routes
+# =============================================================================
 
 
 @router.get("/w/{workspace_id}")
@@ -214,51 +276,40 @@ async def proxy_websocket(
         if k.lower() not in WS_HOP_BY_HOP_HEADERS
     }
 
-    # Accept client connection
+    # Connect to upstream first (before accepting client)
+    try:
+        backend_ws = await websockets.connect(
+            upstream_ws_uri, additional_headers=extra_headers
+        )
+    except websockets.InvalidURI as exc:
+        logger.warning("Invalid WebSocket URI for %s: %s", workspace_id, exc)
+        await websocket.close(code=1011, reason="Invalid upstream URI")
+        return
+    except websockets.InvalidHandshake as exc:
+        logger.warning("WebSocket handshake failed for %s: %s", workspace_id, exc)
+        await websocket.close(code=1011, reason="Upstream handshake failed")
+        return
+    except Exception as exc:
+        logger.warning("Failed to connect to upstream %s: %s", workspace_id, exc)
+        await websocket.close(code=1011, reason="Upstream connection failed")
+        return
+
+    # Accept client connection after successful upstream connection
     await websocket.accept()
 
     try:
-        async with websockets.connect(
-            upstream_ws_uri, additional_headers=extra_headers
-        ) as backend_ws:
-            # Bidirectional relay
-            async def client_to_backend() -> None:
-                """Relay messages from client to backend."""
-                try:
-                    while True:
-                        data = await websocket.receive()
-                        if data["type"] == "websocket.receive":
-                            if "text" in data:
-                                await backend_ws.send(data["text"])
-                            elif "bytes" in data:
-                                await backend_ws.send(data["bytes"])
-                        elif data["type"] == "websocket.disconnect":
-                            break
-                except WebSocketDisconnect:
-                    pass
-
-            async def backend_to_client() -> None:
-                """Relay messages from backend to client."""
-                try:
-                    async for message in backend_ws:
-                        if isinstance(message, str):
-                            await websocket.send_text(message)
-                        else:
-                            await websocket.send_bytes(message)
-                except websockets.ConnectionClosed:
-                    pass
-
-            # Run both relays concurrently
-            await asyncio.gather(
-                client_to_backend(),
-                backend_to_client(),
-                return_exceptions=True,
-            )
-    except websockets.InvalidURI as exc:
-        logger.warning("Invalid WebSocket URI for %s: %s", workspace_id, exc)
-    except websockets.InvalidHandshake as exc:
-        logger.warning("WebSocket handshake failed for %s: %s", workspace_id, exc)
+        async with backend_ws:
+            # Use TaskGroup for proper exception handling (Python 3.11+)
+            try:
+                async with asyncio.TaskGroup() as tg:
+                    tg.create_task(_relay_client_to_backend(websocket, backend_ws))
+                    tg.create_task(_relay_backend_to_client(websocket, backend_ws))
+            except* WebSocketDisconnect:
+                pass  # Normal client disconnect
+            except* websockets.ConnectionClosed:
+                pass  # Normal backend close
     except Exception as exc:
+        # Unexpected error - log as error level
         logger.error("WebSocket proxy error for %s: %s", workspace_id, exc)
     finally:
         with contextlib.suppress(Exception):
