@@ -150,13 +150,25 @@ async def delete_workspace(
     session: DbSession,
     current_user: CurrentUser,
     ws_service: WsService,
+    background_tasks: BackgroundTasks,
 ) -> Response:
     """Delete workspace (soft delete).
 
     Only allowed in CREATED, STOPPED, or ERROR state.
     Uses CAS pattern to prevent race conditions.
+
+    Returns immediately with 204 status.
+    Actual deletion (container + storage cleanup) happens asynchronously.
     """
-    await ws_service.delete_workspace(session, current_user.id, workspace_id)
+    workspace = await ws_service.initiate_delete(session, current_user.id, workspace_id)
+
+    # Schedule background task for deletion (delegated to service)
+    background_tasks.add_task(
+        ws_service.delete_workspace,
+        workspace_id=workspace_id,
+        home_ctx=workspace.home_ctx,
+    )
+
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -154,18 +154,18 @@ class WorkspaceService:
 
         return workspace
 
-    async def delete_workspace(
+    async def initiate_delete(
         self,
         session: AsyncSession,
         user_id: str,
         workspace_id: str,
-    ) -> None:
-        """Delete workspace (soft delete).
+    ) -> Workspace:
+        """Initiate workspace delete (CAS transition to DELETING).
 
         Only allowed in CREATED, STOPPED, or ERROR state.
-        Uses CAS pattern to prevent race conditions.
+        Returns workspace with DELETING status.
+        Caller should schedule background task for actual deletion.
         """
-        # First verify workspace exists and is owned by current user
         workspace = await self.get_workspace(session, user_id, workspace_id)
 
         if workspace.status not in DELETABLE_STATES:
@@ -175,7 +175,6 @@ class WorkspaceService:
             )
 
         # CAS update: atomically change to DELETING
-        now = utc_now()
         result = await session.execute(
             update(Workspace)
             .where(
@@ -184,25 +183,17 @@ class WorkspaceService:
             )
             .values(
                 status=WorkspaceStatus.DELETING,
-                updated_at=now,
+                updated_at=utc_now(),
             )
         )
 
         if result.rowcount == 0:  # type: ignore[attr-defined]
             raise InvalidStateError("Workspace state changed during delete operation")
 
-        # For M4 CRUD API, we do synchronous soft delete
-        # Full delete flow (Instance Controller + Storage) is in DeleteWorkspace API task
-        await session.execute(
-            update(Workspace)
-            .where(col(Workspace.id) == workspace_id)
-            .values(
-                status=WorkspaceStatus.DELETED,
-                deleted_at=now,
-                updated_at=now,
-            )
-        )
         await session.commit()
+        await session.refresh(workspace)
+
+        return workspace
 
     async def initiate_start(
         self,
@@ -442,6 +433,64 @@ class WorkspaceService:
             except Exception as e:
                 # Any error - update to ERROR
                 logger.exception("Failed to stop workspace %s: %s", workspace_id, e)
+                await session.execute(
+                    update(Workspace)
+                    .where(col(Workspace.id) == workspace_id)
+                    .values(
+                        status=WorkspaceStatus.ERROR,
+                        updated_at=utc_now(),
+                    )
+                )
+                await session.commit()
+
+    async def delete_workspace(
+        self,
+        workspace_id: str,
+        home_ctx: str | None,
+    ) -> None:
+        """Delete a workspace (background task).
+
+        Flow:
+        1. Instance Controller.DeleteWorkspace(workspace_id)
+        2. Storage Provider.Deprovision(home_ctx) if home_ctx exists
+        3. Clear home_ctx in DB
+        4. Soft delete (status = DELETED, deleted_at = now)
+        5. On failure: status = ERROR
+        """
+        engine = get_engine()
+        session_factory = async_sessionmaker(
+            engine, class_=AsyncSession, expire_on_commit=False
+        )
+
+        async with session_factory() as session:
+            try:
+                # Step 1: Delete container
+                logger.info("Deleting container for workspace %s", workspace_id)
+                await self._instance.delete_workspace(workspace_id)
+
+                # Step 2: Deprovision storage (no-op for local-dir)
+                if home_ctx:
+                    logger.info("Deprovisioning storage for workspace %s", workspace_id)
+                    await self._storage.deprovision(home_ctx)
+
+                # Step 3 & 4: Clear home_ctx and soft delete
+                now = utc_now()
+                logger.info("Workspace %s is now DELETED", workspace_id)
+                await session.execute(
+                    update(Workspace)
+                    .where(col(Workspace.id) == workspace_id)
+                    .values(
+                        status=WorkspaceStatus.DELETED,
+                        home_ctx=None,
+                        deleted_at=now,
+                        updated_at=now,
+                    )
+                )
+                await session.commit()
+
+            except Exception as e:
+                # Any error - update to ERROR
+                logger.exception("Failed to delete workspace %s: %s", workspace_id, e)
                 await session.execute(
                     update(Workspace)
                     .where(col(Workspace.id) == workspace_id)
