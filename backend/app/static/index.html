@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,7 +8,14 @@
   <!-- Fonts: Inter for UI, JetBrains Mono for code -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet">
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <link rel="stylesheet" href="/static/css/animations.css">
+  <link rel="stylesheet" href="/static/css/markdown.css">
+  <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script>
@@ -35,129 +43,8 @@
       }
     }
   </script>
-  <style>
-    /* Animations */
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
-    }
-    @keyframes slideIn {
-      from { transform: translateX(100%); }
-      to { transform: translateX(0); }
-    }
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-    .spinner {
-      animation: spin 1s linear infinite;
-    }
-    .skeleton {
-      animation: pulse 1.5s ease-in-out infinite;
-      background: linear-gradient(90deg, #3c3c3c 25%, #4a4a4a 50%, #3c3c3c 75%);
-      background-size: 200% 100%;
-    }
-    .slide-in {
-      animation: slideIn 0.2s ease-out;
-    }
-    .fade-in {
-      animation: fadeIn 0.15s ease-out;
-    }
-    /* Scrollbar styling */
-    ::-webkit-scrollbar {
-      width: 8px;
-    }
-    ::-webkit-scrollbar-track {
-      background: #252526;
-    }
-    ::-webkit-scrollbar-thumb {
-      background: #3c3c3c;
-      border-radius: 4px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-      background: #4c4c4c;
-    }
-    /* Focus ring for keyboard navigation */
-    .focus-ring:focus {
-      outline: 2px solid #007acc;
-      outline-offset: 2px;
-    }
-    /* Card hover effect */
-    .workspace-card {
-      transition: transform 0.15s ease, box-shadow 0.15s ease;
-    }
-    .workspace-card:hover {
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-    }
-    .workspace-card.selected {
-      outline: 2px solid #007acc;
-      outline-offset: 2px;
-    }
-    /* Markdown styles for memo */
-    .markdown-content h1, .markdown-content h2, .markdown-content h3 {
-      color: #fff;
-      font-weight: 600;
-      margin-top: 1em;
-      margin-bottom: 0.5em;
-    }
-    .markdown-content h1 { font-size: 1.5em; }
-    .markdown-content h2 { font-size: 1.25em; }
-    .markdown-content h3 { font-size: 1.1em; }
-    .markdown-content p { margin-bottom: 0.75em; }
-    .markdown-content ul, .markdown-content ol {
-      margin-left: 1.5em;
-      margin-bottom: 0.75em;
-    }
-    .markdown-content li { margin-bottom: 0.25em; }
-    .markdown-content code {
-      background: #1e1e1e;
-      padding: 0.2em 0.4em;
-      border-radius: 3px;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 0.9em;
-    }
-    .markdown-content pre {
-      background: #1e1e1e;
-      padding: 1em;
-      border-radius: 4px;
-      overflow-x: auto;
-      margin-bottom: 0.75em;
-    }
-    .markdown-content pre code {
-      background: transparent;
-      padding: 0;
-    }
-    .markdown-content a {
-      color: #007acc;
-      text-decoration: underline;
-    }
-    .markdown-content blockquote {
-      border-left: 3px solid #3c3c3c;
-      padding-left: 1em;
-      margin-left: 0;
-      color: #999;
-    }
-    /* Resizable panel */
-    .resize-handle {
-      position: absolute;
-      left: 0;
-      top: 0;
-      bottom: 0;
-      width: 4px;
-      cursor: ew-resize;
-      background: transparent;
-      transition: background 0.15s;
-    }
-    .resize-handle:hover,
-    .resize-handle.active {
-      background: #007acc;
-    }
-  </style>
 </head>
+
 <body class="bg-vscode-bg text-vscode-text font-sans h-screen flex flex-col overflow-hidden">
   <!-- Header -->
   <header class="bg-vscode-sidebar border-b border-vscode-border px-4 py-2 flex justify-between items-center shrink-0">
@@ -169,14 +56,13 @@
     <div class="flex items-center gap-3">
       <span class="text-sm text-vscode-text flex items-center gap-2">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
         </svg>
         <span id="username-display" class="text-white">-</span>
       </span>
-      <button
-        id="logout-btn"
-        class="text-sm text-vscode-text hover:text-white px-2 py-1 rounded hover:bg-vscode-hover transition-colors"
-      >
+      <button id="logout-btn"
+        class="text-sm text-vscode-text hover:text-white px-2 py-1 rounded hover:bg-vscode-hover transition-colors">
         Logout
       </button>
     </div>
@@ -185,10 +71,8 @@
   <!-- Toolbar -->
   <div class="bg-vscode-sidebar border-b border-vscode-border px-4 py-2 flex items-center gap-3 shrink-0">
     <!-- New Workspace Button -->
-    <button
-      id="new-workspace-btn"
-      class="bg-vscode-accent hover:bg-blue-600 text-white px-3 py-1.5 rounded flex items-center gap-2 transition-colors focus-ring text-sm shrink-0"
-    >
+    <button id="new-workspace-btn"
+      class="bg-vscode-accent hover:bg-blue-600 text-white px-3 py-1.5 rounded flex items-center gap-2 transition-colors focus-ring text-sm shrink-0">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
       </svg>
@@ -199,22 +83,17 @@
 
     <!-- Search -->
     <div class="relative flex-1 max-w-xs">
-      <input
-        type="text"
-        id="search-input"
-        placeholder="Search... (/)"
-        class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-1.5 pl-8 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-vscode-accent"
-      >
+      <input type="text" id="search-input" placeholder="Search... (/)"
+        class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-1.5 pl-8 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-vscode-accent">
       <svg class="absolute left-2.5 top-2 w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+          d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
       </svg>
     </div>
 
     <!-- Filter -->
-    <select
-      id="status-filter"
-      class="bg-vscode-bg border border-vscode-border rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-vscode-accent cursor-pointer"
-    >
+    <select id="status-filter"
+      class="bg-vscode-bg border border-vscode-border rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-vscode-accent cursor-pointer">
       <option value="all">All Status</option>
       <option value="running">Running</option>
       <option value="stopped">Stopped</option>
@@ -223,10 +102,8 @@
     </select>
 
     <!-- Sort -->
-    <select
-      id="sort-select"
-      class="bg-vscode-bg border border-vscode-border rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-vscode-accent cursor-pointer"
-    >
+    <select id="sort-select"
+      class="bg-vscode-bg border border-vscode-border rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-vscode-accent cursor-pointer">
       <option value="status">By Status</option>
       <option value="recent">Recent</option>
       <option value="name">Name A-Z</option>
@@ -254,13 +131,13 @@
       <div id="empty-state" class="hidden h-full flex items-center justify-center">
         <div class="text-center">
           <svg class="w-16 h-16 mx-auto text-vscode-border mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1"
+              d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10">
+            </path>
           </svg>
           <p class="text-vscode-text mb-4">No workspaces yet</p>
-          <button
-            class="text-vscode-accent hover:underline"
-            onclick="document.getElementById('new-workspace-btn').click()"
-          >
+          <button class="text-vscode-accent hover:underline"
+            onclick="document.getElementById('new-workspace-btn').click()">
             Create your first workspace
           </button>
         </div>
@@ -270,7 +147,8 @@
       <div id="no-results-state" class="hidden h-full flex items-center justify-center">
         <div class="text-center">
           <svg class="w-16 h-16 mx-auto text-vscode-border mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1"
+              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
           </svg>
           <p class="text-vscode-text mb-2">No workspaces found</p>
           <p class="text-sm text-gray-500">Try a different search or filter</p>
@@ -289,7 +167,9 @@
     </div>
 
     <!-- Slide Panel (Detail) -->
-    <aside id="detail-panel" class="hidden bg-vscode-sidebar border-l border-vscode-border shrink-0 slide-in relative flex flex-col" style="width: 384px; min-width: 280px; max-width: 600px;">
+    <aside id="detail-panel"
+      class="hidden bg-vscode-sidebar border-l border-vscode-border shrink-0 slide-in relative flex flex-col"
+      style="width: 384px; min-width: 280px; max-width: 600px;">
       <!-- Resize Handle -->
       <div id="panel-resize-handle" class="resize-handle"></div>
 
@@ -297,7 +177,9 @@
         <!-- Panel Header -->
         <div class="flex items-start justify-between mb-4 shrink-0">
           <div class="flex-1">
-            <h2 id="detail-name" class="text-xl font-semibold text-white break-words cursor-pointer hover:bg-vscode-hover rounded px-1 -mx-1" title="Double-click to edit"></h2>
+            <h2 id="detail-name"
+              class="text-xl font-semibold text-white break-words cursor-pointer hover:bg-vscode-hover rounded px-1 -mx-1"
+              title="Double-click to edit"></h2>
             <div class="flex items-center gap-2 mt-2">
               <span id="detail-status" class="px-2 py-1 rounded text-xs font-medium"></span>
             </div>
@@ -317,7 +199,8 @@
         <!-- Description -->
         <div class="mb-4 shrink-0">
           <h3 class="text-sm font-medium text-vscode-text mb-1">Description</h3>
-          <p id="detail-description" class="text-white cursor-pointer hover:bg-vscode-hover rounded px-2 py-1 -mx-2" title="Double-click to edit"></p>
+          <p id="detail-description" class="text-white cursor-pointer hover:bg-vscode-hover rounded px-2 py-1 -mx-2"
+            title="Double-click to edit"></p>
         </div>
 
         <!-- Memo (GitHub-style Write/Preview tabs) -->
@@ -325,16 +208,16 @@
           <!-- Tab header -->
           <div class="flex border-b border-vscode-border mb-2 shrink-0">
             <button id="memo-tab-write" data-action="memo-tab" data-tab="write"
-                    class="px-3 py-1.5 text-sm text-vscode-text hover:text-white border-b-2 border-transparent transition-colors">
+              class="px-3 py-1.5 text-sm text-vscode-text hover:text-white border-b-2 border-transparent transition-colors">
               Write
             </button>
             <button id="memo-tab-preview" data-action="memo-tab" data-tab="preview"
-                    class="px-3 py-1.5 text-sm border-b-2 border-vscode-accent text-white">
+              class="px-3 py-1.5 text-sm border-b-2 border-vscode-accent text-white">
               Preview
             </button>
             <div class="flex-1"></div>
             <button id="memo-save-btn" data-action="memo-save"
-                    class="px-3 py-1.5 text-sm text-vscode-text hover:text-white hidden">
+              class="px-3 py-1.5 text-sm text-vscode-text hover:text-white hidden">
               Save
             </button>
           </div>
@@ -342,13 +225,14 @@
           <!-- Write mode (textarea) -->
           <div id="memo-write" class="flex-1 flex flex-col min-h-0 hidden">
             <textarea id="memo-textarea"
-                      class="w-full flex-1 bg-vscode-bg border border-vscode-border rounded p-3 text-white resize-none focus:outline-none focus:border-vscode-accent font-mono text-sm"
-                      placeholder="Write your memo in Markdown..."></textarea>
+              class="w-full flex-1 bg-vscode-bg border border-vscode-border rounded p-3 text-white resize-none focus:outline-none focus:border-vscode-accent font-mono text-sm"
+              placeholder="Write your memo in Markdown..."></textarea>
           </div>
 
           <!-- Preview mode (markdown rendering) -->
           <div id="memo-preview" class="flex-1 overflow-y-auto">
-            <div id="detail-memo" class="markdown-content bg-vscode-bg border border-vscode-border rounded p-4 text-white min-h-full"></div>
+            <div id="detail-memo"
+              class="markdown-content bg-vscode-bg border border-vscode-border rounded p-4 text-white min-h-full"></div>
           </div>
         </div>
 
@@ -357,11 +241,14 @@
   </main>
 
   <!-- Footer -->
-  <footer class="bg-vscode-sidebar border-t border-vscode-border px-4 py-1.5 grid grid-cols-3 items-center text-xs shrink-0">
+  <footer
+    class="bg-vscode-sidebar border-t border-vscode-border px-4 py-1.5 grid grid-cols-3 items-center text-xs shrink-0">
     <div id="footer-stats" class="flex items-center gap-3">
       <span class="flex items-center gap-1.5 cursor-default" title="Total: All workspaces count">
         <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10">
+          </path>
         </svg>
         <span id="stat-total" class="text-white">0</span>
       </span>
@@ -379,16 +266,22 @@
       </span>
       <span class="flex items-center gap-1.5 text-vscode-error cursor-default" title="Error: Workspaces with errors">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+          </path>
         </svg>
         <span id="stat-error" class="text-white">0</span>
       </span>
     </div>
     <div id="footer-date" class="text-center text-vscode-text"></div>
     <div class="flex items-center justify-end">
-      <button id="footer-shortcuts-btn" class="flex items-center gap-1.5 hover:text-white transition-colors px-2 py-1 rounded hover:bg-vscode-hover" title="Show keyboard shortcuts (Press ?)">
+      <button id="footer-shortcuts-btn"
+        class="flex items-center gap-1.5 hover:text-white transition-colors px-2 py-1 rounded hover:bg-vscode-hover"
+        title="Show keyboard shortcuts (Press ?)">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707"></path>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707">
+          </path>
         </svg>
         <span>Shortcuts</span>
         <kbd class="bg-vscode-bg px-1 py-0.5 rounded text-[10px] font-mono ml-1">?</kbd>
@@ -397,7 +290,8 @@
   </footer>
 
   <!-- Create Workspace Modal -->
-  <div id="create-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 fade-in">
+  <div id="create-modal"
+    class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 fade-in">
     <div class="bg-vscode-sidebar border border-vscode-border rounded-lg w-full max-w-md mx-4 slide-in">
       <div class="flex justify-between items-center px-6 py-4 border-b border-vscode-border">
         <h2 class="text-lg font-semibold text-white">New Workspace</h2>
@@ -410,47 +304,29 @@
       <form id="create-form" class="p-6 space-y-4">
         <div>
           <label for="workspace-name" class="block text-sm mb-2">Name <span class="text-vscode-error">*</span></label>
-          <input
-            type="text"
-            id="workspace-name"
-            name="name"
-            required
+          <input type="text" id="workspace-name" name="name" required
             class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent"
-            placeholder="my-workspace"
-          >
+            placeholder="my-workspace">
         </div>
         <div>
           <label for="workspace-description" class="block text-sm mb-2">Description</label>
-          <input
-            type="text"
-            id="workspace-description"
-            name="description"
+          <input type="text" id="workspace-description" name="description"
             class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent"
-            placeholder="Optional description"
-          >
+            placeholder="Optional description">
         </div>
         <div>
           <label for="workspace-memo" class="block text-sm mb-2">Memo</label>
-          <textarea
-            id="workspace-memo"
-            name="memo"
-            rows="3"
+          <textarea id="workspace-memo" name="memo" rows="3"
             class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent resize-none"
-            placeholder="Optional notes..."
-          ></textarea>
+            placeholder="Optional notes..."></textarea>
         </div>
         <div class="flex justify-end gap-3 pt-4">
-          <button
-            type="button"
-            id="cancel-create-btn"
-            class="px-4 py-2 border border-vscode-border rounded hover:bg-vscode-hover transition-colors"
-          >
+          <button type="button" id="cancel-create-btn"
+            class="px-4 py-2 border border-vscode-border rounded hover:bg-vscode-hover transition-colors">
             Cancel
           </button>
-          <button
-            type="submit"
-            class="bg-vscode-accent hover:bg-blue-600 text-white px-4 py-2 rounded transition-colors"
-          >
+          <button type="submit"
+            class="bg-vscode-accent hover:bg-blue-600 text-white px-4 py-2 rounded transition-colors">
             Create
           </button>
         </div>
@@ -459,12 +335,15 @@
   </div>
 
   <!-- Delete Confirmation Modal -->
-  <div id="delete-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 fade-in">
+  <div id="delete-modal"
+    class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 fade-in">
     <div class="bg-vscode-sidebar border border-vscode-border rounded-lg w-full max-w-md mx-4 slide-in">
       <div class="flex justify-between items-center px-6 py-4 border-b border-vscode-border">
         <h2 class="text-lg font-semibold text-white flex items-center gap-2">
           <svg class="w-5 h-5 text-vscode-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z">
+            </path>
           </svg>
           Delete Workspace
         </h2>
@@ -489,28 +368,18 @@
           <label for="delete-confirm-input" class="block text-sm mb-2">
             Type <strong class="text-white font-mono" id="delete-confirm-name"></strong> to confirm:
           </label>
-          <input
-            type="text"
-            id="delete-confirm-input"
+          <input type="text" id="delete-confirm-input"
             class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white font-mono focus:outline-none focus:border-vscode-error"
-            placeholder="Enter workspace name"
-          >
+            placeholder="Enter workspace name">
         </div>
         <input type="hidden" id="delete-workspace-id">
         <div class="flex justify-end gap-3">
-          <button
-            type="button"
-            id="cancel-delete-btn"
-            class="px-4 py-2 bg-vscode-accent hover:bg-blue-600 text-white rounded transition-colors"
-          >
+          <button type="button" id="cancel-delete-btn"
+            class="px-4 py-2 bg-vscode-accent hover:bg-blue-600 text-white rounded transition-colors">
             Cancel
           </button>
-          <button
-            type="button"
-            id="confirm-delete-btn"
-            disabled
-            class="px-4 py-2 bg-vscode-error text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-600"
-          >
+          <button type="button" id="confirm-delete-btn" disabled
+            class="px-4 py-2 bg-vscode-error text-white rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-600">
             Delete
           </button>
         </div>
@@ -519,7 +388,8 @@
   </div>
 
   <!-- Keyboard Shortcuts Modal -->
-  <div id="shortcuts-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 fade-in">
+  <div id="shortcuts-modal"
+    class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 fade-in">
     <div class="bg-vscode-sidebar border border-vscode-border rounded-lg w-full max-w-lg mx-4 slide-in">
       <div class="flex justify-between items-center px-6 py-4 border-b border-vscode-border">
         <h2 class="text-lg font-semibold text-white">Keyboard Shortcuts</h2>
@@ -580,6 +450,8 @@
   <!-- Toast Container -->
   <div id="toast-container" class="fixed bottom-4 right-4 space-y-2 z-50"></div>
 
-  <script src="/static/app.js"></script>
+  <!-- ES Module Entry Point -->
+  <script type="module" src="/static/js/main.js"></script>
 </body>
+
 </html>
