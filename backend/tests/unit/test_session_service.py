@@ -1,6 +1,6 @@
 """Tests for SessionService."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -17,7 +17,7 @@ async def test_create_session(db_session, test_user):
     assert session.user_id == test_user.id
     assert session.created_at is not None
     # Compare as naive datetimes (SQLite stores without timezone)
-    now = datetime.utcnow()
+    now = datetime.now(UTC).replace(tzinfo=None)
     expires_at = session.expires_at
     if expires_at.tzinfo is not None:
         expires_at = expires_at.replace(tzinfo=None)
@@ -93,7 +93,7 @@ async def test_is_valid_expired_session(db_session, test_user):
     # Create a session with past expiry (use naive datetime for SQLite)
     session = Session(
         user_id=test_user.id,
-        expires_at=datetime.utcnow() - timedelta(hours=1),
+        expires_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1),
     )
     db_session.add(session)
     await db_session.commit()
@@ -108,8 +108,8 @@ async def test_is_valid_revoked_session(db_session, test_user):
     # Create a revoked session (use naive datetime for SQLite)
     session = Session(
         user_id=test_user.id,
-        expires_at=datetime.utcnow() + timedelta(hours=24),
-        revoked_at=datetime.utcnow(),
+        expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=24),
+        revoked_at=datetime.now(UTC).replace(tzinfo=None),
     )
     db_session.add(session)
     await db_session.commit()
@@ -124,7 +124,7 @@ async def test_get_valid_returns_none_for_expired(db_session, test_user):
     # Create a session with past expiry (use naive datetime for SQLite)
     session = Session(
         user_id=test_user.id,
-        expires_at=datetime.utcnow() - timedelta(hours=1),
+        expires_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1),
     )
     db_session.add(session)
     await db_session.commit()
