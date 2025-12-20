@@ -92,17 +92,14 @@ class LocalDockerInstanceController(InstanceController):
                 home_mount,
             )
 
-            # None for port means random - valid docker-py but not in type stubs
-            self._client.containers.run(  # type: ignore[call-overload]
+            self._client.containers.run(
                 image_ref,
                 command=["--auth", "none"],  # Disable password authentication
                 name=container_name,
                 detach=True,
                 network=NETWORK_NAME,
-                # Bind to 127.0.0.1 with random port (security: no external exposure)
-                ports={f"{CODE_SERVER_PORT}/tcp": ("127.0.0.1", None)},
+                # No host port binding - proxy connects via internal network
                 volumes={home_mount: {"bind": HOME_MOUNT_PATH, "mode": "rw"}},
-                # Run as coder user (1000:1000)
                 user=f"{CODER_UID}:{CODER_GID}",
                 environment={"HOME": HOME_MOUNT_PATH},
             )
@@ -181,13 +178,8 @@ class LocalDockerInstanceController(InstanceController):
         if not container:
             raise ValueError(f"Container not found: {container_name}")
 
-        # Get port mapping from container
-        ports = container.ports
-        port_key = f"{CODE_SERVER_PORT}/tcp"
-        port_bindings = ports.get(port_key)
-
-        if not port_bindings:
-            raise ValueError(f"Port {CODE_SERVER_PORT} not exposed: {container_name}")
+        if container.status != "running":
+            raise ValueError(f"Container not running: {container_name}")
 
         # Return container name as host (for internal network communication)
         # The proxy will connect via codehub-net network
@@ -210,15 +202,6 @@ class LocalDockerInstanceController(InstanceController):
             return InstanceStatus(exists=False, running=False, healthy=False)
 
         running = container.status == "running"
-        port: int | None = None
-
-        if running:
-            # Get exposed port
-            ports = container.ports
-            port_key = f"{CODE_SERVER_PORT}/tcp"
-            port_bindings = ports.get(port_key)
-            if port_bindings:
-                port = int(port_bindings[0]["HostPort"])
 
         # Health check: for MVP, consider running as healthy
         # Real health check will be done by Control Plane via HTTP probe
@@ -228,7 +211,6 @@ class LocalDockerInstanceController(InstanceController):
             exists=True,
             running=running,
             healthy=healthy,
-            port=port,
         )
 
     async def get_status(self, workspace_id: str) -> InstanceStatus:
