@@ -95,6 +95,7 @@ class LocalDockerInstanceController(InstanceController):
             # None for port means random - valid docker-py but not in type stubs
             self._client.containers.run(  # type: ignore[call-overload]
                 image_ref,
+                command=["--auth", "none"],  # Disable password authentication
                 name=container_name,
                 detach=True,
                 network=NETWORK_NAME,
