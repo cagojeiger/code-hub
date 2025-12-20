@@ -16,6 +16,7 @@ export const state = {
   cache: {},
   eventSource: null,
   pollTimer: null,
+  loadVersion: 0,  // Tracks load version to prevent race conditions
 };
 
 // Status configuration

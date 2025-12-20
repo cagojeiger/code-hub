@@ -7,11 +7,33 @@ import { state } from './state.js';
 import { createWorkspace, deleteWorkspace } from './api.js';
 import { showToast } from './utils.js';
 
+// =============================================================================
+// Generic Modal Utilities
+// =============================================================================
+
+/**
+ * Show a modal by ID
+ */
+function showModal(modalId) {
+  document.getElementById(modalId).classList.remove('hidden');
+}
+
+/**
+ * Hide a modal by ID
+ */
+function hideModal(modalId) {
+  document.getElementById(modalId).classList.add('hidden');
+}
+
+// =============================================================================
+// Create Modal
+// =============================================================================
+
 /**
  * Open the create workspace modal
  */
 export function openCreateModal() {
-  document.getElementById('create-modal').classList.remove('hidden');
+  showModal('create-modal');
   document.getElementById('workspace-name').focus();
 }
 
@@ -19,7 +41,7 @@ export function openCreateModal() {
  * Close the create workspace modal
  */
 export function closeCreateModal() {
-  document.getElementById('create-modal').classList.add('hidden');
+  hideModal('create-modal');
   document.getElementById('create-form').reset();
 }
 
@@ -46,6 +68,10 @@ export async function handleCreateSubmit(e, loadWorkspacesCallback) {
   }
 }
 
+// =============================================================================
+// Delete Modal
+// =============================================================================
+
 /**
  * Open the delete confirmation modal
  */
@@ -56,7 +82,7 @@ export function openDeleteModal(id, name) {
   document.getElementById('delete-confirm-input').value = '';
   document.getElementById('confirm-delete-btn').disabled = true;
 
-  document.getElementById('delete-modal').classList.remove('hidden');
+  showModal('delete-modal');
   document.getElementById('delete-confirm-input').focus();
 }
 
@@ -64,7 +90,7 @@ export function openDeleteModal(id, name) {
  * Close the delete confirmation modal
  */
 export function closeDeleteModal() {
-  document.getElementById('delete-modal').classList.add('hidden');
+  hideModal('delete-modal');
   document.getElementById('delete-confirm-input').value = '';
 }
 
@@ -100,14 +126,14 @@ export async function handleConfirmDelete() {
  * Open the keyboard shortcuts modal
  */
 export function openShortcutsModal() {
-  document.getElementById('shortcuts-modal').classList.remove('hidden');
+  showModal('shortcuts-modal');
 }
 
 /**
  * Close the keyboard shortcuts modal
  */
 export function closeShortcutsModal() {
-  document.getElementById('shortcuts-modal').classList.add('hidden');
+  hideModal('shortcuts-modal');
 }
 
 /**

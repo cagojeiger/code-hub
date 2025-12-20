@@ -21,12 +21,12 @@ export function openWorkspace(id) {
 }
 
 /**
- * Handle workspace start action
+ * Generic workspace action handler to reduce code duplication
  */
-export async function handleStart(id) {
+async function handleWorkspaceAction(id, apiCall, successMsg) {
   try {
-    await startWorkspace(id);
-    showToast('Workspace starting...', 'info');
+    await apiCall(id);
+    showToast(successMsg, 'info');
   } catch (error) {
     if (error.message !== 'Session expired') {
       showToast(error.message, 'error');
@@ -35,18 +35,14 @@ export async function handleStart(id) {
 }
 
 /**
+ * Handle workspace start action
+ */
+export const handleStart = (id) => handleWorkspaceAction(id, startWorkspace, 'Workspace starting...');
+
+/**
  * Handle workspace stop action
  */
-export async function handleStop(id) {
-  try {
-    await stopWorkspace(id);
-    showToast('Workspace stopping...', 'info');
-  } catch (error) {
-    if (error.message !== 'Session expired') {
-      showToast(error.message, 'error');
-    }
-  }
-}
+export const handleStop = (id) => handleWorkspaceAction(id, stopWorkspace, 'Workspace stopping...');
 
 /**
  * Select a workspace by ID

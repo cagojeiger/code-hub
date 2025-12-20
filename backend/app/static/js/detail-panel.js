@@ -39,10 +39,10 @@ export function renderDetailPanel(workspace) {
   saveBtn.classList.add('hidden');
   document.getElementById('memo-textarea').value = workspace.memo || '';
 
-  // Render memo as markdown
+  // Render memo as markdown (sanitized to prevent XSS)
   const memoEl = document.getElementById('detail-memo');
   if (workspace.memo) {
-    memoEl.innerHTML = marked.parse(workspace.memo);
+    memoEl.innerHTML = DOMPurify.sanitize(marked.parse(workspace.memo));
   } else {
     memoEl.textContent = 'No memo';
   }
@@ -133,11 +133,11 @@ export function switchMemoTab(tab) {
     writePanel.classList.add('hidden');
     saveBtn.classList.add('hidden');
 
-    // Render current textarea content as markdown preview
+    // Render current textarea content as markdown preview (sanitized)
     const content = textarea.value || '';
     const memoEl = document.getElementById('detail-memo');
     if (content.trim()) {
-      memoEl.innerHTML = marked.parse(content);
+      memoEl.innerHTML = DOMPurify.sanitize(marked.parse(content));
     } else {
       memoEl.textContent = 'No memo';
     }
@@ -157,10 +157,10 @@ export async function saveMemo() {
     await updateWorkspace(state.selectedWorkspaceId, { memo: newValue });
     showToast('Memo saved', 'success');
 
-    // Update preview immediately
+    // Update preview immediately (sanitized)
     const memoEl = document.getElementById('detail-memo');
     if (newValue) {
-      memoEl.innerHTML = marked.parse(newValue);
+      memoEl.innerHTML = DOMPurify.sanitize(marked.parse(newValue));
     } else {
       memoEl.textContent = 'No memo';
     }

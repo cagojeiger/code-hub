@@ -18,10 +18,17 @@ import { connectSSE, setupVisibilityHandler } from './sse.js';
 
 /**
  * Load workspaces and update UI
+ * Uses loadVersion to prevent race conditions with SSE updates
  */
 async function loadWorkspaces(page = 1) {
+  const currentVersion = ++state.loadVersion;
+
   try {
     const data = await fetchWorkspaces(page);
+
+    // If a newer load started while we were fetching, discard this result
+    if (state.loadVersion !== currentVersion) return;
+
     const workspaces = data.items;
     const pagination = data.pagination;
 
@@ -40,6 +47,9 @@ async function loadWorkspaces(page = 1) {
     updateFooterStats(state.workspaces);
 
   } catch (error) {
+    // If a newer load started, ignore this error
+    if (state.loadVersion !== currentVersion) return;
+
     hideSkeletonLoading();
     if (error.message !== 'Session expired') {
       import('./utils.js').then(({ showToast }) => {
