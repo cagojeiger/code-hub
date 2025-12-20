@@ -326,10 +326,12 @@ function updateFooterStats() {
   const total = allWorkspaces.length;
   const running = allWorkspaces.filter(w => w.status === 'RUNNING').length;
   const stopped = allWorkspaces.filter(w => ['STOPPED', 'CREATED'].includes(w.status)).length;
+  const error = allWorkspaces.filter(w => w.status === 'ERROR').length;
 
   document.getElementById('stat-total').textContent = total;
   document.getElementById('stat-running').textContent = running;
   document.getElementById('stat-stopped').textContent = stopped;
+  document.getElementById('stat-error').textContent = error;
 }
 
 function updateFooterDate() {

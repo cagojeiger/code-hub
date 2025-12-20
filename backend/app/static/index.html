@@ -100,26 +100,11 @@
 </head>
 <body class="bg-vscode-bg text-vscode-text font-sans h-screen flex flex-col overflow-hidden">
   <!-- Header -->
-  <header class="bg-vscode-sidebar border-b border-vscode-border px-4 py-3 flex justify-between items-center shrink-0">
+  <header class="bg-vscode-sidebar border-b border-vscode-border px-4 py-2 flex justify-between items-center shrink-0">
     <h1 class="text-xl font-semibold text-white flex items-baseline gap-2">
       CodeHub
       <span class="text-xs font-normal text-vscode-text font-mono">v0.1.0</span>
     </h1>
-
-    <!-- Search Bar -->
-    <div class="flex-1 max-w-md mx-8">
-      <div class="relative">
-        <input
-          type="text"
-          id="search-input"
-          placeholder="Search workspaces... (Press /)"
-          class="w-full bg-vscode-bg border border-vscode-border rounded px-4 py-2 pl-10 text-white placeholder-gray-500 focus:outline-none focus:border-vscode-accent"
-        >
-        <svg class="absolute left-3 top-2.5 w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-        </svg>
-      </div>
-    </div>
 
     <div class="flex items-center gap-3">
       <span class="text-sm text-vscode-text flex items-center gap-2">
@@ -142,7 +127,7 @@
     <!-- New Workspace Button -->
     <button
       id="new-workspace-btn"
-      class="bg-vscode-accent hover:bg-blue-600 text-white px-3 py-1.5 rounded flex items-center gap-2 transition-colors focus-ring text-sm"
+      class="bg-vscode-accent hover:bg-blue-600 text-white px-3 py-1.5 rounded flex items-center gap-2 transition-colors focus-ring text-sm shrink-0"
     >
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
@@ -151,6 +136,19 @@
     </button>
 
     <span class="text-vscode-border">│</span>
+
+    <!-- Search -->
+    <div class="relative flex-1 max-w-xs">
+      <input
+        type="text"
+        id="search-input"
+        placeholder="Search... (/)"
+        class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-1.5 pl-8 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-vscode-accent"
+      >
+      <svg class="absolute left-2.5 top-2 w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+      </svg>
+    </div>
 
     <!-- Filter -->
     <select
@@ -175,7 +173,7 @@
     </select>
 
     <!-- Connection Status -->
-    <div class="ml-auto flex items-center gap-2 text-sm">
+    <div class="ml-auto flex items-center gap-2 text-sm shrink-0">
       <span id="connection-status" class="flex items-center gap-1.5">
         <span class="w-2 h-2 rounded-full bg-gray-500"></span>
         <span class="text-gray-500">Connecting...</span>
@@ -295,28 +293,34 @@
   <!-- Footer -->
   <footer class="bg-vscode-sidebar border-t border-vscode-border px-4 py-1.5 grid grid-cols-3 items-center text-xs shrink-0">
     <div id="footer-stats" class="flex items-center gap-3">
-      <span class="flex items-center gap-1.5" title="Total workspaces">
+      <span class="flex items-center gap-1.5 cursor-default" title="Total: All workspaces count">
         <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
         </svg>
         <span id="stat-total" class="text-white">0</span>
       </span>
-      <span class="flex items-center gap-1.5 text-vscode-success" title="Running">
+      <span class="flex items-center gap-1.5 text-vscode-success cursor-default" title="Running: Active workspaces">
         <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
           <path d="M8 5v14l11-7z"></path>
         </svg>
         <span id="stat-running" class="text-white">0</span>
       </span>
-      <span class="flex items-center gap-1.5" title="Stopped">
+      <span class="flex items-center gap-1.5 cursor-default" title="Stopped: Inactive workspaces">
         <svg class="w-3.5 h-3.5 text-gray-500" fill="currentColor" viewBox="0 0 24 24">
           <rect x="6" y="6" width="12" height="12"></rect>
         </svg>
         <span id="stat-stopped" class="text-white">0</span>
       </span>
+      <span class="flex items-center gap-1.5 text-vscode-error cursor-default" title="Error: Workspaces with errors">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+        </svg>
+        <span id="stat-error" class="text-white">0</span>
+      </span>
     </div>
     <div id="footer-date" class="text-center text-vscode-text"></div>
     <div class="flex items-center justify-end">
-      <button id="footer-shortcuts-btn" class="flex items-center gap-1.5 hover:text-white transition-colors px-2 py-1 rounded hover:bg-vscode-hover" title="Keyboard shortcuts (?)">
+      <button id="footer-shortcuts-btn" class="flex items-center gap-1.5 hover:text-white transition-colors px-2 py-1 rounded hover:bg-vscode-hover" title="Show keyboard shortcuts (Press ?)">
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707"></path>
         </svg>
