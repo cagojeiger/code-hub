@@ -251,7 +251,9 @@ async def proxy_http(
 
         async def stream_response() -> AsyncGenerator[bytes]:
             try:
-                async for chunk in upstream_response.aiter_bytes():
+                # Use aiter_raw() to preserve original encoding (gzip, br, etc.)
+                # aiter_bytes() would decompress, causing mismatch with Content-Encoding header
+                async for chunk in upstream_response.aiter_raw():
                     yield chunk
             finally:
                 await upstream_response.aclose()
