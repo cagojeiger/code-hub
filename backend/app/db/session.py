@@ -55,11 +55,23 @@ async def _enable_wal_mode(engine: "AsyncEngine") -> None:
         logger.info("SQLite WAL mode enabled")
 
 
-async def init_db(database_url: str, echo: bool = False) -> "AsyncEngine":
-    """Initialize database connection and create tables."""
+async def init_db(
+    database_url: str, echo: bool = False, create_tables: bool = True
+) -> "AsyncEngine":
+    """Initialize database connection and optionally create tables.
+
+    Args:
+        database_url: Database connection URL
+        echo: Enable SQL query logging
+        create_tables: Create tables using SQLModel metadata (default True).
+                      Set to False when using Alembic for migrations.
+    """
     global _engine
 
-    if database_url.startswith("sqlite") and ":memory:" not in database_url:
+    is_sqlite = database_url.startswith("sqlite")
+    is_memory = ":memory:" in database_url or "mode=memory" in database_url
+
+    if is_sqlite and not is_memory:
         db_path = database_url.split("///")[-1]
         if db_path.startswith("./"):
             db_path = db_path[2:]
@@ -67,15 +79,14 @@ async def init_db(database_url: str, echo: bool = False) -> "AsyncEngine":
 
     _engine = _get_engine(database_url, echo)
 
-    if (
-        database_url.startswith("sqlite")
-        and ":memory:" not in database_url
-        and "mode=memory" not in database_url
-    ):
+    # Enable WAL mode for file-based SQLite only
+    if is_sqlite and not is_memory:
         await _enable_wal_mode(_engine)
 
-    async with _engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+    # Create tables if requested (skip when using Alembic)
+    if create_tables:
+        async with _engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
 
     logger.info("Database initialized: %s", database_url.split("@")[-1])
     return _engine

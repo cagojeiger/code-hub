@@ -1,4 +1,32 @@
 services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:17
+    container_name: codehub-postgres
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: codehub
+      POSTGRES_PASSWORD: codehub
+      POSTGRES_DB: codehub
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - codehub-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codehub"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # Docker Socket Proxy - secure access to Docker API
   docker-proxy:
     image: tecnativa/docker-socket-proxy
@@ -35,6 +63,8 @@ services:
       dockerfile: Dockerfile
     container_name: codehub-backend
     depends_on:
+      postgres:
+        condition: service_healthy
       docker-proxy:
         condition: service_healthy
 
@@ -50,7 +80,7 @@ services:
       - CODEHUB_ENV=production
       - CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/var/lib/codehub/homes
       - CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=${PWD}/data/codehub/homes
-      - CODEHUB_DATABASE__URL=sqlite+aiosqlite:////var/lib/codehub/codehub.db
+      - CODEHUB_DATABASE__URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
       - DOCKER_HOST=tcp://docker-proxy:2375
       # Production: Set this to your public domain
       # - CODEHUB_SERVER__PUBLIC_BASE_URL=https://your-domain.com
@@ -80,3 +110,6 @@ networks:
   codehub-net:
     name: codehub-net
     driver: bridge
+
+volumes:
+  postgres_data:

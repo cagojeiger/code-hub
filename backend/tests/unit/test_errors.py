@@ -214,8 +214,9 @@ class TestExceptionHandler:
 
     def test_generic_exception_handler(self, monkeypatch):
         """Generic handler returns INTERNAL_ERROR for unexpected exceptions."""
-        # Set required env var for config
+        # Set required env vars for config
         monkeypatch.setenv("CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR", "/tmp/test")
+        monkeypatch.setenv("CODEHUB_DATABASE__URL", "sqlite+aiosqlite:///:memory:")
 
         # Clear cached settings to use new env var
         from app.core.config import get_settings

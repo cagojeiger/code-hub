@@ -21,8 +21,8 @@ code-hub MVP 개발을 위한 기술 스택 결정이 필요합니다.
 ### 데이터베이스
 | 항목 | 선택 | 이유 |
 |------|------|------|
-| DB | SQLite | 단일 프로세스에 적합, 배포 단순 |
-| 모드 | WAL | 읽기 동시성 향상 |
+| DB | ~~SQLite~~ → PostgreSQL 17 | MVP 검증 완료 후 스케일업 ([ADR-004](004-postgresql-migration.md)) |
+| Migration | Alembic | 스키마 버전 관리, 롤백 지원 |
 
 ### 프록시
 | 항목 | 선택 | 이유 |
@@ -78,7 +78,6 @@ code-hub MVP 개발을 위한 기술 스택 결정이 필요합니다.
 
 ### 장점
 - 빠른 개발 속도 (Python 생산성)
-- 단순한 배포 (단일 프로세스 + SQLite)
 - 충분한 성능 여유
 
 ### 단점
@@ -89,9 +88,9 @@ code-hub MVP 개발을 위한 기술 스택 결정이 필요합니다.
 | 대안 | 미선택 이유 |
 |------|------------|
 | Go | MVP 개발 속도 우선 |
-| PostgreSQL | 단일 프로세스에서 불필요한 복잡도 |
+| ~~PostgreSQL~~ | ~~단일 프로세스에서 불필요한 복잡도~~ → 채택 ([ADR-004](004-postgresql-migration.md)) |
 | Nginx/Traefik | 동적 업스트림 설정 복잡, ForwardAuth 필요 |
-| 멀티 프로세스 | SQLite 동시성 문제, WebSocket 상태 공유 필요 |
+| 멀티 프로세스 | ~~SQLite 동시성 문제~~, WebSocket 상태 공유 필요 |
 | Python 3.14 (free-threading) | 라이브러리 호환성 미성숙 |
 
 ## 참고 자료
