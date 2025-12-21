@@ -28,6 +28,7 @@ class TestErrorCode:
         assert ErrorCode.FORBIDDEN == "FORBIDDEN"
         assert ErrorCode.WORKSPACE_NOT_FOUND == "WORKSPACE_NOT_FOUND"
         assert ErrorCode.INVALID_STATE == "INVALID_STATE"
+        assert ErrorCode.TOO_MANY_REQUESTS == "TOO_MANY_REQUESTS"
         assert ErrorCode.UPSTREAM_UNAVAILABLE == "UPSTREAM_UNAVAILABLE"
         assert ErrorCode.INTERNAL_ERROR == "INTERNAL_ERROR"
 
@@ -39,6 +40,7 @@ class TestErrorCode:
             "FORBIDDEN",
             "WORKSPACE_NOT_FOUND",
             "INVALID_STATE",
+            "TOO_MANY_REQUESTS",
             "UPSTREAM_UNAVAILABLE",
             "INTERNAL_ERROR",
         }

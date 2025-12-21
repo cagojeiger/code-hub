@@ -35,6 +35,7 @@ class ErrorCode(str, Enum):
     FORBIDDEN = "FORBIDDEN"
     WORKSPACE_NOT_FOUND = "WORKSPACE_NOT_FOUND"
     INVALID_STATE = "INVALID_STATE"
+    TOO_MANY_REQUESTS = "TOO_MANY_REQUESTS"
     UPSTREAM_UNAVAILABLE = "UPSTREAM_UNAVAILABLE"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
@@ -110,6 +111,16 @@ class InvalidStateError(CodeHubError):
 
     def __init__(self, message: str = "Invalid state for this operation") -> None:
         super().__init__(ErrorCode.INVALID_STATE, message, 409)
+
+
+class TooManyRequestsError(CodeHubError):
+    """429 Too Many Requests - Rate limit exceeded."""
+
+    def __init__(
+        self, retry_after: int, message: str = "Too many failed attempts"
+    ) -> None:
+        self.retry_after = retry_after
+        super().__init__(ErrorCode.TOO_MANY_REQUESTS, message, 429)
 
 
 class UpstreamUnavailableError(CodeHubError):
