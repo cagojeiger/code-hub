@@ -9,4 +9,4 @@ Authentication and authorization is enforced via session cookies.
 from .client import close_http_client
 from .router import router
 
-__all__ = ["router", "close_http_client"]
+__all__ = ["close_http_client", "router"]

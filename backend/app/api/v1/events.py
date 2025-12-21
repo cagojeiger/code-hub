@@ -20,7 +20,7 @@ router = APIRouter(tags=["events"])
 async def _event_generator(
     request: Request,
     user_id: str,
-) -> AsyncGenerator[str, None]:
+) -> AsyncGenerator[str]:
     """Generate SSE events for a connected client."""
     event_queues = get_event_queues()
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=100)
@@ -54,7 +54,7 @@ async def _event_generator(
                     data = {k: v for k, v in workspace_data.items() if k != "owner_user_id"}
                     yield f"event: {event['type']}\ndata: {json.dumps(data)}\n\n"
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Send heartbeat
                 current_time = asyncio.get_event_loop().time()
                 if current_time - last_heartbeat >= heartbeat_interval:
