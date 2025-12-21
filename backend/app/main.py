@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.api.v1 import router as api_v1_router
 from app.api.v1.dependencies import get_instance_controller, get_storage_provider
 from app.core.config import get_settings
-from app.core.errors import CodeHubError, InternalError
+from app.core.errors import CodeHubError, InternalError, TooManyRequestsError
 from app.core.logging import setup_logging
 from app.core.middleware import RequestIdMiddleware
 from app.core.security import hash_password
@@ -103,6 +103,18 @@ app.include_router(api_v1_router)
 
 # Include proxy router (routes: /w/{workspace_id}/*)
 app.include_router(proxy_router)
+
+
+@app.exception_handler(TooManyRequestsError)
+async def too_many_requests_handler(
+    _request: Request, exc: TooManyRequestsError
+) -> JSONResponse:
+    """Handle TooManyRequestsError with Retry-After header."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_response().model_dump(),
+        headers={"Retry-After": str(exc.retry_after)},
+    )
 
 
 @app.exception_handler(CodeHubError)

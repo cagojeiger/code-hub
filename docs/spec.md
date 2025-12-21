@@ -413,6 +413,7 @@ def startup_recovery():
 | 403 | `FORBIDDEN` | 권한 없음 |
 | 404 | `WORKSPACE_NOT_FOUND` | 워크스페이스 없음 |
 | 409 | `INVALID_STATE` | 현재 상태에서 불가능한 작업 |
+| 429 | `TOO_MANY_REQUESTS` | 로그인 시도 횟수 초과 (Retry-After 헤더 포함) |
 | 500 | `INTERNAL_ERROR` | 예상치 못한 내부 오류 |
 | 502 | `UPSTREAM_UNAVAILABLE` | 프록시 연결 실패 |
 
@@ -428,6 +429,9 @@ def startup_recovery():
 | username | 로그인 ID (unique) |
 | password_hash | bcrypt/argon2id 해시 |
 | created_at | 생성 시각 |
+| failed_login_attempts | 연속 로그인 실패 횟수 (default: 0) |
+| locked_until | 계정 잠금 해제 시각 (nullable) |
+| last_failed_at | 마지막 로그인 실패 시각 (nullable) |
 
 ### sessions
 

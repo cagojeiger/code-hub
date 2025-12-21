@@ -63,6 +63,11 @@ class User(SQLModel, table=True):
     password_hash: str
     created_at: datetime = Field(default_factory=utc_now)
 
+    # Login rate limiting fields
+    failed_login_attempts: int = Field(default=0)
+    locked_until: datetime | None = Field(default=None)
+    last_failed_at: datetime | None = Field(default=None)
+
     sessions: list["Session"] = Relationship(back_populates="user")
     workspaces: list["Workspace"] = Relationship(back_populates="owner")
 

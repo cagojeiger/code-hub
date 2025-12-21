@@ -6,6 +6,7 @@ Endpoints:
 - GET /api/v1/session - Get current session info
 """
 
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Depends, Response
@@ -14,8 +15,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.errors import UnauthorizedError
-from app.core.security import verify_password
+from app.core.errors import TooManyRequestsError, UnauthorizedError
+from app.core.security import calculate_lockout_duration, verify_password
 from app.db import User, get_async_session
 from app.services.session_service import SessionService
 
@@ -49,6 +50,7 @@ async def login(
 
     On success, sets a session cookie and returns user info.
     On failure, returns 401 Unauthorized.
+    On too many failures, returns 429 Too Many Requests.
     """
     result = await db.execute(
         select(User).where(User.username == body.username)  # type: ignore[arg-type]
@@ -58,8 +60,41 @@ async def login(
     if user is None:
         raise UnauthorizedError("Invalid username or password")
 
+    # Check if account is locked
+    now = datetime.now(UTC)
+    if user.locked_until:
+        # Convert naive datetime from SQLite to UTC-aware for comparison
+        locked_until = (
+            user.locked_until.replace(tzinfo=UTC)
+            if user.locked_until.tzinfo is None
+            else user.locked_until
+        )
+        if locked_until > now:
+            retry_after = int((locked_until - now).total_seconds())
+            raise TooManyRequestsError(
+                retry_after=retry_after,
+                message=f"Too many failed attempts. Try again in {retry_after} seconds.",
+            )
+
+    # Verify password
     if not verify_password(body.password, user.password_hash):
+        # Record failed attempt
+        user.failed_login_attempts += 1
+        user.last_failed_at = now
+
+        # Calculate and set lockout if threshold exceeded
+        lockout_seconds = calculate_lockout_duration(user.failed_login_attempts)
+        if lockout_seconds > 0:
+            user.locked_until = now + timedelta(seconds=lockout_seconds)
+
+        await db.commit()
         raise UnauthorizedError("Invalid username or password")
+
+    # Login successful - reset rate limiting fields
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    user.last_failed_at = None
+    await db.commit()
 
     session = await SessionService.create(db, user.id)
 
