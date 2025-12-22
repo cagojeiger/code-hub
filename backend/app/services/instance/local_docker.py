@@ -35,6 +35,7 @@ class LocalDockerInstanceController(InstanceController):
         docker_host: str | None = None,
         container_prefix: str | None = None,
         network_name: str | None = None,
+        expose_ports: bool = False,
     ) -> None:
         """Initialize with optional Docker host and naming configuration.
 
@@ -43,6 +44,8 @@ class LocalDockerInstanceController(InstanceController):
                         If None, uses DOCKER_HOST env var or default socket.
             container_prefix: Prefix for container names (default: 'codehub-ws-').
             network_name: Docker network name (default: 'codehub-net').
+            expose_ports: If True, bind container ports to random host ports.
+                         Used for E2E testing where the test client runs on host.
         """
         if docker_host:
             self._client = docker.DockerClient(base_url=docker_host)
@@ -51,6 +54,7 @@ class LocalDockerInstanceController(InstanceController):
 
         self._container_prefix = container_prefix or DEFAULT_CONTAINER_PREFIX
         self._network_name = network_name or DEFAULT_NETWORK_NAME
+        self._expose_ports = expose_ports
 
     @property
     def backend_name(self) -> Literal["local-docker"]:
@@ -113,17 +117,26 @@ class LocalDockerInstanceController(InstanceController):
                 home_mount,
             )
 
-            self._client.containers.run(
-                image_ref,
-                command=["--auth", "none"],  # Disable password authentication
-                name=container_name,
-                detach=True,
-                network=self._network_name,
-                # No host port binding - proxy connects via internal network
-                volumes={home_mount: {"bind": HOME_MOUNT_PATH, "mode": "rw"}},
-                user=f"{CODER_UID}:{CODER_GID}",
-                environment={"HOME": HOME_MOUNT_PATH},
-            )
+            # Build container kwargs
+            container_kwargs: dict = {
+                "command": ["--auth", "none"],  # Disable password authentication
+                "name": container_name,
+                "detach": True,
+                "network": self._network_name,
+                "volumes": {home_mount: {"bind": HOME_MOUNT_PATH, "mode": "rw"}},
+                "user": f"{CODER_UID}:{CODER_GID}",
+                "environment": {"HOME": HOME_MOUNT_PATH},
+            }
+
+            # Port binding for E2E tests (expose_ports=True)
+            # In production, proxy connects via internal Docker network
+            if self._expose_ports:
+                # Bind container port to random available host port
+                container_kwargs["ports"] = {
+                    f"{CODE_SERVER_PORT}/tcp": ("127.0.0.1", None)
+                }
+
+            self._client.containers.run(image_ref, **container_kwargs)
             logger.info("Container created and started: %s", container_name)
 
     async def start_workspace(
@@ -202,8 +215,18 @@ class LocalDockerInstanceController(InstanceController):
         if container.status != "running":
             raise ValueError(f"Container not running: {container_name}")
 
-        # Return container name as host (for internal network communication)
-        # The proxy will connect via codehub-net network
+        # When expose_ports is enabled (E2E tests), return localhost:host_port
+        # Otherwise return container name for internal network communication
+        if self._expose_ports:
+            # Get the host port binding
+            container.reload()  # Refresh to get port info
+            port_bindings = container.attrs.get("NetworkSettings", {}).get("Ports", {})
+            port_key = f"{CODE_SERVER_PORT}/tcp"
+            if port_bindings.get(port_key):
+                host_port = int(port_bindings[port_key][0]["HostPort"])
+                return UpstreamInfo(host="127.0.0.1", port=host_port)
+            raise ValueError(f"No port binding found for {container_name}")
+
         return UpstreamInfo(host=container_name, port=CODE_SERVER_PORT)
 
     async def resolve_upstream(self, workspace_id: str) -> UpstreamInfo:
