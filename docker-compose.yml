@@ -73,12 +73,12 @@ services:
       - codehub-net
     # No restart - runs once and exits
 
-  # Recovery service - reconciles transitional states once before backend starts
-  recovery:
+  # Startup sync - reconciles transitional states once before backend starts
+  startup-sync:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: codehub-recovery
+    container_name: codehub-startup-sync
     command: uv run python -m app.scripts.recovery
     depends_on:
       postgres:
@@ -111,7 +111,7 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      recovery:
+      startup-sync:
         condition: service_completed_successfully
 
     ports:

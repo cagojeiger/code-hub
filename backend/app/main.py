@@ -74,7 +74,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     async with session_factory() as session:
         await _create_initial_admin(session, settings.auth.initial_admin_password)
 
-    # Recovery is handled by separate service (see docker-compose.yml)
+    # Recovery is handled by startup-sync service (see docker-compose.yml)
     # This ensures single execution in multi-worker environments
 
     yield
