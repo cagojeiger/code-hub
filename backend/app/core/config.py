@@ -241,8 +241,8 @@ class DatabaseConfig(BaseSettings):
     )
 
     url: str = Field(
-        default="sqlite+aiosqlite:///./data/codehub.db",
-        description="Database URL (SQLite for MVP)",
+        default="postgresql+asyncpg://codehub:codehub@localhost:5432/codehub",
+        description="Database URL (PostgreSQL for production, SQLite for tests)",
     )
     echo: bool = Field(
         default=False,

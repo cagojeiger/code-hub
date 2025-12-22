@@ -28,6 +28,10 @@ RUN uv sync --frozen --no-install-project
 # Copy application code
 COPY app ./app
 
+# Copy alembic files for database migrations
+COPY alembic.ini ./
+COPY alembic ./alembic
+
 # Set ownership
 RUN chown -R codehub:codehub /app
 
@@ -38,5 +42,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 EXPOSE 8080
 
-# Production mode
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Production mode: run migrations then start server
+CMD ["sh", "-c", "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8080"]
