@@ -1,38 +1,20 @@
 """Unit tests for database module.
 
 Tests cover:
-- SQLite WAL mode initialization
+- Database initialization
 - Model creation and relationships
 """
 
 from datetime import UTC, datetime, timedelta
 
 import pytest
-import pytest_asyncio
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import sessionmaker
 
 from app.core.security import hash_password
-from app.db import Session, User, Workspace, WorkspaceStatus, init_db
-from app.db.session import close_db, get_engine
-
-
-@pytest_asyncio.fixture
-async def db_engine():
-    """Create an in-memory database for testing."""
-    engine = await init_db("sqlite+aiosqlite:///:memory:", echo=False)
-    yield engine
-    await close_db()
-
-
-@pytest_asyncio.fixture
-async def db_session(db_engine):
-    """Create a database session for testing."""
-    async_session = sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
-    async with async_session() as session:
-        yield session
+from app.db import Session, User, Workspace, WorkspaceStatus
+from app.db.session import get_engine
 
 
 class TestDatabaseInitialization:
@@ -45,7 +27,8 @@ class TestDatabaseInitialization:
             # Check users table exists
             result = await conn.execute(
                 text(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name = 'users'"
                 )
             )
             assert result.scalar() == "users"
@@ -53,8 +36,8 @@ class TestDatabaseInitialization:
             # Check sessions table exists
             result = await conn.execute(
                 text(
-                    "SELECT name FROM sqlite_master "
-                    "WHERE type='table' AND name='sessions'"
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name = 'sessions'"
                 )
             )
             assert result.scalar() == "sessions"
@@ -62,8 +45,8 @@ class TestDatabaseInitialization:
             # Check workspaces table exists
             result = await conn.execute(
                 text(
-                    "SELECT name FROM sqlite_master "
-                    "WHERE type='table' AND name='workspaces'"
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_name = 'workspaces'"
                 )
             )
             assert result.scalar() == "workspaces"
@@ -74,23 +57,6 @@ class TestDatabaseInitialization:
         engine = get_engine()
         assert engine is not None
         assert engine == db_engine
-
-
-class TestWALMode:
-    """Tests for SQLite WAL mode (file-based DB only)."""
-
-    @pytest.mark.asyncio
-    async def test_wal_mode_enabled_for_file_db(self, tmp_path):
-        """Test that WAL mode is enabled for file-based databases."""
-        db_path = tmp_path / "test.db"
-        engine = await init_db(f"sqlite+aiosqlite:///{db_path}", echo=False)
-
-        async with engine.connect() as conn:
-            result = await conn.execute(text("PRAGMA journal_mode"))
-            journal_mode = result.scalar()
-            assert journal_mode == "wal"
-
-        await close_db()
 
 
 class TestUserModel:
@@ -148,7 +114,6 @@ class TestSessionModel:
         assert session.id is not None
         assert session.user_id == user.id
         assert session.created_at is not None
-        # SQLite doesn't preserve timezone, so compare without tzinfo
         assert session.expires_at.replace(tzinfo=None) == expires_at.replace(
             tzinfo=None
         )

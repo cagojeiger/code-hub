@@ -30,7 +30,7 @@ MVP 검증이 완료되고 Kubernetes 환경에서 100+ 워크스페이스 운�
 |------|------|------|
 | Database | PostgreSQL 17 | 동시성, 스케일, 분산 환경 지원 |
 | Migration | Alembic | SQLAlchemy 표준, 버전 관리, 롤백 지원 |
-| 테스트 DB | SQLite in-memory 유지 | CI 속도, 외부 의존성 제거 |
+| 테스트 DB | PostgreSQL (testcontainers) | 프로덕션 동일 환경, 진짜 PostgreSQL 동작 검증 |
 
 ### 주요 변경
 

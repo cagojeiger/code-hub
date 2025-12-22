@@ -1,7 +1,7 @@
 """Database module for code-hub.
 
 This module provides database connection, models, and utilities.
-Uses SQLModel with async SQLite (WAL mode) for the MVP.
+Uses SQLModel with async PostgreSQL via asyncpg.
 
 Note: Password utilities (hash_password, verify_password) are in app.core.security
 """
