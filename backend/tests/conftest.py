@@ -7,6 +7,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
+from testcontainers.postgres import PostgresContainer
 
 from app.core.config import get_settings
 from app.core.security import hash_password
@@ -85,10 +86,27 @@ def setup_test_env(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
+@pytest.fixture(scope="session")
+def postgres_container():
+    """Start PostgreSQL container for all tests."""
+    with PostgresContainer("postgres:17") as postgres:
+        yield postgres
+
+
 @pytest_asyncio.fixture
-async def db_engine():
-    """Create an in-memory database for testing."""
-    engine = await init_db("sqlite+aiosqlite:///:memory:", echo=False)
+async def db_engine(postgres_container):
+    """Create database engine connected to test PostgreSQL."""
+    from sqlmodel import SQLModel
+
+    url = postgres_container.get_connection_url()
+    async_url = url.replace("postgresql+psycopg2://", "postgresql+asyncpg://")
+    engine = await init_db(async_url, echo=False, create_tables=False)
+
+    # Drop and recreate all tables for test isolation
+    async with engine.begin() as conn:
+        await conn.run_sync(SQLModel.metadata.drop_all)
+        await conn.run_sync(SQLModel.metadata.create_all)
+
     yield engine
     await close_db()
 

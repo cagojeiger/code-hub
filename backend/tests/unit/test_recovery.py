@@ -17,29 +17,11 @@ from unittest.mock import AsyncMock
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import sessionmaker
 
 from app.core.security import hash_password
-from app.db import User, Workspace, WorkspaceStatus, init_db
-from app.db.session import close_db
+from app.db import User, Workspace, WorkspaceStatus
 from app.services.instance.interface import InstanceStatus
 from app.services.recovery import startup_recovery
-
-
-@pytest_asyncio.fixture
-async def db_engine():
-    """Create an in-memory database for testing."""
-    engine = await init_db("sqlite+aiosqlite:///:memory:", echo=False)
-    yield engine
-    await close_db()
-
-
-@pytest_asyncio.fixture
-async def db_session(db_engine):
-    """Create a database session for testing."""
-    async_session = sessionmaker(db_engine, class_=AsyncSession, expire_on_commit=False)
-    async with async_session() as session:
-        yield session
 
 
 @pytest_asyncio.fixture

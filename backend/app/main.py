@@ -66,9 +66,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         },
     )
 
-    # Skip create_tables for PostgreSQL (Alembic manages schema)
-    create_tables = settings.database.url.startswith("sqlite")
-    await init_db(settings.database.url, settings.database.echo, create_tables)
+    # Alembic manages schema; skip table creation at startup
+    await init_db(settings.database.url, settings.database.echo, create_tables=False)
 
     engine = get_engine()
     session_factory = async_sessionmaker(

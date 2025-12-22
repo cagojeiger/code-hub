@@ -212,11 +212,14 @@ class TestExceptionHandler:
         data = response.json()
         assert data["error"]["code"] == "INVALID_STATE"
 
-    def test_generic_exception_handler(self, monkeypatch):
+    def test_generic_exception_handler(self, postgres_container, monkeypatch):
         """Generic handler returns INTERNAL_ERROR for unexpected exceptions."""
-        # Set required env vars for config
+        # Set required env vars for config using real postgres container
+        url = postgres_container.get_connection_url()
+        async_url = url.replace("postgresql+psycopg2://", "postgresql+asyncpg://")
+
         monkeypatch.setenv("CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR", "/tmp/test")
-        monkeypatch.setenv("CODEHUB_DATABASE__URL", "sqlite+aiosqlite:///:memory:")
+        monkeypatch.setenv("CODEHUB_DATABASE__URL", async_url)
 
         # Clear cached settings to use new env var
         from app.core.config import get_settings
