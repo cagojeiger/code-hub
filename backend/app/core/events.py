@@ -12,6 +12,7 @@ from typing import Any
 
 from app.core.redis import get_redis
 from app.db import Workspace
+from app.schemas.workspace import WorkspaceDeletedEvent, WorkspaceResponse
 
 logger = logging.getLogger(__name__)
 
@@ -44,28 +45,24 @@ async def publish_workspace_event(
 
 async def notify_workspace_updated(workspace: Workspace, public_base_url: str) -> None:
     """Notify clients about workspace update."""
-    data = {
-        "id": workspace.id,
-        "name": workspace.name,
-        "description": workspace.description,
-        "memo": workspace.memo,
-        "status": workspace.status.value,
-        "url": f"{public_base_url}/w/{workspace.id}/",
-        "created_at": (
-            workspace.created_at.isoformat() if workspace.created_at else None
-        ),
-        "updated_at": (
-            workspace.updated_at.isoformat() if workspace.updated_at else None
-        ),
-        "owner_user_id": workspace.owner_user_id,  # For channel routing
-    }
+    response = WorkspaceResponse(
+        id=workspace.id,
+        name=workspace.name,
+        description=workspace.description,
+        memo=workspace.memo,
+        status=workspace.status,
+        url=f"{public_base_url}/w/{workspace.id}/",
+        created_at=workspace.created_at,
+        updated_at=workspace.updated_at,
+    )
+    data = response.model_dump(mode="json")
+    data["owner_user_id"] = workspace.owner_user_id  # For channel routing
     await publish_workspace_event("workspace_updated", data)
 
 
 async def notify_workspace_deleted(workspace_id: str, owner_user_id: str) -> None:
     """Notify clients about workspace deletion."""
-    data = {
-        "id": workspace_id,
-        "owner_user_id": owner_user_id,  # For channel routing
-    }
+    event = WorkspaceDeletedEvent(id=workspace_id)
+    data = event.model_dump()
+    data["owner_user_id"] = owner_user_id  # For channel routing
     await publish_workspace_event("workspace_deleted", data)

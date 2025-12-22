@@ -29,7 +29,7 @@ services:
 
   # Redis - Pub/Sub for SSE event broadcasting
   redis:
-    image: redis:7-alpine
+    image: redis:7
     container_name: codehub-redis
     ports:
       - "127.0.0.1:6379:6379"

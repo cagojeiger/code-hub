@@ -451,6 +451,25 @@ data: {}
 
 > heartbeat는 30초 간격으로 전송 (연결 유지)
 
+### workspace_updated 페이로드
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| id | string | 워크스페이스 ID (ULID) |
+| name | string | 워크스페이스 이름 |
+| description | string \| null | 설명 |
+| memo | string \| null | 메모 |
+| status | string | 상태 (CREATED, PROVISIONING, RUNNING, STOPPING, STOPPED, DELETING, DELETED, ERROR) |
+| url | string | 워크스페이스 접속 URL |
+| created_at | string | 생성 시각 (ISO 8601) |
+| updated_at | string | 수정 시각 (ISO 8601) |
+
+### workspace_deleted 페이로드
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| id | string | 삭제된 워크스페이스 ID |
+
 ### Redis 채널 네이밍 규칙
 
 **패턴**: `{domain}:{scope}:{scope_id}`

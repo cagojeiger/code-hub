@@ -11,15 +11,21 @@ Endpoints:
 """
 
 import math
-from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Query, Response, status
-from pydantic import BaseModel, Field
 
 from app.api.v1.dependencies import CurrentUser, DbSession, WsService
 from app.core.config import get_settings
 from app.core.events import notify_workspace_updated
 from app.db import Workspace, WorkspaceStatus
+from app.schemas.pagination import PaginationMeta
+from app.schemas.workspace import (
+    PaginatedWorkspaceResponse,
+    WorkspaceActionResponse,
+    WorkspaceCreate,
+    WorkspaceResponse,
+    WorkspaceUpdate,
+)
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -27,62 +33,6 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 DEFAULT_PAGE = 1
 DEFAULT_PER_PAGE = 20
 MAX_PER_PAGE = 100
-
-
-class WorkspaceCreate(BaseModel):
-    """Request schema for creating a workspace."""
-
-    name: str = Field(..., min_length=1, max_length=255)
-    description: str | None = Field(default=None, max_length=1000)
-    memo: str | None = Field(default=None)
-
-
-class WorkspaceUpdate(BaseModel):
-    """Request schema for updating a workspace."""
-
-    name: str | None = Field(default=None, min_length=1, max_length=255)
-    description: str | None = Field(default=None, max_length=1000)
-    memo: str | None = Field(default=None)
-
-
-class WorkspaceResponse(BaseModel):
-    """Response schema for workspace."""
-
-    id: str
-    name: str
-    description: str | None
-    memo: str | None
-    status: WorkspaceStatus
-    url: str
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-class WorkspaceActionResponse(BaseModel):
-    """Response schema for workspace actions (start/stop)."""
-
-    id: str
-    status: WorkspaceStatus
-
-
-class PaginationMeta(BaseModel):
-    """Pagination metadata."""
-
-    page: int
-    per_page: int
-    total: int
-    total_pages: int
-    has_next: bool
-    has_prev: bool
-
-
-class PaginatedWorkspaceResponse(BaseModel):
-    """Paginated response for workspace list."""
-
-    items: list[WorkspaceResponse]
-    pagination: PaginationMeta
 
 
 def _build_workspace_url(workspace_id: str) -> str:
