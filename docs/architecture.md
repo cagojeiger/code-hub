@@ -27,6 +27,7 @@ graph TB
     subgraph Infrastructure
         Docker[Docker Engine]
         HomeStore[Home Store<br/>host directory]
+        Redis[(Redis)]
     end
 
     User --> API
@@ -39,6 +40,7 @@ graph TB
     API --> IC
     IC --> Docker
     Docker --> HomeStore
+    API --> Redis
 ```
 
 ---
@@ -179,6 +181,9 @@ sequenceDiagram
     U->>CP: DELETE /api/v1/workspaces/{id}
     CP->>CP: 상태 확인 (CREATED/STOPPED/ERROR)
     CP->>CP: DB 상태 → DELETING
+    CP-->>U: 204 No Content
+
+    Note over CP: 이후 백그라운드에서 진행
 
     CP->>IC: DeleteWorkspace(workspace_id)
 
@@ -198,9 +203,9 @@ sequenceDiagram
     end
 
     CP->>CP: DB soft delete (deleted_at, status=DELETED)
-    CP-->>U: 204 No Content
 ```
 
+> API는 DELETING 상태 전환 후 즉시 204 반환. 클라이언트는 폴링으로 최종 상태 확인.
 > 컨테이너 삭제 후 스토리지 해제 (생성의 역순)
 > MVP에서는 Home Store 데이터 삭제 안 함 (Purge 호출 X)
 
@@ -344,8 +349,8 @@ sequenceDiagram
     participant IC as Instance Controller
 
     S->>SR: 서버 시작
-    SR->>DB: 전이 상태 조회
-    DB-->>SR: [PROVISIONING, STOPPING, DELETING]
+    SR->>DB: 복구 대상 상태 조회
+    DB-->>SR: [PROVISIONING, RUNNING, STOPPING, DELETING]
 
     loop 각 stuck 워크스페이스
         SR->>IC: GetStatus(workspace_id)
@@ -364,6 +369,8 @@ sequenceDiagram
 |---------|--------------|----------|
 | PROVISIONING | running + healthy | RUNNING |
 | PROVISIONING | 그 외 | ERROR |
+| RUNNING | running + healthy | (변경 없음) |
+| RUNNING | 그 외 | ERROR |
 | STOPPING | not running | STOPPED |
 | STOPPING | running | RUNNING |
 | DELETING | not exists | DELETED |
@@ -375,7 +382,46 @@ sequenceDiagram
 
 ---
 
-## 7. (추후) Reconciler 패턴 도입
+## 7. Real-time Events
+
+워크스페이스 상태 변경을 SSE(Server-Sent Events)로 클라이언트에게 실시간 전달합니다.
+
+### 멀티 워커 환경에서의 이벤트 전파
+
+```mermaid
+graph TB
+    subgraph Backend[Backend - N workers]
+        W1[Worker 1]
+        W2[Worker 2]
+        WN[Worker N]
+    end
+
+    subgraph Redis[Redis Pub/Sub]
+        CH[events:user:*]
+    end
+
+    C1[Client A] -->|SSE| W1
+    C2[Client B] -->|API 호출| W2
+
+    W2 -->|publish| CH
+    CH -->|broadcast| W1
+    CH -->|broadcast| WN
+
+    W1 -->|SSE event| C1
+```
+
+**동작 흐름:**
+1. Client A가 Worker 1에 SSE 연결 → Redis `subscribe("events:user:{user_id}")`
+2. Client B가 다른 Worker에서 워크스페이스 시작 요청
+3. 해당 Worker가 Redis에 이벤트 발행 → `publish("events:user:{user_id}", event)`
+4. Redis가 모든 subscriber에게 브로드캐스트
+5. Worker 1이 메시지 수신 → Client A에게 SSE 전송
+
+> 각 Worker는 독립적인 프로세스이므로 in-memory 큐로는 이벤트 공유 불가. Redis Pub/Sub으로 해결.
+
+---
+
+## 8. (추후) Reconciler 패턴 도입
 
 현재는 명령적(Imperative) 방식으로 동작하지만, GetStatus 메서드를 통해 Reconciler 패턴으로 확장 가능하도록 설계되어 있습니다.
 

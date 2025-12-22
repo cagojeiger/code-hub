@@ -16,6 +16,7 @@ from app.core.config import get_settings
 from app.core.errors import CodeHubError, InternalError, TooManyRequestsError
 from app.core.logging import setup_logging
 from app.core.middleware import RequestIdMiddleware
+from app.core.redis import close_redis, init_redis
 from app.core.security import hash_password
 from app.db import User, close_db, get_engine, init_db
 from app.proxy import close_http_client
@@ -67,6 +68,9 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     # Alembic manages schema; skip table creation at startup
     await init_db(settings.database.url, settings.database.echo, create_tables=False)
 
+    # Initialize Redis for Pub/Sub
+    await init_redis()
+
     engine = get_engine()
     session_factory = async_sessionmaker(
         engine, class_=AsyncSession, expire_on_commit=False
@@ -80,6 +84,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     yield
 
     await close_http_client()
+    await close_redis()
     await close_db()
 
 

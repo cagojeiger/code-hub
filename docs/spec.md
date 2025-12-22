@@ -283,7 +283,7 @@ home_store_key에 해당하는 모든 데이터를 완전 삭제합니다.
 - Phase 1: 모든 전이 상태 복구 (PROVISIONING, STOPPING, DELETING)
 - Phase 2: RUNNING 상태 검증 (컨테이너 존재 여부 확인)
 
-> MVP는 단일 프로세스이므로 서버 재시작 = 모든 백그라운드 작업 중단. 시간 제한 없이 모든 전이 상태를 복구합니다.
+> 서버 재시작 시 모든 백그라운드 작업이 중단되므로, 시간 제한 없이 모든 전이 상태를 복구합니다.
 
 #### 복구 매트릭스
 
@@ -360,6 +360,12 @@ def startup_recovery():
 | POST | `/api/v1/workspaces/{id}:stop` | 정지 |
 | DELETE | `/api/v1/workspaces/{id}` | 삭제 (CREATED/STOPPED/ERROR 상태에서만 가능) |
 
+### Events
+
+| Method | Endpoint | 설명 |
+|--------|----------|------|
+| GET | `/api/v1/events` | SSE 스트림 연결 |
+
 ### 성공 응답 형식
 
 **Workspace 조회/생성/수정:**
@@ -419,7 +425,67 @@ def startup_recovery():
 
 ---
 
-## 7. DB 스키마
+## 7. Real-time Events (SSE)
+
+워크스페이스 상태 변경을 실시간으로 클라이언트에게 전달합니다.
+
+### 이벤트 타입
+
+| 이벤트 | 발생 시점 |
+|--------|----------|
+| `workspace_updated` | 워크스페이스 생성, 수정, 상태 변경 |
+| `workspace_deleted` | 워크스페이스 삭제 |
+
+### SSE 응답 형식
+
+```
+event: workspace_updated
+data: {"id": "01HXYZ...", "name": "my-workspace", "status": "RUNNING", ...}
+
+event: workspace_deleted
+data: {"id": "01HXYZ..."}
+
+event: heartbeat
+data: {}
+```
+
+> heartbeat는 30초 간격으로 전송 (연결 유지)
+
+### workspace_updated 페이로드
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| id | string | 워크스페이스 ID (ULID) |
+| name | string | 워크스페이스 이름 |
+| description | string \| null | 설명 |
+| memo | string \| null | 메모 |
+| status | string | 상태 (CREATED, PROVISIONING, RUNNING, STOPPING, STOPPED, DELETING, DELETED, ERROR) |
+| created_at | string | 생성 시각 (ISO 8601) |
+| updated_at | string | 수정 시각 (ISO 8601) |
+
+> 클라이언트는 `id`로 URL 생성 가능: `{public_base_url}/w/{id}/`
+
+### workspace_deleted 페이로드
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| id | string | 삭제된 워크스페이스 ID |
+
+### Redis 채널 네이밍 규칙
+
+**패턴**: `{domain}:{scope}:{scope_id}`
+
+| 채널 | 용도 | 현재 |
+|------|------|------|
+| `events:user:{user_id}` | 사용자별 이벤트 | ✅ 사용 |
+| `events:workspace:{ws_id}` | 워크스페이스별 이벤트 | 추후 |
+| `events:system:global` | 시스템 공지 | 추후 |
+
+> 클라이언트는 자신의 채널만 구독. 다른 사용자의 이벤트는 수신 불가.
+
+---
+
+## 8. DB 스키마
 
 ### users
 
@@ -466,7 +532,7 @@ def startup_recovery():
 
 ---
 
-## 8. 설정 (Config)
+## 9. 설정 (Config)
 
 ```yaml
 server:
@@ -491,6 +557,9 @@ home_store:
   backend: local-dir
   control_plane_base_dir: "/var/lib/codehub/homes"   # Control Plane 컨테이너 내부 경로
   workspace_base_dir: "/host/var/lib/codehub/homes"  # 호스트 경로 (Docker bind mount용)
+
+redis:
+  url: "redis://localhost:6379"                      # Redis 연결 URL
 ```
 
 > CreateWorkspace 시 `workspace.default_image`, `home_store.backend` 사용.
@@ -500,7 +569,7 @@ home_store:
 
 ---
 
-## 9. MVP 완료 기준
+## 10. MVP 완료 기준
 
 - [ ] 내 계정으로 생성 → `/w/{workspace_id}/` 접속 성공
 - [ ] 다른 계정으로 `/w/{workspace_id}/` 접근 → 403

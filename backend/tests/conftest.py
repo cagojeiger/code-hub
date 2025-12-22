@@ -8,8 +8,10 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 from testcontainers.postgres import PostgresContainer
+from testcontainers.redis import RedisContainer
 
 from app.core.config import get_settings
+from app.core.redis import close_redis, init_redis
 from app.core.security import hash_password
 from app.db import User, init_db
 from app.db.session import close_db, get_async_session
@@ -45,7 +47,7 @@ def cleanup_docker_containers():
                 try:
                     container.remove(force=True)
                 except Exception as e:
-                    logger.warning("Failed to remove container %s: %s", container.name, e)
+                    logger.warning("Failed to remove %s: %s", container.name, e)
 
         # Remove test network if exists
         try:
@@ -93,6 +95,13 @@ def postgres_container():
         yield postgres
 
 
+@pytest.fixture(scope="session")
+def redis_container():
+    """Start Redis container for all tests."""
+    with RedisContainer("redis:7") as redis:
+        yield redis
+
+
 @pytest_asyncio.fixture
 async def db_engine(postgres_container):
     """Create database engine connected to test PostgreSQL."""
@@ -109,6 +118,25 @@ async def db_engine(postgres_container):
 
     yield engine
     await close_db()
+
+
+def _get_redis_url(redis_container) -> str:
+    """Build Redis URL from container."""
+    host = redis_container.get_container_host_ip()
+    port = redis_container.get_exposed_port(6379)
+    return f"redis://{host}:{port}"
+
+
+@pytest_asyncio.fixture
+async def redis_client(redis_container, monkeypatch):
+    """Initialize Redis connection for tests."""
+    redis_url = _get_redis_url(redis_container)
+    monkeypatch.setenv("CODEHUB_REDIS__URL", redis_url)
+    get_settings.cache_clear()
+
+    await init_redis()
+    yield
+    await close_redis()
 
 
 @pytest_asyncio.fixture
@@ -135,8 +163,8 @@ async def test_user(db_session: AsyncSession) -> User:
 
 
 @pytest_asyncio.fixture
-async def async_client(db_engine, test_user) -> AsyncClient:
-    """Create an async test client with database initialized and authenticated."""
+async def async_client(db_engine, redis_client, test_user) -> AsyncClient:
+    """Create an authenticated async test client with DB and Redis initialized."""
 
     async def override_get_async_session():
         async_session = sessionmaker(
@@ -167,10 +195,11 @@ async def async_client(db_engine, test_user) -> AsyncClient:
 
 
 @pytest_asyncio.fixture
-async def unauthenticated_client(db_engine, test_user) -> AsyncClient:
+async def unauthenticated_client(db_engine, redis_client, test_user) -> AsyncClient:
     """Create an async test client without authentication.
 
     Note: test_user is required to ensure user exists in DB for auth tests.
+    Note: redis_client is required to ensure Redis is initialized.
     """
 
     async def override_get_async_session():

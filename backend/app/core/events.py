@@ -1,57 +1,65 @@
-"""Event publishing for real-time workspace updates.
+"""Event publishing for real-time workspace updates via Redis Pub/Sub.
 
-This module is separate from api/v1/events.py to avoid circular imports.
-The SSE endpoint imports from here, and services can also import from here.
+Channel naming convention: {domain}:{scope}:{scope_id}
+- events:user:{user_id} - User-scoped events (workspace updates for owner)
+- events:workspace:{workspace_id} - Workspace-scoped events (future)
+- events:system:global - System-wide broadcasts (future)
 """
 
-import asyncio
+import json
 import logging
 from typing import Any
 
+from app.core.redis import get_redis
 from app.db import Workspace
+from app.schemas.workspace import WorkspaceDeletedEvent, WorkspaceEventPayload
 
 logger = logging.getLogger(__name__)
 
-# Simple in-memory event queue for MVP
-# In production, use Redis pub/sub or similar
-_event_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
+
+def get_user_channel(user_id: str) -> str:
+    """Get Redis channel name for user events."""
+    return f"events:user:{user_id}"
 
 
-def get_event_queues() -> dict[str, asyncio.Queue[dict[str, Any]]]:
-    """Get the global event queues dictionary."""
-    return _event_queues
+async def publish_workspace_event(
+    event_type: str,
+    workspace_data: dict[str, Any],
+) -> None:
+    """Publish a workspace event to the owner's channel."""
+    owner_user_id = workspace_data.get("owner_user_id")
+    if not owner_user_id:
+        logger.warning("Cannot publish event without owner_user_id")
+        return
 
-
-def publish_workspace_event(event_type: str, workspace_data: dict[str, Any]) -> None:
-    """Publish a workspace event to all connected clients."""
+    channel = get_user_channel(owner_user_id)
     event = {"type": event_type, "data": workspace_data}
-    for queue in _event_queues.values():
-        try:
-            queue.put_nowait(event)
-        except asyncio.QueueFull:
-            logger.warning("Event queue full, dropping event")
+
+    try:
+        redis_client = get_redis()
+        await redis_client.publish(channel, json.dumps(event))
+        logger.debug("Published %s event to channel %s", event_type, channel)
+    except Exception:
+        logger.exception("Failed to publish event to Redis")
 
 
-def notify_workspace_updated(workspace: Workspace, public_base_url: str) -> None:
+async def notify_workspace_updated(workspace: Workspace) -> None:
     """Notify clients about workspace update."""
-    data = {
-        "id": workspace.id,
-        "name": workspace.name,
-        "description": workspace.description,
-        "memo": workspace.memo,
-        "status": workspace.status.value,
-        "url": f"{public_base_url}/w/{workspace.id}/",
-        "created_at": workspace.created_at.isoformat() if workspace.created_at else None,
-        "updated_at": workspace.updated_at.isoformat() if workspace.updated_at else None,
-        "owner_user_id": workspace.owner_user_id,  # For filtering, not sent to client
-    }
-    publish_workspace_event("workspace_updated", data)
+    payload = WorkspaceEventPayload(
+        id=workspace.id,
+        name=workspace.name,
+        description=workspace.description,
+        memo=workspace.memo,
+        status=workspace.status,
+        path=f"/w/{workspace.id}/",
+        owner_user_id=workspace.owner_user_id,
+        created_at=workspace.created_at,
+        updated_at=workspace.updated_at,
+    )
+    await publish_workspace_event("workspace_updated", payload.model_dump(mode="json"))
 
 
-def notify_workspace_deleted(workspace_id: str, owner_user_id: str) -> None:
+async def notify_workspace_deleted(workspace_id: str, owner_user_id: str) -> None:
     """Notify clients about workspace deletion."""
-    data = {
-        "id": workspace_id,
-        "owner_user_id": owner_user_id,  # For filtering, not sent to client
-    }
-    publish_workspace_event("workspace_deleted", data)
+    payload = WorkspaceDeletedEvent(id=workspace_id, owner_user_id=owner_user_id)
+    await publish_workspace_event("workspace_deleted", payload.model_dump())

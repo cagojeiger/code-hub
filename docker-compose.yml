@@ -27,6 +27,28 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Redis - Pub/Sub for SSE event broadcasting
+  redis:
+    image: redis:7
+    container_name: codehub-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - codehub-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.25
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # Docker Socket Proxy - secure access to Docker API
   docker-proxy:
     image: tecnativa/docker-socket-proxy
@@ -83,12 +105,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       docker-proxy:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
     environment:
       - CODEHUB_DATABASE__URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
+      - CODEHUB_REDIS__URL=redis://redis:6379
       - DOCKER_HOST=tcp://docker-proxy:2375
       - CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/var/lib/codehub/homes
       - CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=${PWD}/data/codehub/homes
@@ -106,6 +131,8 @@ services:
     command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 4
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       docker-proxy:
         condition: service_healthy
@@ -127,6 +154,7 @@ services:
       - CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/var/lib/codehub/homes
       - CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=${PWD}/data/codehub/homes
       - CODEHUB_DATABASE__URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
+      - CODEHUB_REDIS__URL=redis://redis:6379
       - DOCKER_HOST=tcp://docker-proxy:2375
       #
       # === Configurable Options ===
@@ -149,6 +177,9 @@ services:
       #
       # Database settings
       # - CODEHUB_DATABASE__ECHO=false
+      #
+      # Redis settings
+      # - CODEHUB_REDIS__URL=redis://localhost:6379
 
     user: "1000:1000"
 

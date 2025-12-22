@@ -79,8 +79,8 @@ class TestCreateWorkspace:
         assert data["memo"] is None
         assert data["status"] == "CREATED"
         assert "id" in data
-        assert "url" in data
-        assert data["url"].endswith(f"/w/{data['id']}/")
+        assert "path" in data
+        assert data["path"] == f"/w/{data['id']}/"
         assert "created_at" in data
         assert "updated_at" in data
 
@@ -591,15 +591,15 @@ class TestWorkspaceIdempotency:
         assert len(workspace_id) == 26
 
     @pytest.mark.asyncio
-    async def test_workspace_url_format(self, async_client: AsyncClient):
-        """Test that workspace URL follows spec format."""
+    async def test_workspace_path_format(self, async_client: AsyncClient):
+        """Test that workspace path follows spec format."""
         response = await async_client.post(
             "/api/v1/workspaces",
-            json={"name": "url-test"},
+            json={"name": "path-test"},
         )
         data = response.json()
-        # URL should be {public_base_url}/w/{id}/
-        assert data["url"] == f"http://localhost:8080/w/{data['id']}/"
+        # Path should be /w/{id}/
+        assert data["path"] == f"/w/{data['id']}/"
 
     @pytest.mark.asyncio
     async def test_create_multiple_workspaces_unique_ids(

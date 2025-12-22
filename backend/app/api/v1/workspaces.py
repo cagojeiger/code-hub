@@ -11,15 +11,20 @@ Endpoints:
 """
 
 import math
-from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Query, Response, status
-from pydantic import BaseModel, Field
 
 from app.api.v1.dependencies import CurrentUser, DbSession, WsService
-from app.core.config import get_settings
 from app.core.events import notify_workspace_updated
 from app.db import Workspace, WorkspaceStatus
+from app.schemas.pagination import PaginationMeta
+from app.schemas.workspace import (
+    PaginatedWorkspaceResponse,
+    WorkspaceActionResponse,
+    WorkspaceCreate,
+    WorkspaceResponse,
+    WorkspaceUpdate,
+)
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -29,66 +34,9 @@ DEFAULT_PER_PAGE = 20
 MAX_PER_PAGE = 100
 
 
-class WorkspaceCreate(BaseModel):
-    """Request schema for creating a workspace."""
-
-    name: str = Field(..., min_length=1, max_length=255)
-    description: str | None = Field(default=None, max_length=1000)
-    memo: str | None = Field(default=None)
-
-
-class WorkspaceUpdate(BaseModel):
-    """Request schema for updating a workspace."""
-
-    name: str | None = Field(default=None, min_length=1, max_length=255)
-    description: str | None = Field(default=None, max_length=1000)
-    memo: str | None = Field(default=None)
-
-
-class WorkspaceResponse(BaseModel):
-    """Response schema for workspace."""
-
-    id: str
-    name: str
-    description: str | None
-    memo: str | None
-    status: WorkspaceStatus
-    url: str
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-class WorkspaceActionResponse(BaseModel):
-    """Response schema for workspace actions (start/stop)."""
-
-    id: str
-    status: WorkspaceStatus
-
-
-class PaginationMeta(BaseModel):
-    """Pagination metadata."""
-
-    page: int
-    per_page: int
-    total: int
-    total_pages: int
-    has_next: bool
-    has_prev: bool
-
-
-class PaginatedWorkspaceResponse(BaseModel):
-    """Paginated response for workspace list."""
-
-    items: list[WorkspaceResponse]
-    pagination: PaginationMeta
-
-
-def _build_workspace_url(workspace_id: str) -> str:
-    """Build workspace URL from workspace ID."""
-    settings = get_settings()
-    return f"{settings.server.public_base_url}/w/{workspace_id}/"
+def _build_workspace_path(workspace_id: str) -> str:
+    """Build workspace path from workspace ID."""
+    return f"/w/{workspace_id}/"
 
 
 def _workspace_to_response(workspace: Workspace) -> WorkspaceResponse:
@@ -99,7 +47,7 @@ def _workspace_to_response(workspace: Workspace) -> WorkspaceResponse:
         description=workspace.description,
         memo=workspace.memo,
         status=workspace.status,
-        url=_build_workspace_url(workspace.id),
+        path=_build_workspace_path(workspace.id),
         created_at=workspace.created_at,
         updated_at=workspace.updated_at,
     )
@@ -147,7 +95,6 @@ async def create_workspace(
     ws_service: WsService,
 ) -> WorkspaceResponse:
     """Create a new workspace."""
-    settings = get_settings()
     workspace = await ws_service.create_workspace(
         session=session,
         user_id=current_user.id,
@@ -155,7 +102,7 @@ async def create_workspace(
         description=body.description,
         memo=body.memo,
     )
-    notify_workspace_updated(workspace, settings.server.public_base_url)
+    await notify_workspace_updated(workspace)
     return _workspace_to_response(workspace)
 
 
@@ -180,7 +127,6 @@ async def update_workspace(
     ws_service: WsService,
 ) -> WorkspaceResponse:
     """Update workspace metadata."""
-    settings = get_settings()
     update_data = body.model_dump(exclude_unset=True)
     workspace = await ws_service.update_workspace(
         session=session,
@@ -188,7 +134,7 @@ async def update_workspace(
         workspace_id=workspace_id,
         **update_data,
     )
-    notify_workspace_updated(workspace, settings.server.public_base_url)
+    await notify_workspace_updated(workspace)
     return _workspace_to_response(workspace)
 
 
@@ -208,11 +154,10 @@ async def delete_workspace(
     Returns immediately with 204 status.
     Actual deletion (container + storage cleanup) happens asynchronously.
     """
-    settings = get_settings()
     workspace = await ws_service.initiate_delete(session, current_user.id, workspace_id)
 
     # Notify DELETING state immediately
-    notify_workspace_updated(workspace, settings.server.public_base_url)
+    await notify_workspace_updated(workspace)
 
     background_tasks.add_task(
         ws_service.delete_workspace,
@@ -240,11 +185,10 @@ async def start_workspace(
     Returns immediately with PROVISIONING status.
     Final status (RUNNING/ERROR) is determined asynchronously.
     """
-    settings = get_settings()
     workspace = await ws_service.initiate_start(session, current_user.id, workspace_id)
 
     # Notify PROVISIONING state immediately
-    notify_workspace_updated(workspace, settings.server.public_base_url)
+    await notify_workspace_updated(workspace)
 
     background_tasks.add_task(
         ws_service.start_workspace,
@@ -277,11 +221,10 @@ async def stop_workspace(
     Returns immediately with STOPPING status.
     Final status (STOPPED/ERROR) is determined asynchronously.
     """
-    settings = get_settings()
     workspace = await ws_service.initiate_stop(session, current_user.id, workspace_id)
 
     # Notify STOPPING state immediately
-    notify_workspace_updated(workspace, settings.server.public_base_url)
+    await notify_workspace_updated(workspace)
 
     background_tasks.add_task(
         ws_service.stop_workspace,

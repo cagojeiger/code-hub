@@ -332,7 +332,7 @@ class WorkspaceService:
         home_store_key: str,
         existing_ctx: str | None,
         image_ref: str,
-        owner_user_id: str,
+        owner_user_id: str,  # noqa: ARG002
     ) -> None:
         """Start a workspace (background task).
 
@@ -410,9 +410,7 @@ class WorkspaceService:
                             session, workspace_id
                         )
                         if workspace:
-                            notify_workspace_updated(
-                                workspace, settings.server.public_base_url
-                            )
+                            await notify_workspace_updated(workspace)
                         return
 
                 # Step 5b: Timeout - update to ERROR
@@ -433,7 +431,7 @@ class WorkspaceService:
                 # Notify SSE clients
                 workspace = await self._get_workspace_by_id(session, workspace_id)
                 if workspace:
-                    notify_workspace_updated(workspace, settings.server.public_base_url)
+                    await notify_workspace_updated(workspace)
 
             except Exception as e:
                 # Any error - update to ERROR
@@ -450,13 +448,13 @@ class WorkspaceService:
                 # Notify SSE clients
                 workspace = await self._get_workspace_by_id(session, workspace_id)
                 if workspace:
-                    notify_workspace_updated(workspace, settings.server.public_base_url)
+                    await notify_workspace_updated(workspace)
 
     async def stop_workspace(
         self,
         workspace_id: str,
         home_ctx: str | None,
-        owner_user_id: str,
+        owner_user_id: str,  # noqa: ARG002
     ) -> None:
         """Stop a workspace (background task).
 
@@ -467,8 +465,6 @@ class WorkspaceService:
         4. Update status to STOPPED or ERROR
         5. Notify SSE clients
         """
-        settings = get_settings()
-
         async with _background_session() as session:
             try:
                 # Step 1: Stop container
@@ -494,7 +490,7 @@ class WorkspaceService:
                 # Notify SSE clients
                 workspace = await self._get_workspace_by_id(session, workspace_id)
                 if workspace:
-                    notify_workspace_updated(workspace, settings.server.public_base_url)
+                    await notify_workspace_updated(workspace)
 
             except Exception as e:
                 # Any error - update to ERROR
@@ -511,7 +507,7 @@ class WorkspaceService:
                 # Notify SSE clients
                 workspace = await self._get_workspace_by_id(session, workspace_id)
                 if workspace:
-                    notify_workspace_updated(workspace, settings.server.public_base_url)
+                    await notify_workspace_updated(workspace)
 
     async def delete_workspace(
         self,
@@ -529,8 +525,6 @@ class WorkspaceService:
         5. On failure: status = ERROR
         6. Notify SSE clients
         """
-        settings = get_settings()
-
         async with _background_session() as session:
             try:
                 # Step 1: Delete container
@@ -557,7 +551,7 @@ class WorkspaceService:
                 )
                 await session.commit()
                 # Notify SSE clients
-                notify_workspace_deleted(workspace_id, owner_user_id)
+                await notify_workspace_deleted(workspace_id, owner_user_id)
 
             except Exception as e:
                 # Any error - update to ERROR
@@ -574,4 +568,4 @@ class WorkspaceService:
                 # Notify SSE clients (ERROR state)
                 workspace = await self._get_workspace_by_id(session, workspace_id)
                 if workspace:
-                    notify_workspace_updated(workspace, settings.server.public_base_url)
+                    await notify_workspace_updated(workspace)
