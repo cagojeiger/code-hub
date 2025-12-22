@@ -17,7 +17,7 @@ from app.schemas.workspace import WorkspaceDeletedEvent, WorkspaceEventPayload
 logger = logging.getLogger(__name__)
 
 
-def _get_user_channel(user_id: str) -> str:
+def get_user_channel(user_id: str) -> str:
     """Get Redis channel name for user events."""
     return f"events:user:{user_id}"
 
@@ -32,7 +32,7 @@ async def publish_workspace_event(
         logger.warning("Cannot publish event without owner_user_id")
         return
 
-    channel = _get_user_channel(owner_user_id)
+    channel = get_user_channel(owner_user_id)
     event = {"type": event_type, "data": workspace_data}
 
     try:
