@@ -56,7 +56,24 @@ class PaginatedWorkspaceResponse(BaseModel):
 
 
 # SSE event schemas
+class WorkspaceEventPayload(BaseModel):
+    """Internal event payload for Redis Pub/Sub.
+
+    Note: url is omitted - clients can derive it from workspace id.
+    """
+
+    id: str
+    name: str
+    description: str | None
+    memo: str | None
+    status: WorkspaceStatus
+    owner_user_id: str  # For channel routing
+    created_at: datetime
+    updated_at: datetime
+
+
 class WorkspaceDeletedEvent(BaseModel):
     """SSE workspace_deleted event payload."""
 
     id: str
+    owner_user_id: str  # For channel routing

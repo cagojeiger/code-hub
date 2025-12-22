@@ -460,9 +460,10 @@ data: {}
 | description | string \| null | 설명 |
 | memo | string \| null | 메모 |
 | status | string | 상태 (CREATED, PROVISIONING, RUNNING, STOPPING, STOPPED, DELETING, DELETED, ERROR) |
-| url | string | 워크스페이스 접속 URL |
 | created_at | string | 생성 시각 (ISO 8601) |
 | updated_at | string | 수정 시각 (ISO 8601) |
+
+> 클라이언트는 `id`로 URL 생성 가능: `{public_base_url}/w/{id}/`
 
 ### workspace_deleted 페이로드
 

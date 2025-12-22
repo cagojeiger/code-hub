@@ -12,7 +12,7 @@ from typing import Any
 
 from app.core.redis import get_redis
 from app.db import Workspace
-from app.schemas.workspace import WorkspaceDeletedEvent, WorkspaceResponse
+from app.schemas.workspace import WorkspaceDeletedEvent, WorkspaceEventPayload
 
 logger = logging.getLogger(__name__)
 
@@ -43,26 +43,22 @@ async def publish_workspace_event(
         logger.exception("Failed to publish event to Redis")
 
 
-async def notify_workspace_updated(workspace: Workspace, public_base_url: str) -> None:
+async def notify_workspace_updated(workspace: Workspace) -> None:
     """Notify clients about workspace update."""
-    response = WorkspaceResponse(
+    payload = WorkspaceEventPayload(
         id=workspace.id,
         name=workspace.name,
         description=workspace.description,
         memo=workspace.memo,
         status=workspace.status,
-        url=f"{public_base_url}/w/{workspace.id}/",
+        owner_user_id=workspace.owner_user_id,
         created_at=workspace.created_at,
         updated_at=workspace.updated_at,
     )
-    data = response.model_dump(mode="json")
-    data["owner_user_id"] = workspace.owner_user_id  # For channel routing
-    await publish_workspace_event("workspace_updated", data)
+    await publish_workspace_event("workspace_updated", payload.model_dump(mode="json"))
 
 
 async def notify_workspace_deleted(workspace_id: str, owner_user_id: str) -> None:
     """Notify clients about workspace deletion."""
-    event = WorkspaceDeletedEvent(id=workspace_id)
-    data = event.model_dump()
-    data["owner_user_id"] = owner_user_id  # For channel routing
-    await publish_workspace_event("workspace_deleted", data)
+    payload = WorkspaceDeletedEvent(id=workspace_id, owner_user_id=owner_user_id)
+    await publish_workspace_event("workspace_deleted", payload.model_dump())
