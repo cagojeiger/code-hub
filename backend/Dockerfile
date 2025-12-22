@@ -42,5 +42,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 EXPOSE 8080
 
-# Production mode: run migrations then start server
-CMD ["sh", "-c", "uv run alembic upgrade head && uv run uvicorn app.main:app --host 0.0.0.0 --port 8080"]
+# Default command: start uvicorn server
+# Note: Migrations are handled by separate migrate service in docker-compose.yml
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

@@ -57,16 +57,35 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Database migration service - runs once before backend starts
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: codehub-migrate
+    command: uv run alembic upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - CODEHUB_DATABASE__URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
+    networks:
+      - codehub-net
+    # No restart - runs once and exits
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: codehub-backend
+    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 4
     depends_on:
       postgres:
         condition: service_healthy
       docker-proxy:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
     ports:
       - "127.0.0.1:8080:8080"

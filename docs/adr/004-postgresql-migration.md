@@ -41,6 +41,28 @@ MVP 검증이 완료되고 Kubernetes 환경에서 100+ 워크스페이스 운�
 | 기본 DB URL | SQLite → PostgreSQL |
 | 스키마 관리 | `create_all()` → Alembic 마이그레이션 |
 
+### 배포 전략
+
+#### 마이그레이션 분리 패턴
+
+멀티 워커/인스턴스 환경에서 마이그레이션 충돌을 방지하기 위해 마이그레이션을 별도 서비스로 분리합니다.
+
+| 단계 | 서비스 | 동작 |
+|------|--------|------|
+| 1 | migrate | `alembic upgrade head` 실행 후 종료 |
+| 2 | backend | 마이그레이션 완료 후 uvicorn 시작 (N workers) |
+
+#### Docker Compose 흐름
+
+```
+postgres (healthy) → migrate (완료/종료) → backend (N workers)
+```
+
+#### K8s 적용 시
+
+- **Init Container**: 마이그레이션 실행 후 Pod 내 앱 컨테이너 시작
+- **또는 Job**: 별도 마이그레이션 Job 완료 후 Deployment 롤아웃
+
 ## 결과
 
 ### 장점
