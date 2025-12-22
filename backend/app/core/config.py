@@ -242,7 +242,7 @@ class DatabaseConfig(BaseSettings):
 
     url: str = Field(
         default="postgresql+asyncpg://codehub:codehub@localhost:5432/codehub",
-        description="Database URL (PostgreSQL for production, SQLite for tests)",
+        description="Database URL (PostgreSQL)",
     )
     echo: bool = Field(
         default=False,
