@@ -142,9 +142,8 @@ class SessionService:
         if session.revoked_at is not None:
             return False
 
-        # Get current UTC time, handling both naive and aware datetimes
-        # SQLite stores datetimes without timezone (naive), so we need to
-        # compare consistently by using naive datetime for both
+        # Get current UTC time as naive datetime for consistent comparison
+        # Database may store as naive or aware depending on driver
         now = datetime.now(UTC).replace(tzinfo=None)
 
         # Make expires_at naive if it's timezone-aware
