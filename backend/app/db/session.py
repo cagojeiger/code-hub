@@ -23,8 +23,23 @@ _engine: "AsyncEngine | None" = None
 
 
 def _get_engine(database_url: str, echo: bool = False) -> "AsyncEngine":
-    """Create async engine."""
-    return create_async_engine(database_url, echo=echo)
+    """Create async engine with PostgreSQL-optimized settings."""
+    return create_async_engine(
+        database_url,
+        echo=echo,
+        pool_size=10,
+        max_overflow=20,
+        pool_recycle=3600,
+        pool_pre_ping=True,
+        connect_args={
+            "command_timeout": 30,
+            "server_settings": {
+                "statement_timeout": "30s",
+                "lock_timeout": "10s",
+                "application_name": "codehub-backend",
+            },
+        },
+    )
 
 
 async def init_db(
