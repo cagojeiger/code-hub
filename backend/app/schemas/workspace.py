@@ -34,7 +34,7 @@ class WorkspaceResponse(BaseModel):
     description: str | None
     memo: str | None
     status: WorkspaceStatus
-    url: str
+    path: str
     created_at: datetime
     updated_at: datetime
 
@@ -57,16 +57,14 @@ class PaginatedWorkspaceResponse(BaseModel):
 
 # SSE event schemas
 class WorkspaceEventPayload(BaseModel):
-    """Internal event payload for Redis Pub/Sub.
-
-    Note: url is omitted - clients can derive it from workspace id.
-    """
+    """Internal event payload for Redis Pub/Sub."""
 
     id: str
     name: str
     description: str | None
     memo: str | None
     status: WorkspaceStatus
+    path: str
     owner_user_id: str  # For channel routing
     created_at: datetime
     updated_at: datetime

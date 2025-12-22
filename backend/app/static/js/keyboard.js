@@ -15,8 +15,8 @@ import { openCreateModal, openShortcutsModal, closeAllModals, isModalOpen } from
  */
 export function openWorkspace(id) {
   const workspace = state.cache[id];
-  if (workspace && workspace.url) {
-    window.open(workspace.url, '_blank');
+  if (workspace && workspace.path) {
+    window.open(workspace.path, '_blank');
   }
 }
 

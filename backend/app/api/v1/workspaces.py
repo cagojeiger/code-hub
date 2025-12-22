@@ -15,7 +15,6 @@ import math
 from fastapi import APIRouter, BackgroundTasks, Query, Response, status
 
 from app.api.v1.dependencies import CurrentUser, DbSession, WsService
-from app.core.config import get_settings
 from app.core.events import notify_workspace_updated
 from app.db import Workspace, WorkspaceStatus
 from app.schemas.pagination import PaginationMeta
@@ -35,10 +34,9 @@ DEFAULT_PER_PAGE = 20
 MAX_PER_PAGE = 100
 
 
-def _build_workspace_url(workspace_id: str) -> str:
-    """Build workspace URL from workspace ID."""
-    settings = get_settings()
-    return f"{settings.server.public_base_url}/w/{workspace_id}/"
+def _build_workspace_path(workspace_id: str) -> str:
+    """Build workspace path from workspace ID."""
+    return f"/w/{workspace_id}/"
 
 
 def _workspace_to_response(workspace: Workspace) -> WorkspaceResponse:
@@ -49,7 +47,7 @@ def _workspace_to_response(workspace: Workspace) -> WorkspaceResponse:
         description=workspace.description,
         memo=workspace.memo,
         status=workspace.status,
-        url=_build_workspace_url(workspace.id),
+        path=_build_workspace_path(workspace.id),
         created_at=workspace.created_at,
         updated_at=workspace.updated_at,
     )

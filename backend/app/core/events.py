@@ -51,6 +51,7 @@ async def notify_workspace_updated(workspace: Workspace) -> None:
         description=workspace.description,
         memo=workspace.memo,
         status=workspace.status,
+        path=f"/w/{workspace.id}/",
         owner_user_id=workspace.owner_user_id,
         created_at=workspace.created_at,
         updated_at=workspace.updated_at,
