@@ -16,7 +16,7 @@ async def test_create_session(db_session, test_user):
     assert session.id is not None
     assert session.user_id == test_user.id
     assert session.created_at is not None
-    # Compare as naive datetimes (SQLite stores without timezone)
+    # Compare as naive datetimes for consistent comparison
     now = datetime.now(UTC).replace(tzinfo=None)
     expires_at = session.expires_at
     if expires_at.tzinfo is not None:
@@ -90,7 +90,7 @@ async def test_revoke_nonexistent_session(db_session):
 @pytest.mark.asyncio
 async def test_is_valid_expired_session(db_session, test_user):
     """Test that expired sessions are not valid."""
-    # Create a session with past expiry (use naive datetime for SQLite)
+    # Create a session with past expiry
     session = Session(
         user_id=test_user.id,
         expires_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1),
@@ -105,7 +105,7 @@ async def test_is_valid_expired_session(db_session, test_user):
 @pytest.mark.asyncio
 async def test_is_valid_revoked_session(db_session, test_user):
     """Test that revoked sessions are not valid."""
-    # Create a revoked session (use naive datetime for SQLite)
+    # Create a revoked session
     session = Session(
         user_id=test_user.id,
         expires_at=datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=24),
@@ -121,7 +121,7 @@ async def test_is_valid_revoked_session(db_session, test_user):
 @pytest.mark.asyncio
 async def test_get_valid_returns_none_for_expired(db_session, test_user):
     """Test that get_valid returns None for expired sessions."""
-    # Create a session with past expiry (use naive datetime for SQLite)
+    # Create a session with past expiry
     session = Session(
         user_id=test_user.id,
         expires_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=1),

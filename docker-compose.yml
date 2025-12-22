@@ -73,6 +73,31 @@ services:
       - codehub-net
     # No restart - runs once and exits
 
+  # Startup sync - reconciles transitional states once before backend starts
+  startup-sync:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: codehub-startup-sync
+    command: uv run python -m app.scripts.recovery
+    depends_on:
+      postgres:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      - CODEHUB_DATABASE__URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
+      - DOCKER_HOST=tcp://docker-proxy:2375
+      - CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/var/lib/codehub/homes
+      - CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=${PWD}/data/codehub/homes
+    volumes:
+      - ./data/codehub:/var/lib/codehub
+    networks:
+      - codehub-net
+    # No restart - runs once and exits
+
   backend:
     build:
       context: ./backend
@@ -85,6 +110,8 @@ services:
       docker-proxy:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      startup-sync:
         condition: service_completed_successfully
 
     ports:

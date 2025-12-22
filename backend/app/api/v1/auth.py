@@ -63,7 +63,7 @@ async def login(
     # Check if account is locked
     now = datetime.now(UTC)
     if user.locked_until:
-        # Convert naive datetime from SQLite to UTC-aware for comparison
+        # Ensure timezone-aware comparison
         locked_until = (
             user.locked_until.replace(tzinfo=UTC)
             if user.locked_until.tzinfo is None
