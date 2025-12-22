@@ -410,7 +410,7 @@ class WorkspaceService:
                             session, workspace_id
                         )
                         if workspace:
-                            notify_workspace_updated(
+                            await notify_workspace_updated(
                                 workspace, settings.server.public_base_url
                             )
                         return
@@ -433,7 +433,9 @@ class WorkspaceService:
                 # Notify SSE clients
                 workspace = await self._get_workspace_by_id(session, workspace_id)
                 if workspace:
-                    notify_workspace_updated(workspace, settings.server.public_base_url)
+                    await notify_workspace_updated(
+                        workspace, settings.server.public_base_url
+                    )
 
             except Exception as e:
                 # Any error - update to ERROR
@@ -450,7 +452,9 @@ class WorkspaceService:
                 # Notify SSE clients
                 workspace = await self._get_workspace_by_id(session, workspace_id)
                 if workspace:
-                    notify_workspace_updated(workspace, settings.server.public_base_url)
+                    await notify_workspace_updated(
+                        workspace, settings.server.public_base_url
+                    )
 
     async def stop_workspace(
         self,
@@ -494,7 +498,9 @@ class WorkspaceService:
                 # Notify SSE clients
                 workspace = await self._get_workspace_by_id(session, workspace_id)
                 if workspace:
-                    notify_workspace_updated(workspace, settings.server.public_base_url)
+                    await notify_workspace_updated(
+                        workspace, settings.server.public_base_url
+                    )
 
             except Exception as e:
                 # Any error - update to ERROR
@@ -511,7 +517,9 @@ class WorkspaceService:
                 # Notify SSE clients
                 workspace = await self._get_workspace_by_id(session, workspace_id)
                 if workspace:
-                    notify_workspace_updated(workspace, settings.server.public_base_url)
+                    await notify_workspace_updated(
+                        workspace, settings.server.public_base_url
+                    )
 
     async def delete_workspace(
         self,
@@ -557,7 +565,7 @@ class WorkspaceService:
                 )
                 await session.commit()
                 # Notify SSE clients
-                notify_workspace_deleted(workspace_id, owner_user_id)
+                await notify_workspace_deleted(workspace_id, owner_user_id)
 
             except Exception as e:
                 # Any error - update to ERROR
@@ -574,4 +582,6 @@ class WorkspaceService:
                 # Notify SSE clients (ERROR state)
                 workspace = await self._get_workspace_by_id(session, workspace_id)
                 if workspace:
-                    notify_workspace_updated(workspace, settings.server.public_base_url)
+                    await notify_workspace_updated(
+                        workspace, settings.server.public_base_url
+                    )

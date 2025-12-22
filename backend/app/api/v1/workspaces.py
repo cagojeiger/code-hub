@@ -155,7 +155,7 @@ async def create_workspace(
         description=body.description,
         memo=body.memo,
     )
-    notify_workspace_updated(workspace, settings.server.public_base_url)
+    await notify_workspace_updated(workspace, settings.server.public_base_url)
     return _workspace_to_response(workspace)
 
 
@@ -188,7 +188,7 @@ async def update_workspace(
         workspace_id=workspace_id,
         **update_data,
     )
-    notify_workspace_updated(workspace, settings.server.public_base_url)
+    await notify_workspace_updated(workspace, settings.server.public_base_url)
     return _workspace_to_response(workspace)
 
 
@@ -212,7 +212,7 @@ async def delete_workspace(
     workspace = await ws_service.initiate_delete(session, current_user.id, workspace_id)
 
     # Notify DELETING state immediately
-    notify_workspace_updated(workspace, settings.server.public_base_url)
+    await notify_workspace_updated(workspace, settings.server.public_base_url)
 
     background_tasks.add_task(
         ws_service.delete_workspace,
@@ -244,7 +244,7 @@ async def start_workspace(
     workspace = await ws_service.initiate_start(session, current_user.id, workspace_id)
 
     # Notify PROVISIONING state immediately
-    notify_workspace_updated(workspace, settings.server.public_base_url)
+    await notify_workspace_updated(workspace, settings.server.public_base_url)
 
     background_tasks.add_task(
         ws_service.start_workspace,
@@ -281,7 +281,7 @@ async def stop_workspace(
     workspace = await ws_service.initiate_stop(session, current_user.id, workspace_id)
 
     # Notify STOPPING state immediately
-    notify_workspace_updated(workspace, settings.server.public_base_url)
+    await notify_workspace_updated(workspace, settings.server.public_base_url)
 
     background_tasks.add_task(
         ws_service.stop_workspace,

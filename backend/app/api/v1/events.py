@@ -1,38 +1,43 @@
-"""SSE events endpoint for real-time workspace updates."""
+"""SSE events endpoint for real-time workspace updates via Redis Pub/Sub."""
 
 import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from app.api.v1.dependencies import CurrentUser
-from app.core.events import get_event_queues
+from app.core.redis import get_redis
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["events"])
 
 
+def _get_user_channel(user_id: str) -> str:
+    """Get Redis channel name for user events."""
+    return f"events:user:{user_id}"
+
+
 async def _event_generator(
     request: Request,
     user_id: str,
 ) -> AsyncGenerator[str]:
-    """Generate SSE events for a connected client."""
-    event_queues = get_event_queues()
-    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=100)
-    queue_id = f"{user_id}_{id(queue)}"
-    event_queues[queue_id] = queue
+    """Generate SSE events from Redis Pub/Sub."""
+    redis_client = get_redis()
+    pubsub = redis_client.pubsub()
+    channel = _get_user_channel(user_id)
 
     try:
+        await pubsub.subscribe(channel)
+        logger.debug("Subscribed to channel %s", channel)
+
         # Send initial connected event
         yield "event: connected\ndata: {}\n\n"
 
         heartbeat_interval = 30  # seconds
-        last_heartbeat = asyncio.get_event_loop().time()
 
         while True:
             # Check if client disconnected
@@ -40,30 +45,31 @@ async def _event_generator(
                 break
 
             try:
-                # Wait for events with timeout for heartbeat
-                event = await asyncio.wait_for(queue.get(), timeout=heartbeat_interval)
+                # Wait for messages with timeout for heartbeat
+                message = await asyncio.wait_for(
+                    pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0),
+                    timeout=heartbeat_interval,
+                )
 
-                # Filter events by owner
-                if event["type"] in ("workspace_updated", "workspace_deleted"):
+                if message and message["type"] == "message":
+                    event = json.loads(message["data"])
+                    event_type = event["type"]
                     workspace_data = event["data"]
-                    # Only send events for workspaces owned by this user
-                    if workspace_data.get("owner_user_id") != user_id:
-                        continue
 
-                    # Remove internal fields before sending
-                    data = {k: v for k, v in workspace_data.items() if k != "owner_user_id"}
-                    yield f"event: {event['type']}\ndata: {json.dumps(data)}\n\n"
+                    # Remove internal field before sending
+                    data = {
+                        k: v for k, v in workspace_data.items() if k != "owner_user_id"
+                    }
+                    yield f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
             except TimeoutError:
                 # Send heartbeat
-                current_time = asyncio.get_event_loop().time()
-                if current_time - last_heartbeat >= heartbeat_interval:
-                    yield "event: heartbeat\ndata: {}\n\n"
-                    last_heartbeat = current_time
+                yield "event: heartbeat\ndata: {}\n\n"
 
     finally:
-        # Cleanup
-        del event_queues[queue_id]
+        await pubsub.unsubscribe(channel)
+        await pubsub.aclose()  # type: ignore[no-untyped-call]
+        logger.debug("Unsubscribed from channel %s", channel)
 
 
 @router.get("/events")

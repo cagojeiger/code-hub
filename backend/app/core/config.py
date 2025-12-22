@@ -258,6 +258,32 @@ class DatabaseConfig(BaseSettings):
         return v
 
 
+class RedisConfig(BaseSettings):
+    """Redis configuration for Pub/Sub."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="CODEHUB_REDIS__",
+        extra="ignore",
+    )
+
+    url: str = Field(
+        default="redis://localhost:6379",
+        description="Redis URL for Pub/Sub",
+    )
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        """Validate Redis URL."""
+        if not v:
+            raise ValueError("Redis URL cannot be empty")
+        if not v.startswith("redis://"):
+            raise ValueError(
+                f"Invalid Redis URL '{v}': must start with redis://"
+            )
+        return v
+
+
 class HomeStoreConfig(BaseSettings):
     """Home store configuration."""
 
@@ -328,6 +354,7 @@ class Settings(BaseSettings):
     workspace: WorkspaceConfig = Field(default_factory=WorkspaceConfig)
     home_store: HomeStoreConfig = Field(default_factory=HomeStoreConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    redis: RedisConfig = Field(default_factory=RedisConfig)
 
 
 @lru_cache
