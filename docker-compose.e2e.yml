@@ -1,0 +1,111 @@
+# E2E Test Environment
+# Usage: docker compose -f docker-compose.e2e.yml up -d --build --wait
+#        E2E_BASE_URL=http://localhost:8080 uv run pytest tests/e2e -v
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: codehub-e2e-postgres
+    environment:
+      POSTGRES_USER: codehub
+      POSTGRES_PASSWORD: codehub
+      POSTGRES_DB: codehub
+    networks:
+      - codehub-e2e-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codehub"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: codehub-e2e-redis
+    networks:
+      - codehub-e2e-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy
+    container_name: codehub-e2e-docker-proxy
+    environment:
+      - CONTAINERS=1
+      - NETWORKS=1
+      - IMAGES=1
+      - INFO=1
+      - VERSION=1
+      - POST=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - codehub-e2e-net
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:2375/_ping"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: codehub-e2e-migrate
+    command: uv run alembic upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - CODEHUB_DATABASE__URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
+    networks:
+      - codehub-e2e-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: codehub-e2e-backend
+    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # Use bind mount with pre-created directory for proper ownership
+      - ./data/e2e:/var/lib/codehub
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CODEHUB_ENV=test
+      - CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/var/lib/codehub/homes
+      # Workspace base dir must be host path for code-server containers to access
+      - CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=${PWD}/data/e2e/homes
+      - CODEHUB_DATABASE__URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
+      - CODEHUB_REDIS__URL=redis://redis:6379
+      - DOCKER_HOST=tcp://docker-proxy:2375
+      - CODEHUB_WORKSPACE__CONTAINER_PREFIX=codehub-e2e-
+      - CODEHUB_WORKSPACE__NETWORK_NAME=codehub-e2e-net
+      - CODEHUB_WORKSPACE__HEALTHCHECK__TIMEOUT=60s
+    user: "1000:1000"
+    networks:
+      - codehub-e2e-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+networks:
+  codehub-e2e-net:
+    name: codehub-e2e-net
+    driver: bridge

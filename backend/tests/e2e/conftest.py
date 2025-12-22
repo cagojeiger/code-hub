@@ -1,74 +1,35 @@
 """E2E test fixtures for code-hub.
 
-Extends the main conftest.py with E2E-specific fixtures for testing
-real code-server containers and full stack integration.
+E2E tests run against a real backend deployed via docker-compose.e2e.yml.
+The backend runs in a container on the same Docker network as code-server containers.
+
+Usage:
+    docker compose -f docker-compose.e2e.yml up -d --build --wait
+    E2E_BASE_URL=http://localhost:8080 uv run pytest tests/e2e -v
 """
 
 import asyncio
 import logging
+import os
 
 import docker
 import pytest
 import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import sessionmaker
-
-from app.api.v1.dependencies import (
-    get_instance_controller,
-    get_storage_provider,
-    get_workspace_service,
-)
-from app.core.config import get_settings
-from app.core.security import hash_password
-from app.db import User
-from app.db.session import get_async_session
-from app.main import app
-from app.services.instance.local_docker import LocalDockerInstanceController
-from app.services.storage.local_dir import LocalDirStorageProvider
-from app.services.workspace_service import WorkspaceService
+from httpx import AsyncClient
 
 logger = logging.getLogger(__name__)
 
-# E2E-specific container prefix to avoid conflicts with unit tests
+# E2E backend URL (from docker-compose.e2e.yml)
+E2E_BASE_URL = os.getenv("E2E_BASE_URL", "http://localhost:8080")
+
+# E2E-specific container prefix (must match docker-compose.e2e.yml)
 E2E_CONTAINER_PREFIX = "codehub-e2e-"
 E2E_NETWORK_NAME = "codehub-e2e-net"
 
 
-@pytest.fixture(autouse=True)
-def setup_e2e_env(setup_test_env, monkeypatch):
-    """Set up E2E-specific environment variables.
-
-    This fixture depends on setup_test_env from the main conftest.py
-    to ensure directory creation happens first, then overrides
-    E2E-specific settings (container prefix, network name).
-    """
-    # Override with E2E-specific container prefix and network
-    monkeypatch.setenv("CODEHUB_WORKSPACE__CONTAINER_PREFIX", E2E_CONTAINER_PREFIX)
-    monkeypatch.setenv("CODEHUB_WORKSPACE__NETWORK_NAME", E2E_NETWORK_NAME)
-    # Shorter healthcheck timeout for faster tests
-    monkeypatch.setenv("CODEHUB_WORKSPACE__HEALTHCHECK__TIMEOUT", "60s")
-
-    # Clear settings cache to pick up new env vars
-    get_settings.cache_clear()
-
-    # Clear dependency caches for E2E-specific overrides
-    get_instance_controller.cache_clear()
-    get_storage_provider.cache_clear()
-    get_workspace_service.cache_clear()
-
-    yield
-
-    # Clear caches after test
-    get_settings.cache_clear()
-    get_instance_controller.cache_clear()
-    get_storage_provider.cache_clear()
-    get_workspace_service.cache_clear()
-
-
 @pytest.fixture(scope="session")
 def docker_client():
-    """Get Docker client for E2E tests."""
+    """Get Docker client for E2E tests (file operations via docker exec)."""
     return docker.from_env()
 
 
@@ -87,89 +48,37 @@ def ensure_code_server_image(docker_client):
 
 @pytest.fixture(scope="session", autouse=True)
 def cleanup_e2e_containers(docker_client):
-    """Clean up E2E Docker containers after all tests complete."""
+    """Clean up E2E workspace containers after all tests complete."""
     yield
 
-    # Remove containers with E2E prefix
-    containers = docker_client.containers.list(all=True)
-    for container in containers:
-        if container.name.startswith(E2E_CONTAINER_PREFIX):
-            logger.info("Cleaning up E2E container: %s", container.name)
-            try:
-                container.remove(force=True)
-            except Exception as e:
-                logger.warning("Failed to remove %s: %s", container.name, e)
-
-    # Remove E2E network if exists
+    # Remove workspace containers with E2E prefix (not infra containers)
     try:
-        network = docker_client.networks.get(E2E_NETWORK_NAME)
-        logger.info("Cleaning up E2E network: %s", E2E_NETWORK_NAME)
-        network.remove()
-    except docker.errors.NotFound:
-        pass
+        containers = docker_client.containers.list(all=True)
+        for container in containers:
+            # Only remove workspace containers, not backend/postgres/redis
+            if container.name.startswith(E2E_CONTAINER_PREFIX) and container.name not in [
+                "codehub-e2e-backend",
+                "codehub-e2e-postgres",
+                "codehub-e2e-redis",
+                "codehub-e2e-docker-proxy",
+                "codehub-e2e-migrate",
+            ]:
+                logger.info("Cleaning up E2E workspace container: %s", container.name)
+                try:
+                    container.remove(force=True)
+                except Exception as e:
+                    logger.warning("Failed to remove %s: %s", container.name, e)
     except Exception as e:
-        logger.warning("Failed to remove network %s: %s", E2E_NETWORK_NAME, e)
-
-
-def _create_e2e_instance_controller():
-    """Create instance controller with expose_ports for E2E tests."""
-    settings = get_settings()
-    return LocalDockerInstanceController(
-        container_prefix=settings.workspace.container_prefix,
-        network_name=settings.workspace.network_name,
-        expose_ports=True,  # Enable host port binding for E2E tests
-    )
-
-
-def _create_e2e_storage_provider():
-    """Create storage provider for E2E tests."""
-    settings = get_settings()
-    return LocalDirStorageProvider(
-        control_plane_base_dir=settings.home_store.control_plane_base_dir,
-        workspace_base_dir=settings.home_store.workspace_base_dir,  # type: ignore
-    )
-
-
-def _create_e2e_workspace_service():
-    """Create workspace service with E2E-configured dependencies."""
-    return WorkspaceService(
-        storage=_create_e2e_storage_provider(),
-        instance=_create_e2e_instance_controller(),
-    )
+        logger.warning("Error during cleanup: %s", e)
 
 
 @pytest_asyncio.fixture
-async def second_user(db_session: AsyncSession) -> User:
-    """Create a second test user for ownership tests."""
-    user = User(
-        username="user2",
-        password_hash=hash_password("user2pass"),
-    )
-    db_session.add(user)
-    await db_session.commit()
-    await db_session.refresh(user)
-    return user
+async def e2e_client() -> AsyncClient:
+    """Create an authenticated E2E test client.
 
-
-@pytest_asyncio.fixture
-async def e2e_client(db_engine, redis_client, test_user) -> AsyncClient:
-    """Create an authenticated E2E test client with expose_ports enabled."""
-
-    async def override_get_async_session():
-        async_session = sessionmaker(
-            db_engine, class_=AsyncSession, expire_on_commit=False
-        )
-        async with async_session() as session:
-            yield session
-
-    # Override dependencies with E2E-configured versions
-    app.dependency_overrides[get_async_session] = override_get_async_session
-    app.dependency_overrides[get_instance_controller] = _create_e2e_instance_controller
-    app.dependency_overrides[get_storage_provider] = _create_e2e_storage_provider
-    app.dependency_overrides[get_workspace_service] = _create_e2e_workspace_service
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    Connects to real backend via HTTP (not ASGITransport).
+    """
+    async with AsyncClient(base_url=E2E_BASE_URL, timeout=30.0) as client:
         # Authenticate to get session cookie
         response = await client.post(
             "/api/v1/login",
@@ -177,36 +86,54 @@ async def e2e_client(db_engine, redis_client, test_user) -> AsyncClient:
         )
         assert response.status_code == 200, f"Login failed: {response.text}"
 
-        # Clear any existing cookies and set fresh session
-        client.cookies.clear()
-        session_cookie = response.cookies.get("session")
-        if session_cookie:
-            client.cookies.set("session", session_cookie)
+        # Session cookie is automatically captured by httpx from response
+        # No need to manually set it again
 
         yield client
 
-    app.dependency_overrides.clear()
+
+@pytest.fixture(scope="session")
+def second_user_created(docker_client):
+    """Create a second test user in the database.
+
+    Uses docker exec to insert the user directly into PostgreSQL via stdin.
+    """
+    import subprocess
+
+    # Argon2 hash for "user2pass" - pre-computed
+    # To generate: python -c "from argon2 import PasswordHasher; print(PasswordHasher().hash('user2pass'))"
+    password_hash = "$argon2id$v=19$m=65536,t=3,p=4$CS0HQ7oHzYZ1eMA0x8qRQg$p9P3mhoxCBXXnJtzA7zuco5I5ERof2nLhSz1zObEIR0"
+
+    user_id = "01TESTUSER2000000000000000"
+
+    # Use stdin to avoid shell interpretation of $ in password hash
+    sql = f"""
+    INSERT INTO users (id, username, password_hash, created_at, failed_login_attempts)
+    VALUES ('{user_id}', 'user2', '{password_hash}', NOW(), 0)
+    ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash;
+    """
+
+    result = subprocess.run(
+        [
+            "docker", "exec", "-i", "codehub-e2e-postgres",
+            "psql", "-U", "codehub", "-d", "codehub"
+        ],
+        input=sql,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        logger.warning("Failed to create second user: %s", result.stderr)
+    else:
+        logger.info("Second user created/updated: %s", result.stdout)
+
+    return True
 
 
 @pytest_asyncio.fixture
-async def second_user_client(db_engine, redis_client, second_user) -> AsyncClient:
+async def second_user_client(second_user_created) -> AsyncClient:
     """Create an authenticated client for the second user."""
-
-    async def override_get_async_session():
-        async_session = sessionmaker(
-            db_engine, class_=AsyncSession, expire_on_commit=False
-        )
-        async with async_session() as session:
-            yield session
-
-    # Override dependencies with E2E-configured versions
-    app.dependency_overrides[get_async_session] = override_get_async_session
-    app.dependency_overrides[get_instance_controller] = _create_e2e_instance_controller
-    app.dependency_overrides[get_storage_provider] = _create_e2e_storage_provider
-    app.dependency_overrides[get_workspace_service] = _create_e2e_workspace_service
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(base_url=E2E_BASE_URL, timeout=30.0) as client:
         # Authenticate as second user
         response = await client.post(
             "/api/v1/login",
@@ -214,15 +141,15 @@ async def second_user_client(db_engine, redis_client, second_user) -> AsyncClien
         )
         assert response.status_code == 200, f"Login failed: {response.text}"
 
-        # Clear any existing cookies and set fresh session
-        client.cookies.clear()
-        session_cookie = response.cookies.get("session")
-        if session_cookie:
-            client.cookies.set("session", session_cookie)
-
+        # Session cookie is automatically captured by httpx from response
         yield client
 
-    app.dependency_overrides.clear()
+
+@pytest_asyncio.fixture
+async def unauthenticated_client() -> AsyncClient:
+    """Create an unauthenticated client for testing auth failures."""
+    async with AsyncClient(base_url=E2E_BASE_URL, timeout=30.0) as client:
+        yield client
 
 
 async def wait_for_status(
@@ -299,9 +226,10 @@ async def running_workspace(
 
     yield workspace_data
 
-    # Cleanup: just delete workspace (skip stop to avoid background task issues)
-    # The session-level cleanup_e2e_containers will handle Docker cleanup
+    # Cleanup: delete workspace (container cleanup handled by session fixture)
     try:
+        await e2e_client.post(f"/api/v1/workspaces/{workspace_id}:stop")
+        await wait_for_status(e2e_client, workspace_id, "STOPPED", timeout=30.0)
         await e2e_client.delete(f"/api/v1/workspaces/{workspace_id}")
     except Exception as e:
         logger.warning("Cleanup failed for workspace %s: %s", workspace_id, e)
