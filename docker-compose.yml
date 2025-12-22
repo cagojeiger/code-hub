@@ -101,8 +101,27 @@ services:
       - CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=${PWD}/data/codehub/homes
       - CODEHUB_DATABASE__URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
       - DOCKER_HOST=tcp://docker-proxy:2375
-      # Production: Set this to your public domain
+      #
+      # === Configurable Options ===
+      #
+      # Server settings
+      # - CODEHUB_SERVER__BIND=:8080
       # - CODEHUB_SERVER__PUBLIC_BASE_URL=https://your-domain.com
+      #
+      # Auth settings
+      # - CODEHUB_AUTH__INITIAL_ADMIN_PASSWORD=admin
+      # - CODEHUB_AUTH__SESSION__TTL=24h
+      # - CODEHUB_AUTH__SESSION__COOKIE_NAME=session
+      #
+      # Workspace settings
+      # - CODEHUB_WORKSPACE__DEFAULT_IMAGE=cagojeiger/code-server:4.107.0
+      # - CODEHUB_WORKSPACE__CONTAINER_PREFIX=codehub-ws-
+      # - CODEHUB_WORKSPACE__NETWORK_NAME=codehub-net
+      # - CODEHUB_WORKSPACE__HEALTHCHECK__INTERVAL=2s
+      # - CODEHUB_WORKSPACE__HEALTHCHECK__TIMEOUT=60s
+      #
+      # Database settings
+      # - CODEHUB_DATABASE__ECHO=false
 
     user: "1000:1000"
 
