@@ -119,7 +119,6 @@ class LocalDockerInstanceController(InstanceController):
                 name=container_name,
                 detach=True,
                 network=self._network_name,
-                # No host port binding - proxy connects via internal network
                 volumes={home_mount: {"bind": HOME_MOUNT_PATH, "mode": "rw"}},
                 user=f"{CODER_UID}:{CODER_GID}",
                 environment={"HOME": HOME_MOUNT_PATH},
@@ -202,8 +201,6 @@ class LocalDockerInstanceController(InstanceController):
         if container.status != "running":
             raise ValueError(f"Container not running: {container_name}")
 
-        # Return container name as host (for internal network communication)
-        # The proxy will connect via codehub-net network
         return UpstreamInfo(host=container_name, port=CODE_SERVER_PORT)
 
     async def resolve_upstream(self, workspace_id: str) -> UpstreamInfo:
