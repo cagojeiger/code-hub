@@ -43,7 +43,7 @@ docker compose up -d
 
 브라우저에서 http://localhost:8000 접속
 
-**기본 계정**: `admin` / `codehub-admin-2024`
+**기본 계정**: `admin` / `admin`
 
 ## 문서
 
@@ -61,4 +61,4 @@ docker compose up -d
 
 ## 라이선스
 
-(추후 결정)
+[Apache License 2.0](LICENSE)
