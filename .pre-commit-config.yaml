@@ -1,0 +1,23 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^backend/
+      - id: ruff-format
+        files: ^backend/
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        files: ^backend/
+        args: [--config-file=backend/pyproject.toml]
+        additional_dependencies:
+          - pydantic-settings>=2.0.0
+          - sqlmodel>=0.0.22
+          - fastapi>=0.115.0
+          - python-json-logger>=2.0.0
+          - argon2-cffi>=23.0.0
+          - python-ulid>=3.0.0
