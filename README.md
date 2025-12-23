@@ -36,7 +36,7 @@ code-hub는 작업별로 **완전히 격리된 워크스페이스**를 제공하
 ### 실행
 
 ```bash
-git clone https://github.com/your-org/code-hub.git
+git clone https://github.com/cagojeiger/code-hub.git
 cd code-hub
 docker compose up -d
 ```
@@ -44,6 +44,8 @@ docker compose up -d
 브라우저에서 http://localhost:8000 접속
 
 **기본 계정**: `admin` / `admin`
+
+> 초기 비밀번호를 변경하려면 `docker-compose.yml`에서 `CODEHUB_AUTH__INITIAL_ADMIN_PASSWORD` 환경변수를 설정하세요.
 
 ## 문서
 
