@@ -1,5 +1,7 @@
 # code-hub
 
+> v0.1.0 (MVP)
+
 클라우드 개발 환경(CDE) 플랫폼.
 필요할 때 격리된 워크스페이스를 생성하고, 브라우저에서 바로 코딩.
 
@@ -27,7 +29,23 @@ code-hub는 작업별로 **완전히 격리된 워크스페이스**를 제공하
 
 ## 빠른 시작
 
-(추후 작성)
+### 요구사항
+- Docker & Docker Compose
+- Git
+
+### 실행
+
+```bash
+git clone https://github.com/cagojeiger/code-hub.git
+cd code-hub
+docker compose up -d
+```
+
+브라우저에서 http://localhost:8000 접속
+
+**기본 계정**: `admin` / `admin`
+
+> 초기 비밀번호를 변경하려면 `docker-compose.yml`에서 `CODEHUB_AUTH__INITIAL_ADMIN_PASSWORD` 환경변수를 설정하세요.
 
 ## 문서
 
@@ -37,10 +55,12 @@ code-hub는 작업별로 **완전히 격리된 워크스페이스**를 제공하
 
 ## 기술 스택
 
-- **code-server**: 웹 기반 VS Code
-- **Docker**: 컨테이너 런타임 (로컬 MVP)
-- **Python**: 백엔드
+- **Backend**: Python 3.13 + FastAPI + uvicorn
+- **Database**: PostgreSQL 17 + Alembic
+- **Cache/Pub-Sub**: Redis 7
+- **Container**: Docker + docker-py
+- **IDE**: code-server (웹 기반 VS Code)
 
 ## 라이선스
 
-(추후 결정)
+[Apache License 2.0](LICENSE)
