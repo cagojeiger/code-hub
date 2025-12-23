@@ -12,7 +12,7 @@ jobs:
         with:
           working-directory: backend
       - name: Install dependencies
-        run: cd backend && uv sync
+        run: cd backend && uv sync --extra dev
       - name: Pull code-server image
         run: docker pull cagojeiger/code-server:4.107.0
       - name: Run E2E tests
