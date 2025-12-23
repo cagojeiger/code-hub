@@ -20,7 +20,7 @@ from httpx import AsyncClient
 logger = logging.getLogger(__name__)
 
 # E2E backend URL (from docker-compose.e2e.yml)
-E2E_BASE_URL = os.getenv("E2E_BASE_URL", "http://localhost:8080")
+E2E_BASE_URL = os.getenv("E2E_BASE_URL", "http://localhost:18080")
 
 # E2E-specific container prefix (must match docker-compose.e2e.yml)
 E2E_CONTAINER_PREFIX = "codehub-e2e-"

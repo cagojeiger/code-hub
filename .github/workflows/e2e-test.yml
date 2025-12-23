@@ -1,0 +1,19 @@
+name: E2E Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  e2e-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+        with:
+          working-directory: backend
+      - name: Install dependencies
+        run: cd backend && uv sync
+      - name: Pull code-server image
+        run: docker pull cagojeiger/code-server:4.107.0
+      - name: Run E2E tests
+        run: ./scripts/e2e-test.sh

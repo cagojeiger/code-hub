@@ -65,7 +65,7 @@ docker compose -f docker-compose.e2e.yml up -d --build --wait
 echo ""
 echo "=== Running E2E tests ==="
 cd backend
-E2E_BASE_URL=http://localhost:8080 uv run pytest tests/e2e -v $PYTEST_ARGS
+E2E_BASE_URL=http://localhost:18080 uv run pytest tests/e2e -v $PYTEST_ARGS
 TEST_EXIT_CODE=$?
 cd "$PROJECT_ROOT"
 
