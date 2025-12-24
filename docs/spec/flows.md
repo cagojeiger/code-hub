@@ -249,7 +249,8 @@ home_store_key에 해당하는 모든 데이터를 완전 삭제합니다.
 | STOPPING | running | RUNNING | 정지 명령 실패, 재시도 가능 |
 | DELETING | not exists | DELETED | 삭제 성공 후 크래시 |
 | DELETING | exists | ERROR | 삭제 실패 |
-| RUNNING | not exists/running | ERROR | 컨테이너 유실 (docker compose down 등) |
+| RUNNING | running + healthy | (변경 없음) | 정상 상태 |
+| RUNNING | 그 외 (not exists/not running/unhealthy) | ERROR | 컨테이너 유실 |
 
 ### 의사 코드
 
@@ -265,11 +266,32 @@ def startup_recovery():
         status = instance_controller.get_status(ws.id)
 
         if ws.status == 'PROVISIONING':
-            ws.status = 'RUNNING' if (status.running and status.healthy) else 'ERROR'
+            if status.running and status.healthy:
+                ws.status = 'RUNNING'
+            else:
+                # home_ctx 정리 (리소스 누수 방지)
+                if ws.home_ctx:
+                    storage_provider.deprovision(ws.home_ctx)
+                    ws.home_ctx = None
+                ws.status = 'ERROR'
         elif ws.status == 'STOPPING':
-            ws.status = 'STOPPED' if not status.running else 'RUNNING'
+            if not status.running:
+                # home_ctx 정리
+                if ws.home_ctx:
+                    storage_provider.deprovision(ws.home_ctx)
+                    ws.home_ctx = None
+                ws.status = 'STOPPED'
+            else:
+                ws.status = 'RUNNING'
         elif ws.status == 'DELETING':
-            ws.status = 'DELETED' if not status.exists else 'ERROR'
+            if not status.exists:
+                # home_ctx 정리
+                if ws.home_ctx:
+                    storage_provider.deprovision(ws.home_ctx)
+                    ws.home_ctx = None
+                ws.status = 'DELETED'
+            else:
+                ws.status = 'ERROR'
 
         db.save(ws)
 

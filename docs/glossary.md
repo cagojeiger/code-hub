@@ -39,7 +39,9 @@ Blocker 또는 FIX-NOW 해결을 위한 실제 작업 단위(Task 타입).
 ### Home Store Key
 Home Store 내 논리 경로 키. DB에는 절대경로가 아닌 논리 키만 저장됩니다.
 - 패턴: `users/{user_id}/workspaces/{workspace_id}/home`
-- 로컬: `control_plane_base_dir + home_store_key`를 bind mount (호스트에서는 `workspace_base_dir` 사용)
+- 로컬:
+  - Control Plane 내부 경로: `control_plane_base_dir + home_store_key` (디렉토리 생성 등 파일 시스템 작업)
+  - Docker bind mount 경로: `workspace_base_dir + home_store_key` (Docker API는 호스트 경로 필요)
 - 클라우드: `{home_store_key}/home.tar.zst` 같은 오브젝트 키로 사용
 
 ### home_ctx
