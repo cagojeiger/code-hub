@@ -48,13 +48,13 @@
   "description": "...",
   "memo": "...",
   "status": "CREATED",
-  "url": "http://localhost:8080/w/01HXYZ.../",
+  "path": "/w/01HXYZ.../",
   "created_at": "2024-01-01T00:00:00Z",
   "updated_at": "2024-01-01T00:00:00Z"
 }
 ```
 
-> url은 trailing slash 포함: `{public_base_url}/w/{id}/`
+> path는 trailing slash 포함: `/w/{id}/` (클라이언트가 base URL과 조합하여 사용)
 
 **start/stop:**
 ```json
