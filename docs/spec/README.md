@@ -14,6 +14,7 @@
 | [events.md](./events.md) | Real-time Events (SSE) |
 | [schema.md](./schema.md) | DB 스키마 |
 | [config.md](./config.md) | 설정 (Config) |
+| [proxy.md](./proxy.md) | Workspace 프록시 동작 원리 및 한계 |
 
 ---
 

@@ -23,11 +23,13 @@
 | API | `/api/v1/*` |
 | Workspace 접속 | `/w/{workspace_id}/*` |
 
-### Trailing Slash 규칙
+### 프록시 규칙
+
+> 상세 내용은 [proxy.md](./proxy.md) 참조
 
 - `/w/{workspace_id}` 요청은 **308 Redirect → `/w/{workspace_id}/`** 로 정규화
-- 프록시는 `/w/{workspace_id}/` prefix를 strip하고 upstream `/`에 전달
-- code-server sub-path reverse proxy 패턴 준수
+- 프록시는 prefix를 strip하고 code-server에 전달, 상대경로로 응답
+- **미지원**: PWA 설치, 오프라인 모드, `/absproxy/:port` (영구 수용)
 
 ### ID 규칙
 
