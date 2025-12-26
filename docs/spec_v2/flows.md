@@ -23,32 +23,33 @@ sequenceDiagram
     participant R as Reconciler
 
     U->>API: POST /workspaces
-    API->>DB: INSERT (status=PENDING, desired_state=RUNNING)
+    API->>DB: INSERT (status=PENDING, operation=NONE, desired_state=RUNNING)
     API->>Redis: PUBLISH reconciler:hints {workspace_id}
     API->>U: 201 Created
 
     Redis-->>R: 힌트 수신
     R->>DB: status != desired_state 감지
     R->>R: step_up (PENDING → COLD)
-    R->>DB: status = INITIALIZING
+    R->>DB: operation = INITIALIZING
     R->>R: 초기화 완료
-    R->>DB: status = COLD
+    R->>DB: status = COLD, operation = NONE
 
     R->>R: step_up (COLD → WARM)
-    R->>DB: status = RESTORING
+    R->>DB: operation = RESTORING
     R->>R: Volume 프로비저닝
-    R->>DB: status = WARM
+    R->>DB: status = WARM, operation = NONE
 
     R->>R: step_up (WARM → RUNNING)
-    R->>DB: status = STARTING
+    R->>DB: operation = STARTING
     R->>R: 컨테이너 시작
-    R->>DB: status = RUNNING
+    R->>DB: status = RUNNING, operation = NONE
 ```
 
 ### 상태 변화
 
 ```
-PENDING → INITIALIZING → COLD → RESTORING → WARM → STARTING → RUNNING
+(PENDING, NONE) → (PENDING, INITIALIZING) → (COLD, NONE) →
+(COLD, RESTORING) → (WARM, NONE) → (WARM, STARTING) → (RUNNING, NONE)
 ```
 
 ---
@@ -70,8 +71,8 @@ sequenceDiagram
     participant R as Reconciler
 
     U->>P: GET /w/{workspace_id}/
-    P->>DB: status 확인
-    DB-->>P: status = WARM
+    P->>DB: status, operation 확인
+    DB-->>P: status = WARM, operation = NONE
 
     P->>U: 로딩 페이지 (SSE 연결)
     P->>API: PATCH /workspaces/{id} (desired_state=RUNNING)
@@ -81,11 +82,11 @@ sequenceDiagram
     Redis-->>R: 힌트 수신
     R->>DB: status != desired_state 감지
     R->>R: step_up (WARM → RUNNING)
-    R->>DB: status = STARTING
+    R->>DB: operation = STARTING
     R->>R: 컨테이너 시작
-    R->>DB: status = RUNNING
+    R->>DB: status = RUNNING, operation = NONE
 
-    R->>P: SSE: state_changed (RUNNING)
+    R->>P: SSE: state_changed (status=RUNNING)
     P->>U: 리다이렉트
     U->>P: GET /w/{workspace_id}/
     P->>Container: 프록시
@@ -125,14 +126,14 @@ sequenceDiagram
     participant I as Instance Controller
 
     Note over R: 주기적 폴링 (1분)
-    R->>DB: SELECT * FROM workspaces<br/>WHERE status='RUNNING'<br/>AND last_access_at + warm_ttl < NOW()
+    R->>DB: SELECT * FROM workspaces<br/>WHERE status='RUNNING' AND operation='NONE'<br/>AND last_access_at + warm_ttl < NOW()
 
     loop 대상 워크스페이스마다
         R->>DB: desired_state = WARM
         R->>R: step_down (RUNNING → WARM)
-        R->>DB: status = STOPPING
+        R->>DB: operation = STOPPING
         R->>I: 컨테이너 정지
-        R->>DB: status = WARM
+        R->>DB: status = WARM, operation = NONE
     end
 ```
 
@@ -146,19 +147,19 @@ sequenceDiagram
     participant V as Docker Volume
     participant M as MinIO
 
-    R->>DB: SELECT * FROM workspaces<br/>WHERE status='WARM'<br/>AND last_access_at + cold_ttl < NOW()
+    R->>DB: SELECT * FROM workspaces<br/>WHERE status='WARM' AND operation='NONE'<br/>AND last_access_at + cold_ttl < NOW()
 
     loop 대상 워크스페이스마다
         R->>DB: desired_state = COLD
         R->>R: step_down (WARM → COLD)
-        R->>DB: status = ARCHIVING
+        R->>DB: operation = ARCHIVING
         R->>S: archive(home_store_key)
         S->>V: Volume 데이터 읽기
         S->>M: PUT object (tar.gz)
         M-->>S: archive_key
         S->>V: Volume 삭제
         S-->>R: archive_key
-        R->>DB: archive_key = {key}, status = COLD
+        R->>DB: archive_key = {key}, status = COLD, operation = NONE
     end
 ```
 
@@ -188,19 +189,19 @@ sequenceDiagram
     Redis-->>R: 힌트 수신
     R->>DB: status != desired_state 감지
     R->>R: step_up (COLD → WARM)
-    R->>DB: status = RESTORING
+    R->>DB: operation = RESTORING
     R->>S: restore(archive_key)
     S->>M: GET object (tar.gz)
     M-->>S: archive data
     S->>V: Volume 생성 + 데이터 복원
     S-->>R: home_store_key
-    R->>DB: status = WARM
+    R->>DB: status = WARM, operation = NONE
 
     R->>R: step_up (WARM → RUNNING)
-    R->>DB: status = STARTING
+    R->>DB: operation = STARTING
     R->>I: 컨테이너 시작 (Volume 마운트)
     I-->>R: 시작 완료
-    R->>DB: status = RUNNING
+    R->>DB: status = RUNNING, operation = NONE
 ```
 
 ---
@@ -225,9 +226,9 @@ sequenceDiagram
     Redis-->>R: 힌트 수신
     R->>DB: status != desired_state 감지
     R->>R: step_down (RUNNING → WARM)
-    R->>DB: status = STOPPING
+    R->>DB: operation = STOPPING
     R->>R: 컨테이너 정지
-    R->>DB: status = WARM
+    R->>DB: status = WARM, operation = NONE
 ```
 
 ---
@@ -255,14 +256,14 @@ sequenceDiagram
     Redis-->>R: 힌트 수신
     R->>DB: status != desired_state 감지
     R->>R: step_down (WARM → COLD)
-    R->>DB: status = ARCHIVING
+    R->>DB: operation = ARCHIVING
     R->>S: archive(home_store_key)
     S->>V: Volume 데이터 읽기
     S->>M: PUT object (tar.gz)
     M-->>S: archive_key
     S->>V: Volume 삭제
     S-->>R: archive_key
-    R->>DB: archive_key = {key}, status = COLD
+    R->>DB: archive_key = {key}, status = COLD, operation = NONE
 ```
 
 ---
@@ -288,7 +289,7 @@ sequenceDiagram
 
     Redis-->>R: 힌트 수신
     R->>DB: deleted_at != NULL 감지
-    R->>DB: status = DELETING
+    R->>DB: operation = DELETING
 
     alt status was RUNNING
         R->>I: 컨테이너 삭제
@@ -302,7 +303,7 @@ sequenceDiagram
         R->>S: purge(archive_key)
     end
 
-    R->>DB: status = DELETED
+    R->>DB: status = DELETED, operation = NONE
 ```
 
 ---
@@ -317,7 +318,7 @@ sequenceDiagram
     participant DB as Database
 
     Note over R: 전환 중 실패 발생
-    R->>DB: status = ERROR,<br/>error_message = "...",<br/>error_count += 1
+    R->>DB: status = ERROR, operation = NONE,<br/>error_message = "...",<br/>error_count += 1
 
     Note over R: 다음 Reconcile 사이클
     R->>DB: error_count < max_retry?
@@ -336,6 +337,8 @@ sequenceDiagram
 |------|------|
 | error_count < 3 | 자동 재시도 |
 | error_count >= 3 | 관리자 개입 필요, 수동 해제 |
+
+> **Note**: ERROR 상태에서는 `operation = NONE`이며, 이전 status는 별도 필드로 보존됩니다.
 
 ---
 
@@ -359,15 +362,15 @@ sequenceDiagram
     Note over UI,API: SSE 연결 유지
     API->>Redis: SUBSCRIBE workspace:{id}
 
-    R->>DB: status = STARTING
-    R->>Redis: PUBLISH workspace:{id}<br/>{status: "STARTING"}
+    R->>DB: operation = STARTING
+    R->>Redis: PUBLISH workspace:{id}<br/>{status: "WARM", operation: "STARTING"}
     Redis-->>API: 메시지 수신
-    API-->>UI: event: state_changed<br/>data: {status: "STARTING"}
+    API-->>UI: event: state_changed<br/>data: {status: "WARM", operation: "STARTING"}
 
-    R->>DB: status = RUNNING
-    R->>Redis: PUBLISH workspace:{id}<br/>{status: "RUNNING"}
+    R->>DB: status = RUNNING, operation = NONE
+    R->>Redis: PUBLISH workspace:{id}<br/>{status: "RUNNING", operation: "NONE"}
     Redis-->>API: 메시지 수신
-    API-->>UI: event: state_changed<br/>data: {status: "RUNNING"}
+    API-->>UI: event: state_changed<br/>data: {status: "RUNNING", operation: "NONE"}
 
     UI->>UI: 상태에 따라 UI 업데이트
 ```
@@ -383,7 +386,7 @@ Accept: text/event-stream
 
 | 이벤트 | 데이터 | 설명 |
 |--------|--------|------|
-| `state_changed` | `{workspace_id, status, desired_state}` | 상태 변경 |
+| `state_changed` | `{workspace_id, status, operation, desired_state}` | 상태 변경 |
 | `error` | `{workspace_id, error_message, error_count}` | 에러 발생 |
 | `progress` | `{workspace_id, phase, progress_pct}` | 진행 상황 (선택) |
 
@@ -391,10 +394,10 @@ Accept: text/event-stream
 
 ```
 event: state_changed
-data: {"workspace_id": "abc123", "status": "STARTING", "desired_state": "RUNNING"}
+data: {"workspace_id": "abc123", "status": "WARM", "operation": "STARTING", "desired_state": "RUNNING"}
 
 event: state_changed
-data: {"workspace_id": "abc123", "status": "RUNNING", "desired_state": "RUNNING"}
+data: {"workspace_id": "abc123", "status": "RUNNING", "operation": "NONE", "desired_state": "RUNNING"}
 
 event: error
 data: {"workspace_id": "abc123", "error_message": "Container start failed", "error_count": 1}
@@ -407,9 +410,10 @@ const eventSource = new EventSource('/api/v1/workspaces/{id}/events');
 
 eventSource.addEventListener('state_changed', (e) => {
   const data = JSON.parse(e.data);
-  console.log(`Status: ${data.status}`);
+  console.log(`Status: ${data.status}, Operation: ${data.operation}`);
 
-  if (data.status === 'RUNNING') {
+  // operation이 NONE이고 status가 RUNNING이면 완료
+  if (data.status === 'RUNNING' && data.operation === 'NONE') {
     // 로딩 페이지 → 워크스페이스로 리다이렉트
     window.location.href = `/w/${data.workspace_id}/`;
   }

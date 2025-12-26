@@ -12,11 +12,34 @@ M2에서는 **Ordered State Machine** 패턴을 사용합니다. 상태에 순�
 
 ---
 
-## 상태 정의
+## 상태 모델: status + operation
 
-### 안정 상태 (Stable States)
+M2에서는 전이 상태를 별도 컬럼(`operation`)으로 분리하여 상태 모델을 단순화합니다.
 
-Reconciler의 `desired_state`로 설정 가능한 상태입니다.
+```python
+class WorkspaceStatus(Enum):
+    # 핵심 상태 (6개) - 리소스 존재 여부
+    PENDING = 0    # 리소스 없음
+    COLD = 10      # Object Storage
+    WARM = 20      # Volume
+    RUNNING = 30   # Container + Volume
+    ERROR = -1     # 오류 (레벨 없음)
+    DELETED = -2   # 삭제됨 (레벨 없음)
+
+class WorkspaceOperation(Enum):
+    # 진행 중인 작업 (7개)
+    NONE = "NONE"              # 작업 없음
+    INITIALIZING = "INITIALIZING"  # PENDING → COLD
+    RESTORING = "RESTORING"    # COLD → WARM
+    STARTING = "STARTING"      # WARM → RUNNING
+    STOPPING = "STOPPING"      # RUNNING → WARM
+    ARCHIVING = "ARCHIVING"    # WARM → COLD
+    DELETING = "DELETING"      # * → DELETED
+```
+
+### 상태 (status)
+
+리소스 존재 여부를 나타내는 핵심 상태입니다.
 
 | 상태 | 레벨 | Container | Volume | Object Storage | 설명 |
 |------|------|-----------|--------|----------------|------|
@@ -24,6 +47,8 @@ Reconciler의 `desired_state`로 설정 가능한 상태입니다.
 | COLD | 10 | - | - | ✅ (또는 없음) | 아카이브됨 |
 | WARM | 20 | - | ✅ | - | Volume만 존재 |
 | RUNNING | 30 | ✅ | ✅ | - | 컨테이너 실행 중 |
+| ERROR | -1 | (이전 상태) | (이전 상태) | (이전 상태) | 전환 실패, 복구 필요 |
+| DELETED | -2 | - | - | - | 소프트 삭제됨 |
 
 ```
 레벨:    0         10        20        30
@@ -31,12 +56,13 @@ Reconciler의 `desired_state`로 설정 가능한 상태입니다.
                ←      ←      ←
 ```
 
-### 전이 상태 (Transitional States)
+### 작업 (operation)
 
 전환 진행 중을 나타내는 상태입니다. API에서 직접 설정할 수 없습니다.
 
-| 상태 | 전환 | 설명 |
+| 작업 | 전환 | 설명 |
 |------|------|------|
+| NONE | - | 작업 없음 (안정 상태) |
 | INITIALIZING | PENDING → COLD | 최초 리소스 준비 중 |
 | RESTORING | COLD → WARM | Object Storage에서 Volume으로 복원 중 |
 | STARTING | WARM → RUNNING | 컨테이너 시작 중 |
@@ -44,20 +70,35 @@ Reconciler의 `desired_state`로 설정 가능한 상태입니다.
 | ARCHIVING | WARM → COLD | Volume을 Object Storage로 아카이브 중 |
 | DELETING | * → DELETED | 삭제 진행 중 |
 
-### 예외 상태 (Exception States)
+### 상태 표현 예시
 
-순서 체계 밖에서 별도 처리됩니다.
+| status | operation | 의미 |
+|--------|-----------|------|
+| PENDING | NONE | 생성됨, 대기 중 |
+| PENDING | INITIALIZING | 초기화 진행 중 |
+| COLD | NONE | 아카이브됨 |
+| COLD | RESTORING | 복원 진행 중 |
+| WARM | NONE | Volume 준비됨 |
+| WARM | STARTING | 컨테이너 시작 중 |
+| WARM | ARCHIVING | 아카이브 진행 중 |
+| RUNNING | NONE | 실행 중 |
+| RUNNING | STOPPING | 정지 진행 중 |
+| ERROR | NONE | 오류 발생 (복구 필요) |
 
-| 상태 | 설명 |
+### 장점
+
+| 장점 | 설명 |
 |------|------|
-| ERROR | 전환 실패, 복구 필요 |
-| DELETED | 소프트 삭제됨 |
+| **레벨 비교 단순화** | `status.level`로 직접 비교 가능 |
+| **전이 중 명확** | `operation != NONE`이면 전환 진행 중 |
+| **모순 방지** | `status = WARM, operation = STARTING` → "WARM이고 RUNNING으로 가는 중" |
+| **Reconciler 단순화** | `status != desired_state` 비교가 직관적 |
 
 ---
 
 ## 상태 다이어그램
 
-### 정상 흐름
+### 정상 흐름 (status 전환)
 
 ```mermaid
 stateDiagram-v2
@@ -65,25 +106,33 @@ stateDiagram-v2
 
     [*] --> PENDING: 생성
 
-    PENDING --> INITIALIZING: step_up
-    INITIALIZING --> COLD: 완료
+    PENDING --> COLD: step_up
+    COLD --> WARM: step_up
+    WARM --> RUNNING: step_up
 
-    COLD --> RESTORING: step_up
-    RESTORING --> WARM: 완료
-
-    WARM --> STARTING: step_up
-    STARTING --> RUNNING: 완료
-
-    RUNNING --> STOPPING: step_down
-    STOPPING --> WARM: 완료
-
-    WARM --> ARCHIVING: step_down
-    ARCHIVING --> COLD: 완료
+    RUNNING --> WARM: step_down
+    WARM --> COLD: step_down
 
     note right of PENDING: Level 0<br/>리소스 없음
     note right of COLD: Level 10<br/>Object Storage
     note right of WARM: Level 20<br/>Volume
     note right of RUNNING: Level 30<br/>Container + Volume
+```
+
+### 전환 중 상태 (status + operation)
+
+```mermaid
+flowchart LR
+    subgraph "step_up 방향"
+        P1["PENDING<br/>INITIALIZING"] --> C1["COLD<br/>NONE"]
+        C1a["COLD<br/>RESTORING"] --> W1["WARM<br/>NONE"]
+        W1a["WARM<br/>STARTING"] --> R1["RUNNING<br/>NONE"]
+    end
+
+    subgraph "step_down 방향"
+        R2["RUNNING<br/>STOPPING"] --> W2["WARM<br/>NONE"]
+        W2a["WARM<br/>ARCHIVING"] --> C2["COLD<br/>NONE"]
+    end
 ```
 
 ### 삭제 흐름
@@ -92,13 +141,9 @@ stateDiagram-v2
 stateDiagram-v2
     direction TB
 
-    PENDING --> DELETING: delete
-    COLD --> DELETING: delete
-    WARM --> DELETING: delete
-    RUNNING --> DELETING: delete
-    ERROR --> DELETING: delete
+    state "Any status" as any
 
-    DELETING --> DELETED: 완료
+    any --> DELETED: operation=DELETING → 완료
     DELETED --> [*]
 ```
 
@@ -108,11 +153,13 @@ stateDiagram-v2
 stateDiagram-v2
     direction TB
 
-    state "Any Transitional State" as any
+    state "Any status" as any
 
-    any --> ERROR: 전환 실패
+    any --> ERROR: operation 실패
     ERROR --> any: 복구 후 재시도
 ```
+
+> **Note**: ERROR 상태에서는 `operation = NONE`이고, 이전 상태 정보는 별도 컬럼에 저장됩니다.
 
 ---
 
@@ -164,31 +211,50 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    A[Reconcile 시작] --> B{status == desired_state?}
+    A[Reconcile 시작] --> A1{operation != NONE?}
+    A1 -->|Yes| A2[전환 완료 대기]
+    A1 -->|No| B{status == desired_state?}
     B -->|Yes| C[완료]
     B -->|No| D{status.level < desired_state.level?}
     D -->|Yes| E[step_up 실행]
     D -->|No| F[step_down 실행]
-    E --> G[status 갱신]
+    E --> G[operation 설정]
     F --> G
-    G --> B
+    G --> H[작업 수행]
+    H --> I[operation = NONE, status 갱신]
+    I --> B
+```
+
+### 레벨 비교 (단순화)
+
+```python
+# 기존 (복잡) - 전이 상태를 안정 상태에 매핑 필요
+if status in (PENDING, INITIALIZING):
+    current_level = 0
+elif status in (COLD, RESTORING):
+    current_level = 10
+...
+
+# 신규 (단순) - 직접 비교
+current_level = status.level  # PENDING=0, COLD=10, WARM=20, RUNNING=30
+is_transitioning = operation != NONE
 ```
 
 ### step_up 동작
 
-| 현재 → 다음 | 동작 |
-|-------------|------|
-| PENDING → COLD | 메타데이터 초기화 |
-| COLD → WARM | `archive_key` 있으면 restore, 없으면 provision |
-| WARM → RUNNING | 컨테이너 시작 |
+| status | operation | 동작 |
+|--------|-----------|------|
+| PENDING | INITIALIZING | 메타데이터 초기화 |
+| COLD | RESTORING | `archive_key` 있으면 restore, 없으면 provision |
+| WARM | STARTING | 컨테이너 시작 |
 
 ### step_down 동작
 
-| 현재 → 다음 | 동작 |
-|-------------|------|
-| RUNNING → WARM | 컨테이너 정지 |
-| WARM → COLD | Volume을 Object Storage에 아카이브 |
-| COLD → PENDING | (일반적으로 사용 안 함) |
+| status | operation | 동작 |
+|--------|-----------|------|
+| RUNNING | STOPPING | 컨테이너 정지 |
+| WARM | ARCHIVING | Volume을 Object Storage에 아카이브 |
+| COLD | - | (일반적으로 사용 안 함) |
 
 ---
 
