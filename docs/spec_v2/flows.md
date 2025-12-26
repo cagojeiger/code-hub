@@ -19,13 +19,15 @@ sequenceDiagram
     participant U as User
     participant API as Control Plane
     participant DB as Database
+    participant Redis as Redis
     participant R as Reconciler
 
     U->>API: POST /workspaces
     API->>DB: INSERT (status=PENDING, desired_state=RUNNING)
+    API->>Redis: PUBLISH reconciler:hints {workspace_id}
     API->>U: 201 Created
 
-    Note over R: Reconcile Loop
+    Redis-->>R: 힌트 수신
     R->>DB: status != desired_state 감지
     R->>R: step_up (PENDING → COLD)
     R->>DB: status = INITIALIZING
@@ -64,6 +66,7 @@ sequenceDiagram
     participant P as Proxy
     participant API as Control Plane
     participant DB as Database
+    participant Redis as Redis
     participant R as Reconciler
 
     U->>P: GET /w/{workspace_id}/
@@ -73,8 +76,9 @@ sequenceDiagram
     P->>U: 로딩 페이지 (SSE 연결)
     P->>API: PATCH /workspaces/{id} (desired_state=RUNNING)
     API->>DB: desired_state = RUNNING
-    API->>R: Hint (Redis Pub/Sub)
+    API->>Redis: PUBLISH reconciler:hints {workspace_id}
 
+    Redis-->>R: 힌트 수신
     R->>DB: status != desired_state 감지
     R->>R: step_up (WARM → RUNNING)
     R->>DB: status = STARTING
@@ -169,6 +173,7 @@ sequenceDiagram
     participant U as User
     participant API as Control Plane
     participant DB as Database
+    participant Redis as Redis
     participant R as Reconciler
     participant S as Storage Provider
     participant M as MinIO
@@ -177,8 +182,10 @@ sequenceDiagram
 
     U->>API: POST /workspaces/{id}:restore
     API->>DB: desired_state = RUNNING
+    API->>Redis: PUBLISH reconciler:hints {workspace_id}
     API->>U: 202 Accepted
 
+    Redis-->>R: 힌트 수신
     R->>DB: status != desired_state 감지
     R->>R: step_up (COLD → WARM)
     R->>DB: status = RESTORING
@@ -207,12 +214,15 @@ sequenceDiagram
     participant U as User
     participant API as Control Plane
     participant DB as Database
+    participant Redis as Redis
     participant R as Reconciler
 
     U->>API: PATCH /workspaces/{id}<br/>{desired_state: "WARM"}
     API->>DB: desired_state = WARM
+    API->>Redis: PUBLISH reconciler:hints {workspace_id}
     API->>U: 200 OK
 
+    Redis-->>R: 힌트 수신
     R->>DB: status != desired_state 감지
     R->>R: step_down (RUNNING → WARM)
     R->>DB: status = STOPPING
@@ -231,6 +241,7 @@ sequenceDiagram
     participant U as User
     participant API as Control Plane
     participant DB as Database
+    participant Redis as Redis
     participant R as Reconciler
     participant S as Storage Provider
     participant V as Docker Volume
@@ -238,8 +249,10 @@ sequenceDiagram
 
     U->>API: PATCH /workspaces/{id}<br/>{desired_state: "COLD"}
     API->>DB: desired_state = COLD
+    API->>Redis: PUBLISH reconciler:hints {workspace_id}
     API->>U: 200 OK
 
+    Redis-->>R: 힌트 수신
     R->>DB: status != desired_state 감지
     R->>R: step_down (WARM → COLD)
     R->>DB: status = ARCHIVING
@@ -263,14 +276,17 @@ sequenceDiagram
     participant U as User
     participant API as Control Plane
     participant DB as Database
+    participant Redis as Redis
     participant R as Reconciler
     participant I as Instance Controller
     participant S as Storage Provider
 
     U->>API: DELETE /workspaces/{id}
     API->>DB: deleted_at = NOW()
+    API->>Redis: PUBLISH reconciler:hints {workspace_id}
     API->>U: 204 No Content
 
+    Redis-->>R: 힌트 수신
     R->>DB: deleted_at != NULL 감지
     R->>DB: status = DELETING
 
