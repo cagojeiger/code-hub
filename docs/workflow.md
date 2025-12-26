@@ -44,7 +44,7 @@ flowchart LR
 
 ### 계획 단계
 
-1. **spec.md** - 기능 요구사항
+1. **spec/** - 기능 요구사항
 2. **Roadmap** - Milestone 구조
 3. **Task** - 작업 단위 + Exit Criteria
 
@@ -499,8 +499,8 @@ Blocker 해소 후 원래 Task 재개
 ```mermaid
 flowchart LR
     subgraph Core["핵심 문서"]
-        SPEC[spec.md<br/>기능 정의]
-        ARCH[architecture.md<br/>시스템 설계]
+        SPEC[spec/<br/>기능 정의]
+        ARCH[architecture/<br/>시스템 설계]
     end
 
     subgraph Decisions["결정 기록"]
@@ -588,8 +588,8 @@ dev → main         : 릴리즈 준비 완료 시
 ### Task 시작 시
 
 - [ ] 🤖 Roadmap에서 현재 Task 확인
-- [ ] 🤖 spec.md에서 관련 섹션 읽기
-- [ ] 🤖 architecture.md에서 컴포넌트 관계 확인
+- [ ] 🤖 spec/에서 관련 섹션 읽기
+- [ ] 🤖 architecture/에서 컴포넌트 관계 확인
 - [ ] 🤖 Exit Criteria 확인 (정의는 Task 생성 시 완료)
 
 ### PR 머지 후
@@ -612,6 +612,6 @@ dev → main         : 릴리즈 준비 완료 시
 ## 참조
 
 - [AGENTS.md](../AGENTS.md) - AI 에이전트 가이드
-- [spec.md](./spec.md) - 기능 스펙
-- [architecture.md](./architecture.md) - 시스템 아키텍처
+- [spec/](./spec/) - 기능 스펙
+- [architecture/](./architecture/) - 시스템 아키텍처
 - [ADR-000: Repository Strategy](./adr/000-repository-strategy.md)
