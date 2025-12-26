@@ -54,10 +54,12 @@ flowchart LR
 상태에 순서(레벨)를 부여하고, 인접 상태로만 전환하는 방식:
 
 ```
-레벨:    0         1         2         3
+레벨:    0         10        20        30
        PENDING → COLD → WARM → RUNNING
                ←      ←      ←
 ```
+
+> **레벨 간격 10**: 향후 중간 상태 추가를 대비하여 갭을 둠 (예: COLD와 WARM 사이에 레벨 15 삽입 가능)
 
 ### 핵심 원칙
 
@@ -74,9 +76,9 @@ Reconciler의 `desired_state`로 설정 가능한 상태
 | 상태 | 레벨 | Container | Volume | Object Storage | 설명 |
 |------|------|-----------|--------|----------------|------|
 | PENDING | 0 | - | - | - | 최초 생성, 리소스 없음 |
-| COLD | 1 | - | - | ✅ (또는 없음) | 아카이브됨 |
-| WARM | 2 | - | ✅ | - | Volume만 존재 |
-| RUNNING | 3 | ✅ | ✅ | - | 실행 중 |
+| COLD | 10 | - | - | ✅ (또는 없음) | 아카이브됨 |
+| WARM | 20 | - | ✅ | - | Volume만 존재 |
+| RUNNING | 30 | ✅ | ✅ | - | 실행 중 |
 
 #### 전이 상태 (Transitional States)
 전환 진행 중을 나타내는 상태
@@ -122,6 +124,7 @@ CREATING = 2
 | **PENDING = 0** | Python + PostgreSQL 환경에서 Protobuf 규칙 불필요 |
 | **DB NOT NULL** | 상태 컬럼은 항상 값이 있어야 함 |
 | **명시적 초기 상태** | PENDING이 명확한 의미를 가짐 (리소스 없음) |
+| **레벨 간격 10** | 향후 중간 상태 추가 대비 (0, 10, 20, 30) |
 
 ### ERROR 상태의 특수성
 
@@ -224,9 +227,9 @@ stateDiagram-v2
     DELETED --> [*]
 
     note right of PENDING: Level 0<br/>리소스 없음
-    note right of COLD: Level 1<br/>Object Storage
-    note right of WARM: Level 2<br/>Volume
-    note right of RUNNING: Level 3<br/>Container + Volume
+    note right of COLD: Level 10<br/>Object Storage
+    note right of WARM: Level 20<br/>Volume
+    note right of RUNNING: Level 30<br/>Container + Volume
 ```
 
 #### 예외 상태
