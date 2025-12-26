@@ -96,6 +96,59 @@ Reconciler의 `desired_state`로 설정 가능한 상태
 | DELETED | 소프트 삭제됨 |
 | ERROR | 오류 발생, 복구 필요 |
 
+### 레벨 0과 UNKNOWN에 대한 결정
+
+#### Protobuf/gRPC 컨벤션
+
+많은 시스템에서 레벨 0을 UNKNOWN으로 사용:
+
+```
+UNKNOWN = 0      // 기본값 (미설정)
+PENDING = 1
+CREATING = 2
+...
+```
+
+| 이유 | 설명 |
+|------|------|
+| **기본값 구분** | 필드 미설정 시 자동으로 0 → "의도적 설정"과 "미설정" 구분 |
+| **역직렬화 안전** | 알 수 없는 enum 값이 들어오면 0으로 처리 |
+| **버전 호환성** | 새 상태 추가해도 구버전 클라이언트가 UNKNOWN으로 처리 |
+
+#### 우리의 선택: UNKNOWN 미사용
+
+| 결정 | 이유 |
+|------|------|
+| **PENDING = 0** | Python + PostgreSQL 환경에서 Protobuf 규칙 불필요 |
+| **DB NOT NULL** | 상태 컬럼은 항상 값이 있어야 함 |
+| **명시적 초기 상태** | PENDING이 명확한 의미를 가짐 (리소스 없음) |
+
+### ERROR 상태의 특수성
+
+ERROR는 순서 체계(Ordered) 밖에서 별도 처리:
+
+```mermaid
+flowchart TB
+    subgraph ordered["정상 흐름 (Ordered)"]
+        P[PENDING] <--> C[COLD] <--> W[WARM] <--> R[RUNNING]
+    end
+
+    subgraph unordered["예외 흐름 (Unordered)"]
+        E[ERROR]
+        D[DELETED]
+    end
+
+    ordered -->|실패| E
+    E -->|복구| ordered
+```
+
+| 특성 | 설명 |
+|------|------|
+| **레벨 없음** | 순서 비교 대상이 아님 |
+| **어디서든 진입** | 모든 상태에서 ERROR로 전환 가능 |
+| **원래 상태로 복구** | ERROR 해제 시 이전 상태로 돌아감 |
+| **Reconciler 스킵** | ERROR 상태에서는 자동 전환 중단 |
+
 ### 전환 알고리즘
 
 #### Reconcile 루프
