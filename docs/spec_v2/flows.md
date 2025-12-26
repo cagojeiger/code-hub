@@ -6,437 +6,204 @@
 
 ## 개요
 
-M2의 핵심 플로우를 정의합니다. 모든 상태 전환은 Reconciler를 통해 이루어집니다.
+사용자 시나리오별 플로우를 정의합니다. 세부 동작은 레이어 문서를 참조하세요:
+
+| 레이어 | 문서 | 설명 |
+|--------|------|------|
+| State Transitions | [states.md](./states.md) | 상태 전환 규칙 |
+| Storage | [storage.md](./storage.md) | archive/restore |
+| Instance | [instance.md](./instance.md) | 컨테이너 시작/정지 |
+| Events | [events.md](./events.md) | SSE 이벤트 |
 
 ---
 
 ## 1. Workspace 생성
 
-### 시퀀스
+사용자가 새 워크스페이스를 생성하면 RUNNING까지 자동 전환.
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant API as Control Plane
-    participant DB as Database
-    participant Redis as Redis
     participant R as Reconciler
 
     U->>API: POST /workspaces
-    API->>DB: INSERT (status=PENDING, operation=NONE, desired_state=RUNNING)
-    API->>Redis: PUBLISH reconciler:hints {workspace_id}
+    API->>API: INSERT (desired_state=RUNNING)
     API->>U: 201 Created
 
-    Redis-->>R: 힌트 수신
-    R->>DB: status != desired_state 감지
     R->>R: step_up (PENDING → COLD)
-    R->>DB: operation = INITIALIZING
-    R->>R: 초기화 완료
-    R->>DB: status = COLD, operation = NONE
-
+    Note right of R: INITIALIZING
     R->>R: step_up (COLD → WARM)
-    R->>DB: operation = RESTORING
-    R->>R: Volume 프로비저닝
-    R->>DB: status = WARM, operation = NONE
-
+    Note right of R: storage.md 참조
     R->>R: step_up (WARM → RUNNING)
-    R->>DB: operation = STARTING
-    R->>R: 컨테이너 시작
-    R->>DB: status = RUNNING, operation = NONE
+    Note right of R: instance.md 참조
 ```
 
 ### 상태 변화
 
 ```
-(PENDING, NONE) → (PENDING, INITIALIZING) → (COLD, NONE) →
-(COLD, RESTORING) → (WARM, NONE) → (WARM, STARTING) → (RUNNING, NONE)
+PENDING → COLD → WARM → RUNNING
 ```
 
 ---
 
 ## 2. Auto-wake (WARM → RUNNING)
 
-### 트리거
-- 프록시가 WARM 상태의 워크스페이스 접속 감지
-
-### 시퀀스
+프록시가 WARM 상태 접속을 감지하면 자동으로 시작.
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant P as Proxy
     participant API as Control Plane
-    participant DB as Database
-    participant Redis as Redis
     participant R as Reconciler
 
     U->>P: GET /w/{workspace_id}/
-    P->>DB: status, operation 확인
-    DB-->>P: status = WARM, operation = NONE
-
+    P->>P: status = WARM 확인
     P->>U: 로딩 페이지 (SSE 연결)
-    P->>API: PATCH /workspaces/{id} (desired_state=RUNNING)
-    API->>DB: desired_state = RUNNING
-    API->>Redis: PUBLISH reconciler:hints {workspace_id}
+    P->>API: desired_state = RUNNING
 
-    Redis-->>R: 힌트 수신
-    R->>DB: status != desired_state 감지
     R->>R: step_up (WARM → RUNNING)
-    R->>DB: operation = STARTING
-    R->>R: 컨테이너 시작
-    R->>DB: status = RUNNING, operation = NONE
+    Note right of R: instance.md 참조
 
-    R->>P: SSE: state_changed (status=RUNNING)
-    P->>U: 리다이렉트
-    U->>P: GET /w/{workspace_id}/
-    P->>Container: 프록시
-```
-
-### 로딩 페이지
-
-```html
-<!-- 로딩 페이지 예시 -->
-<div class="loading">
-  <h1>Workspace 시작 중...</h1>
-  <p>잠시만 기다려주세요.</p>
-  <div class="spinner"></div>
-</div>
-
-<script>
-const es = new EventSource('/api/v1/workspaces/{id}/events');
-es.onmessage = (e) => {
-  const data = JSON.parse(e.data);
-  if (data.status === 'RUNNING') {
-    window.location.reload();
-  }
-};
-</script>
+    R-->>U: SSE: status=RUNNING
+    Note right of U: events.md 참조
+    U->>P: 리다이렉트
 ```
 
 ---
 
-## 3. TTL 기반 상태 전환
+## 3. TTL 기반 자동 전환
 
-### 3.1 RUNNING → WARM (idle timeout)
+### 3.1 RUNNING → WARM
 
-```mermaid
-sequenceDiagram
-    participant R as Reconciler
-    participant DB as Database
-    participant I as Instance Controller
-
-    Note over R: 주기적 폴링 (1분)
-    R->>DB: SELECT * FROM workspaces<br/>WHERE status='RUNNING' AND operation='NONE'<br/>AND last_access_at + warm_ttl < NOW()
-
-    loop 대상 워크스페이스마다
-        R->>DB: desired_state = WARM
-        R->>R: step_down (RUNNING → WARM)
-        R->>DB: operation = STOPPING
-        R->>I: 컨테이너 정지
-        R->>DB: status = WARM, operation = NONE
-    end
-```
-
-### 3.2 WARM → COLD (archive timeout)
+| 조건 | 값 |
+|------|-----|
+| 트리거 | `last_access_at + warm_ttl < NOW()` |
+| warm_ttl 기본값 | 1800초 (30분) |
 
 ```mermaid
-sequenceDiagram
-    participant R as Reconciler
-    participant DB as Database
-    participant S as Storage Provider
-    participant V as Docker Volume
-    participant M as MinIO
-
-    R->>DB: SELECT * FROM workspaces<br/>WHERE status='WARM' AND operation='NONE'<br/>AND last_access_at + cold_ttl < NOW()
-
-    loop 대상 워크스페이스마다
-        R->>DB: desired_state = COLD
-        R->>R: step_down (WARM → COLD)
-        R->>DB: operation = ARCHIVING
-        R->>S: archive(home_store_key)
-        S->>V: Volume 데이터 읽기
-        S->>M: PUT object (tar.gz)
-        M-->>S: archive_key
-        S->>V: Volume 삭제
-        S-->>R: archive_key
-        R->>DB: archive_key = {key}, status = COLD, operation = NONE
-    end
+flowchart LR
+    R[RUNNING] -->|warm_ttl 만료| W[WARM]
 ```
+
+Reconciler가 step_down 실행 → [instance.md](./instance.md) STOPPING 참조
+
+### 3.2 WARM → COLD
+
+| 조건 | 값 |
+|------|-----|
+| 트리거 | `last_access_at + cold_ttl < NOW()` |
+| cold_ttl 기본값 | 86400초 (1일) |
+
+```mermaid
+flowchart LR
+    W[WARM] -->|cold_ttl 만료| C[COLD]
+```
+
+Reconciler가 step_down 실행 → [storage.md](./storage.md) ARCHIVING 참조
 
 ---
 
 ## 4. Manual Restore (COLD → RUNNING)
 
-### 시퀀스
+사용자가 아카이브된 워크스페이스를 복원.
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant API as Control Plane
-    participant DB as Database
-    participant Redis as Redis
     participant R as Reconciler
-    participant S as Storage Provider
-    participant M as MinIO
-    participant V as Docker Volume
-    participant I as Instance Controller
 
     U->>API: POST /workspaces/{id}:restore
-    API->>DB: desired_state = RUNNING
-    API->>Redis: PUBLISH reconciler:hints {workspace_id}
+    API->>API: desired_state = RUNNING
     API->>U: 202 Accepted
 
-    Redis-->>R: 힌트 수신
-    R->>DB: status != desired_state 감지
     R->>R: step_up (COLD → WARM)
-    R->>DB: operation = RESTORING
-    R->>S: restore(archive_key)
-    S->>M: GET object (tar.gz)
-    M-->>S: archive data
-    S->>V: Volume 생성 + 데이터 복원
-    S-->>R: home_store_key
-    R->>DB: status = WARM, operation = NONE
-
+    Note right of R: storage.md RESTORING 참조
     R->>R: step_up (WARM → RUNNING)
-    R->>DB: operation = STARTING
-    R->>I: 컨테이너 시작 (Volume 마운트)
-    I-->>R: 시작 완료
-    R->>DB: status = RUNNING, operation = NONE
+    Note right of R: instance.md STARTING 참조
 ```
 
 ---
 
 ## 5. Manual Stop (RUNNING → WARM)
 
-### 시퀀스
+사용자가 워크스페이스를 정지.
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant API as Control Plane
-    participant DB as Database
-    participant Redis as Redis
     participant R as Reconciler
 
-    U->>API: PATCH /workspaces/{id}<br/>{desired_state: "WARM"}
-    API->>DB: desired_state = WARM
-    API->>Redis: PUBLISH reconciler:hints {workspace_id}
+    U->>API: PATCH /workspaces/{id} {desired_state: "WARM"}
     API->>U: 200 OK
 
-    Redis-->>R: 힌트 수신
-    R->>DB: status != desired_state 감지
     R->>R: step_down (RUNNING → WARM)
-    R->>DB: operation = STOPPING
-    R->>R: 컨테이너 정지
-    R->>DB: status = WARM, operation = NONE
+    Note right of R: instance.md STOPPING 참조
 ```
 
 ---
 
 ## 6. Manual Archive (WARM → COLD)
 
-### 시퀀스
+사용자가 워크스페이스를 아카이브.
 
 ```mermaid
 sequenceDiagram
     participant U as User
     participant API as Control Plane
-    participant DB as Database
-    participant Redis as Redis
     participant R as Reconciler
-    participant S as Storage Provider
-    participant V as Docker Volume
-    participant M as MinIO
 
-    U->>API: PATCH /workspaces/{id}<br/>{desired_state: "COLD"}
-    API->>DB: desired_state = COLD
-    API->>Redis: PUBLISH reconciler:hints {workspace_id}
+    U->>API: PATCH /workspaces/{id} {desired_state: "COLD"}
     API->>U: 200 OK
 
-    Redis-->>R: 힌트 수신
-    R->>DB: status != desired_state 감지
     R->>R: step_down (WARM → COLD)
-    R->>DB: operation = ARCHIVING
-    R->>S: archive(home_store_key)
-    S->>V: Volume 데이터 읽기
-    S->>M: PUT object (tar.gz)
-    M-->>S: archive_key
-    S->>V: Volume 삭제
-    S-->>R: archive_key
-    R->>DB: archive_key = {key}, status = COLD, operation = NONE
+    Note right of R: storage.md ARCHIVING 참조
 ```
 
 ---
 
 ## 7. Workspace 삭제
 
-### 시퀀스
-
 ```mermaid
 sequenceDiagram
     participant U as User
     participant API as Control Plane
-    participant DB as Database
-    participant Redis as Redis
     participant R as Reconciler
-    participant I as Instance Controller
-    participant S as Storage Provider
 
     U->>API: DELETE /workspaces/{id}
-    API->>DB: deleted_at = NOW()
-    API->>Redis: PUBLISH reconciler:hints {workspace_id}
+    API->>API: deleted_at = NOW()
     API->>U: 204 No Content
 
-    Redis-->>R: 힌트 수신
-    R->>DB: deleted_at != NULL 감지
-    R->>DB: operation = DELETING
-
-    alt status was RUNNING
-        R->>I: 컨테이너 삭제
-    end
-
-    alt status was WARM
-        R->>S: purge(home_store_key)
-    end
-
-    alt status was COLD
-        R->>S: purge(archive_key)
-    end
-
-    R->>DB: status = DELETED, operation = NONE
+    R->>R: operation = DELETING
+    Note right of R: 상태별 정리
+    R->>R: RUNNING → instance.md delete
+    R->>R: WARM → storage.md purge
+    R->>R: COLD → storage.md purge
+    R->>R: status = DELETED
 ```
 
 ---
 
 ## 8. 에러 복구
 
-### 시퀀스
-
 ```mermaid
-sequenceDiagram
-    participant R as Reconciler
-    participant DB as Database
-
-    Note over R: 전환 중 실패 발생
-    R->>DB: status = ERROR, operation = NONE,<br/>error_message = "...",<br/>error_count += 1
-
-    Note over R: 다음 Reconcile 사이클
-    R->>DB: error_count < max_retry?
-
-    alt 재시도 가능
-        R->>R: 이전 전환 재시도
-        R->>DB: error_count = 0 (성공 시)
-    else 재시도 불가
-        R->>R: 관리자 알림
-    end
+flowchart TD
+    A[operation 실패] --> B[status = ERROR]
+    B --> C{error_count < 3?}
+    C -->|Yes| D[자동 재시도]
+    C -->|No| E[관리자 개입]
+    D --> F[성공]
+    D --> B
 ```
-
-### 에러 상태 해제 조건
-
-| 조건 | 동작 |
-|------|------|
-| error_count < 3 | 자동 재시도 |
-| error_count >= 3 | 관리자 개입 필요, 수동 해제 |
-
-> **Note**: ERROR 상태에서는 `operation = NONE`이며, 이전 status는 별도 필드로 보존됩니다.
-
----
-
-## 9. SSE 이벤트 (실시간 상태 알림)
-
-### 개요
-
-UI(대시보드, 로딩 페이지)가 상태 변경을 실시간으로 확인할 수 있도록 SSE(Server-Sent Events) 제공.
-
-### 시퀀스
-
-```mermaid
-sequenceDiagram
-    participant UI as Dashboard/Loading Page
-    participant API as Control Plane
-    participant Redis as Redis Pub/Sub
-    participant R as Reconciler
-    participant DB as Database
-
-    UI->>API: GET /workspaces/{id}/events
-    Note over UI,API: SSE 연결 유지
-    API->>Redis: SUBSCRIBE workspace:{id}
-
-    R->>DB: operation = STARTING
-    R->>Redis: PUBLISH workspace:{id}<br/>{status: "WARM", operation: "STARTING"}
-    Redis-->>API: 메시지 수신
-    API-->>UI: event: state_changed<br/>data: {status: "WARM", operation: "STARTING"}
-
-    R->>DB: status = RUNNING, operation = NONE
-    R->>Redis: PUBLISH workspace:{id}<br/>{status: "RUNNING", operation: "NONE"}
-    Redis-->>API: 메시지 수신
-    API-->>UI: event: state_changed<br/>data: {status: "RUNNING", operation: "NONE"}
-
-    UI->>UI: 상태에 따라 UI 업데이트
-```
-
-### SSE 엔드포인트
-
-```
-GET /api/v1/workspaces/{id}/events
-Accept: text/event-stream
-```
-
-### 이벤트 타입
-
-| 이벤트 | 데이터 | 설명 |
-|--------|--------|------|
-| `state_changed` | `{workspace_id, status, operation, desired_state}` | 상태 변경 |
-| `error` | `{workspace_id, error_message, error_count}` | 에러 발생 |
-| `progress` | `{workspace_id, phase, progress_pct}` | 진행 상황 (선택) |
-
-### 예시
-
-```
-event: state_changed
-data: {"workspace_id": "abc123", "status": "WARM", "operation": "STARTING", "desired_state": "RUNNING"}
-
-event: state_changed
-data: {"workspace_id": "abc123", "status": "RUNNING", "operation": "NONE", "desired_state": "RUNNING"}
-
-event: error
-data: {"workspace_id": "abc123", "error_message": "Container start failed", "error_count": 1}
-```
-
-### 클라이언트 코드
-
-```javascript
-const eventSource = new EventSource('/api/v1/workspaces/{id}/events');
-
-eventSource.addEventListener('state_changed', (e) => {
-  const data = JSON.parse(e.data);
-  console.log(`Status: ${data.status}, Operation: ${data.operation}`);
-
-  // operation이 NONE이고 status가 RUNNING이면 완료
-  if (data.status === 'RUNNING' && data.operation === 'NONE') {
-    // 로딩 페이지 → 워크스페이스로 리다이렉트
-    window.location.href = `/w/${data.workspace_id}/`;
-  }
-});
-
-eventSource.addEventListener('error', (e) => {
-  const data = JSON.parse(e.data);
-  alert(`Error: ${data.error_message}`);
-});
-```
-
-### 구현 방식
-
-| 컴포넌트 | 역할 |
-|----------|------|
-| Reconciler | 상태 변경 시 Redis PUBLISH |
-| API Server | Redis SUBSCRIBE → SSE 전달 |
-| Redis | Pub/Sub 채널 (`workspace:{id}`) |
 
 ---
 
 ## 참조
 
-- [states.md](./states.md) - 상태 정의
-- [api.md](./api.md) - API 스펙
-- [ADR-006: Reconciler 패턴](../adr/006-reconciler-pattern.md)
+- [states.md](./states.md) - 상태 전환 규칙
+- [storage.md](./storage.md) - 스토리지 동작
+- [instance.md](./instance.md) - 인스턴스 동작
+- [events.md](./events.md) - SSE 이벤트

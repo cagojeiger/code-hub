@@ -199,7 +199,7 @@ flowchart LR
 | 전환 | 트리거 | 기본값 |
 |------|--------|--------|
 | RUNNING → WARM | `last_access_at + warm_ttl_seconds` 경과 | 30분 |
-| WARM → COLD | `last_access_at + cold_ttl_seconds` 경과 | 7일 |
+| WARM → COLD | `last_access_at + cold_ttl_seconds` 경과 | 1일 |
 
 > TTL은 워크스페이스별로 설정 가능 (schema.md 참조)
 

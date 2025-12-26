@@ -173,7 +173,7 @@ flowchart LR
 | 파라미터 | 기본값 | 설명 |
 |----------|--------|------|
 | warm_ttl_seconds | 1800 (30분) | RUNNING → WARM |
-| cold_ttl_seconds | 604800 (7일) | WARM → COLD |
+| cold_ttl_seconds | 86400 (1일) | WARM → COLD |
 
 ---
 
