@@ -139,6 +139,8 @@ sequenceDiagram
     participant R as Reconciler
     participant DB as Database
     participant S as Storage Provider
+    participant V as Docker Volume
+    participant M as MinIO
 
     R->>DB: SELECT * FROM workspaces<br/>WHERE status='WARM'<br/>AND last_access_at + cold_ttl < NOW()
 
@@ -147,6 +149,10 @@ sequenceDiagram
         R->>R: step_down (WARM → COLD)
         R->>DB: status = ARCHIVING
         R->>S: archive(home_store_key)
+        S->>V: Volume 데이터 읽기
+        S->>M: PUT object (tar.gz)
+        M-->>S: archive_key
+        S->>V: Volume 삭제
         S-->>R: archive_key
         R->>DB: archive_key = {key}, status = COLD
     end
@@ -165,6 +171,9 @@ sequenceDiagram
     participant DB as Database
     participant R as Reconciler
     participant S as Storage Provider
+    participant M as MinIO
+    participant V as Docker Volume
+    participant I as Instance Controller
 
     U->>API: POST /workspaces/{id}:restore
     API->>DB: desired_state = RUNNING
@@ -174,12 +183,16 @@ sequenceDiagram
     R->>R: step_up (COLD → WARM)
     R->>DB: status = RESTORING
     R->>S: restore(archive_key)
+    S->>M: GET object (tar.gz)
+    M-->>S: archive data
+    S->>V: Volume 생성 + 데이터 복원
     S-->>R: home_store_key
     R->>DB: status = WARM
 
     R->>R: step_up (WARM → RUNNING)
     R->>DB: status = STARTING
-    R->>R: 컨테이너 시작
+    R->>I: 컨테이너 시작 (Volume 마운트)
+    I-->>R: 시작 완료
     R->>DB: status = RUNNING
 ```
 
@@ -220,6 +233,8 @@ sequenceDiagram
     participant DB as Database
     participant R as Reconciler
     participant S as Storage Provider
+    participant V as Docker Volume
+    participant M as MinIO
 
     U->>API: PATCH /workspaces/{id}<br/>{desired_state: "COLD"}
     API->>DB: desired_state = COLD
@@ -229,6 +244,10 @@ sequenceDiagram
     R->>R: step_down (WARM → COLD)
     R->>DB: status = ARCHIVING
     R->>S: archive(home_store_key)
+    S->>V: Volume 데이터 읽기
+    S->>M: PUT object (tar.gz)
+    M-->>S: archive_key
+    S->>V: Volume 삭제
     S-->>R: archive_key
     R->>DB: archive_key = {key}, status = COLD
 ```
@@ -301,6 +320,98 @@ sequenceDiagram
 |------|------|
 | error_count < 3 | 자동 재시도 |
 | error_count >= 3 | 관리자 개입 필요, 수동 해제 |
+
+---
+
+## 9. SSE 이벤트 (실시간 상태 알림)
+
+### 개요
+
+UI(대시보드, 로딩 페이지)가 상태 변경을 실시간으로 확인할 수 있도록 SSE(Server-Sent Events) 제공.
+
+### 시퀀스
+
+```mermaid
+sequenceDiagram
+    participant UI as Dashboard/Loading Page
+    participant API as Control Plane
+    participant Redis as Redis Pub/Sub
+    participant R as Reconciler
+    participant DB as Database
+
+    UI->>API: GET /workspaces/{id}/events
+    Note over UI,API: SSE 연결 유지
+    API->>Redis: SUBSCRIBE workspace:{id}
+
+    R->>DB: status = STARTING
+    R->>Redis: PUBLISH workspace:{id}<br/>{status: "STARTING"}
+    Redis-->>API: 메시지 수신
+    API-->>UI: event: state_changed<br/>data: {status: "STARTING"}
+
+    R->>DB: status = RUNNING
+    R->>Redis: PUBLISH workspace:{id}<br/>{status: "RUNNING"}
+    Redis-->>API: 메시지 수신
+    API-->>UI: event: state_changed<br/>data: {status: "RUNNING"}
+
+    UI->>UI: 상태에 따라 UI 업데이트
+```
+
+### SSE 엔드포인트
+
+```
+GET /api/v1/workspaces/{id}/events
+Accept: text/event-stream
+```
+
+### 이벤트 타입
+
+| 이벤트 | 데이터 | 설명 |
+|--------|--------|------|
+| `state_changed` | `{workspace_id, status, desired_state}` | 상태 변경 |
+| `error` | `{workspace_id, error_message, error_count}` | 에러 발생 |
+| `progress` | `{workspace_id, phase, progress_pct}` | 진행 상황 (선택) |
+
+### 예시
+
+```
+event: state_changed
+data: {"workspace_id": "abc123", "status": "STARTING", "desired_state": "RUNNING"}
+
+event: state_changed
+data: {"workspace_id": "abc123", "status": "RUNNING", "desired_state": "RUNNING"}
+
+event: error
+data: {"workspace_id": "abc123", "error_message": "Container start failed", "error_count": 1}
+```
+
+### 클라이언트 코드
+
+```javascript
+const eventSource = new EventSource('/api/v1/workspaces/{id}/events');
+
+eventSource.addEventListener('state_changed', (e) => {
+  const data = JSON.parse(e.data);
+  console.log(`Status: ${data.status}`);
+
+  if (data.status === 'RUNNING') {
+    // 로딩 페이지 → 워크스페이스로 리다이렉트
+    window.location.href = `/w/${data.workspace_id}/`;
+  }
+});
+
+eventSource.addEventListener('error', (e) => {
+  const data = JSON.parse(e.data);
+  alert(`Error: ${data.error_message}`);
+});
+```
+
+### 구현 방식
+
+| 컴포넌트 | 역할 |
+|----------|------|
+| Reconciler | 상태 변경 시 Redis PUBLISH |
+| API Server | Redis SUBSCRIBE → SSE 전달 |
+| Redis | Pub/Sub 채널 (`workspace:{id}`) |
 
 ---
 
