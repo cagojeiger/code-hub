@@ -26,14 +26,19 @@ Proposed
 | **중간 실패** | 복합 전환 중 실패 시 상태 불일치 |
 | **확장 어려움** | 상태 1개 추가 시 2×(N-1) 조합 추가 |
 
-예시 (4개 상태):
-```python
-# 직접 전환: 12개 조합 (4×3)
-if current == "A" and target == "B": ...
-if current == "A" and target == "C": ...
-if current == "A" and target == "D": ...
-if current == "B" and target == "A": ...
-# ... 8개 더
+예시 (4개 상태, 12개 전환 조합):
+
+```mermaid
+flowchart LR
+    A((A))
+    B((B))
+    C((C))
+    D((D))
+
+    A --> B & C & D
+    B --> A & C & D
+    C --> A & B & D
+    D --> A & B & C
 ```
 
 ### 요구사항
@@ -93,69 +98,97 @@ Reconciler의 `desired_state`로 설정 가능한 상태
 
 ### 전환 알고리즘
 
-```python
-STATE_ORDER = ["PENDING", "COLD", "WARM", "RUNNING"]
+#### Reconcile 루프
 
-async def reconcile(workspace):
-    current_idx = STATE_ORDER.index(workspace.status)
-    target_idx = STATE_ORDER.index(workspace.desired_state)
-
-    while current_idx != target_idx:
-        if current_idx < target_idx:
-            await step_up(workspace)   # 활성화 방향
-            current_idx += 1
-        else:
-            await step_down(workspace) # 비활성화 방향
-            current_idx -= 1
-
-async def step_up(workspace):
-    """한 단계 위로 (활성화)"""
-    match workspace.status:
-        case "PENDING":
-            # PENDING → COLD: 초기화
-            workspace.status = "COLD"
-        case "COLD":
-            # COLD → WARM: restore 또는 provision
-            if workspace.archive_key:
-                await storage.restore(...)
-            else:
-                await storage.provision(...)
-            workspace.status = "WARM"
-        case "WARM":
-            # WARM → RUNNING: 컨테이너 시작
-            await instance.start(...)
-            workspace.status = "RUNNING"
-
-async def step_down(workspace):
-    """한 단계 아래로 (비활성화)"""
-    match workspace.status:
-        case "RUNNING":
-            # RUNNING → WARM: 컨테이너 정지
-            await instance.stop(...)
-            workspace.status = "WARM"
-        case "WARM":
-            # WARM → COLD: 아카이브
-            await storage.archive(...)
-            workspace.status = "COLD"
-        case "COLD":
-            # COLD → PENDING: (일반적으로 사용 안 함)
-            workspace.status = "PENDING"
+```mermaid
+flowchart TD
+    A[Reconcile 시작] --> B{current == target?}
+    B -->|Yes| C[완료]
+    B -->|No| D{current < target?}
+    D -->|Yes| E[step_up 실행]
+    D -->|No| F[step_down 실행]
+    E --> G[current_idx += 1]
+    F --> H[current_idx -= 1]
+    G --> B
+    H --> B
 ```
+
+#### Step Up (활성화 방향)
+
+```mermaid
+flowchart LR
+    subgraph "step_up()"
+        P[PENDING] -->|initialize| C[COLD]
+        C -->|restore/provision| W[WARM]
+        W -->|start container| R[RUNNING]
+    end
+```
+
+| 전환 | 동작 |
+|------|------|
+| PENDING → COLD | 초기화 (메타데이터 생성) |
+| COLD → WARM | archive_key 있으면 restore, 없으면 provision |
+| WARM → RUNNING | 컨테이너 시작 |
+
+#### Step Down (비활성화 방향)
+
+```mermaid
+flowchart RL
+    subgraph "step_down()"
+        R[RUNNING] -->|stop container| W[WARM]
+        W -->|archive| C[COLD]
+        C -->|cleanup| P[PENDING]
+    end
+```
+
+| 전환 | 동작 |
+|------|------|
+| RUNNING → WARM | 컨테이너 정지 |
+| WARM → COLD | Volume을 Object Storage에 아카이브 |
+| COLD → PENDING | 일반적으로 사용 안 함 |
 
 ### 상태 다이어그램
 
+```mermaid
+stateDiagram-v2
+    direction LR
+
+    [*] --> PENDING: 생성
+
+    PENDING --> COLD: step_up
+    COLD --> WARM: step_up
+    WARM --> RUNNING: step_up
+
+    RUNNING --> WARM: step_down
+    WARM --> COLD: step_down
+    COLD --> PENDING: step_down
+
+    PENDING --> DELETED: delete
+    COLD --> DELETED: delete
+    WARM --> DELETED: delete
+    RUNNING --> DELETED: delete
+
+    DELETED --> [*]
+
+    note right of PENDING: Level 0<br/>리소스 없음
+    note right of COLD: Level 1<br/>Object Storage
+    note right of WARM: Level 2<br/>Volume
+    note right of RUNNING: Level 3<br/>Container + Volume
 ```
-                 step_up()                    step_up()                   step_up()
-    PENDING ─────────────→ COLD ─────────────→ WARM ─────────────→ RUNNING
-       0                     1                   2                     3
-                ←─────────────     ←─────────────     ←─────────────
-                 step_down()        step_down()        step_down()
 
-                                    │
-                                    ▼ (어디서든)
-                                 DELETING → DELETED
+#### 예외 상태
 
-                                 ERROR (복구 필요)
+```mermaid
+stateDiagram-v2
+    direction TB
+
+    state "Any State" as any
+
+    any --> ERROR: 전환 실패
+    ERROR --> any: 복구 후 재시도
+
+    any --> DELETING: 삭제 요청
+    DELETING --> DELETED: 삭제 완료
 ```
 
 ## 결과
