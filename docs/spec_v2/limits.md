@@ -210,4 +210,4 @@ WHERE status = 'RUNNING' AND deleted_at IS NULL;
 ## 참조
 
 - [schema.md](./schema.md) - 설정 값
-- [api.md](./api.md) - API 응답 형식
+- [states.md](./states.md) - 상태 정의

@@ -159,7 +159,48 @@ stateDiagram-v2
     ERROR --> any: 복구 후 재시도
 ```
 
-> **Note**: ERROR 상태에서는 `operation = NONE`이고, 이전 상태 정보는 별도 컬럼에 저장됩니다.
+### ERROR 전환 시
+
+```python
+# operation 실패 시 ERROR로 전환
+async def transition_to_error(workspace: Workspace, error_msg: str):
+    await update_workspace(
+        workspace.id,
+        previous_status=workspace.status,  # 현재 상태 저장
+        status="ERROR",
+        operation="NONE",
+        error_message=error_msg,
+        error_count=workspace.error_count + 1
+    )
+```
+
+### ERROR 복구
+
+```python
+async def recover_from_error(workspace: Workspace):
+    """ERROR 상태에서 복구 (관리자 또는 자동)"""
+    if workspace.status != "ERROR":
+        return
+
+    # 이전 상태로 복원
+    await update_workspace(
+        workspace.id,
+        status=workspace.previous_status,  # WARM, COLD 등
+        previous_status=None,
+        operation="NONE",
+        error_message=None,
+        error_count=0
+    )
+    # Reconciler가 다음 루프에서 다시 시도
+```
+
+### ERROR 관련 컬럼
+
+| 컬럼 | 설명 |
+|------|------|
+| previous_status | ERROR 전 상태 (복구 시 사용) |
+| error_message | 에러 상세 메시지 |
+| error_count | 연속 실패 횟수 (3회 시 관리자 개입) |
 
 ---
 

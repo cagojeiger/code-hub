@@ -24,6 +24,7 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 | cold_ttl_seconds | INT | NO | 86400 | WARM→COLD TTL (초) - DB 기반 |
 | error_message | TEXT | YES | NULL | 에러 상세 메시지 |
 | error_count | INT | NO | 0 | 연속 전환 실패 횟수 |
+| previous_status | ENUM | YES | NULL | ERROR 전 상태 (복구용) |
 
 ### 변경 컬럼
 
@@ -98,6 +99,7 @@ ENUM('COLD', 'WARM', 'RUNNING')
 | **cold_ttl_seconds** | INT | WARM→COLD TTL (신규) |
 | **error_message** | TEXT | 에러 메시지 (신규) |
 | **error_count** | INT | 에러 횟수 (신규) |
+| **previous_status** | ENUM | ERROR 전 상태 (신규) |
 | created_at | TIMESTAMP | 생성 시각 |
 | updated_at | TIMESTAMP | 수정 시각 |
 | deleted_at | TIMESTAMP | 소프트 삭제 시각 |
@@ -153,7 +155,8 @@ ADD COLUMN last_access_at TIMESTAMP,
 ADD COLUMN warm_ttl_seconds INT DEFAULT 300,
 ADD COLUMN cold_ttl_seconds INT DEFAULT 86400,
 ADD COLUMN error_message TEXT,
-ADD COLUMN error_count INT DEFAULT 0;
+ADD COLUMN error_count INT DEFAULT 0,
+ADD COLUMN previous_status VARCHAR(20);
 ```
 
 ### Phase 2: 기존 데이터 마이그레이션
