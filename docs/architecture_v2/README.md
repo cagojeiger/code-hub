@@ -60,6 +60,7 @@ flowchart TB
 | 문서 | 설명 |
 |------|------|
 | [states.md](./states.md) | 상태 다이어그램 및 전환 규칙 |
+| [package-design.md](./package-design.md) | 패키지 분리 설계 (Core/Control/Adapters) |
 | [data-flow.md](./data-flow.md) | 데이터 흐름 (Container ↔ Storage) |
 | [reconciler.md](./reconciler.md) | Reconciler 상세 설계 |
 
