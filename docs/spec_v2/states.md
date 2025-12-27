@@ -196,10 +196,57 @@ flowchart LR
     W -->|cold_ttl 만료| C[COLD]
 ```
 
-| 전환 | 트리거 | 기본값 |
-|------|--------|--------|
-| RUNNING → WARM | `last_access_at + warm_ttl_seconds` 경과 | 30분 |
-| WARM → COLD | `last_access_at + cold_ttl_seconds` 경과 | 1일 |
+| 전환 | 트리거 | 기본값 | 감지 방식 |
+|------|--------|--------|----------|
+| RUNNING → WARM | WebSocket 연결 없음 후 5분 | 5분 | Redis 기반 |
+| WARM → COLD | `last_access_at + cold_ttl_seconds` 경과 | 1일 | DB 기반 |
+
+> 상세 활동 감지 메커니즘은 [activity.md](./activity.md) 참조
+
+### TTL 만료 시 동작 (중요)
+
+**TTL 만료 시 `desired_state`도 함께 변경해야 합니다.**
+
+```
+잘못된 방식:
+  TTL 만료 → status만 변경
+  → Reconciler: status != desired_state → step_up
+  → 무한 루프!
+
+올바른 방식:
+  TTL 만료 → desired_state = WARM (또는 COLD)
+  → Reconciler: step_down 실행
+  → 안정
+```
+
+### TTL 흐름
+
+```mermaid
+flowchart TD
+    A[RUNNING, desired=RUNNING] --> B{WebSocket 연결?}
+    B -->|Yes| A
+    B -->|No| C[5분 타이머]
+    C --> D{타이머 만료?}
+    D -->|No| B
+    D -->|Yes| E[desired_state = WARM]
+    E --> F[Reconciler: step_down]
+    F --> G[WARM, desired=WARM]
+    G --> H{1일 경과?}
+    H -->|No| G
+    H -->|Yes| I[desired_state = COLD]
+    I --> J[Reconciler: step_down]
+    J --> K[COLD, desired=COLD]
+```
+
+### Auto-wake
+
+사용자가 WARM 또는 COLD 상태 워크스페이스에 접속하면:
+
+```
+Proxy: desired_state = RUNNING 설정
+→ Reconciler: step_up 실행
+→ RUNNING 복귀
+```
 
 > TTL은 워크스페이스별로 설정 가능 (schema.md 참조)
 
@@ -262,4 +309,6 @@ is_transitioning = operation != NONE
 
 - [ADR-008: Ordered State Machine](../adr/008-ordered-state-machine.md)
 - [schema.md](./schema.md) - TTL 관련 컬럼
+- [activity.md](./activity.md) - 활동 감지 메커니즘
+- [limits.md](./limits.md) - RUNNING 제한
 - [flows.md](./flows.md) - 상세 플로우

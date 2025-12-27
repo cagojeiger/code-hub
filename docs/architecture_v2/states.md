@@ -166,14 +166,26 @@ flowchart LR
     W[WARM]
     C[COLD]
 
-    R -->|"last_access + warm_ttl 경과"| W
+    R -->|"WebSocket 끊김 후 5분"| W
     W -->|"last_access + cold_ttl 경과"| C
 ```
 
-| 파라미터 | 기본값 | 설명 |
-|----------|--------|------|
-| warm_ttl_seconds | 1800 (30분) | RUNNING → WARM |
-| cold_ttl_seconds | 86400 (1일) | WARM → COLD |
+| 파라미터 | 기본값 | 감지 방식 | 설명 |
+|----------|--------|----------|------|
+| warm_ttl_seconds | 300 (5분) | Redis (WebSocket) | RUNNING → WARM |
+| cold_ttl_seconds | 86400 (1일) | DB | WARM → COLD |
+
+> 상세 활동 감지 메커니즘은 [spec_v2/activity.md](../spec_v2/activity.md) 참조
+
+### 핵심 규칙
+
+**TTL 만료 시 `desired_state`도 함께 변경**하여 Reconciler 무한 루프를 방지합니다.
+
+```
+TTL 만료 → desired_state = WARM (또는 COLD)
+→ Reconciler: status != desired_state → step_down
+→ 안정 상태 도달
+```
 
 ---
 

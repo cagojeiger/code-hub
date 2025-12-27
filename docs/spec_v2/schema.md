@@ -20,8 +20,8 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 | desired_state | ENUM | NO | 'RUNNING' | 목표 상태 (Reconciler용) |
 | archive_key | VARCHAR(512) | YES | NULL | Object Storage 키 |
 | last_access_at | TIMESTAMP | YES | NULL | 마지막 프록시 접속 시각 |
-| warm_ttl_seconds | INT | NO | 1800 | RUNNING→WARM TTL (초) |
-| cold_ttl_seconds | INT | NO | 86400 | WARM→COLD TTL (초) |
+| warm_ttl_seconds | INT | NO | 300 | RUNNING→WARM TTL (초) - WebSocket 기반 |
+| cold_ttl_seconds | INT | NO | 86400 | WARM→COLD TTL (초) - DB 기반 |
 | error_message | TEXT | YES | NULL | 에러 상세 메시지 |
 | error_count | INT | NO | 0 | 연속 전환 실패 횟수 |
 
@@ -126,6 +126,16 @@ WHERE (status != desired_state OR operation != 'NONE')
 CREATE INDEX idx_workspaces_operation
 ON workspaces (operation)
 WHERE operation != 'NONE' AND deleted_at IS NULL;
+
+-- 사용자별 RUNNING 워크스페이스 (제한 체크용)
+CREATE INDEX idx_workspaces_user_running
+ON workspaces (owner_user_id, status)
+WHERE status = 'RUNNING' AND deleted_at IS NULL;
+
+-- 전역 RUNNING 카운트 (제한 체크용)
+CREATE INDEX idx_workspaces_running
+ON workspaces (status)
+WHERE status = 'RUNNING' AND deleted_at IS NULL;
 ```
 
 ---
@@ -140,7 +150,7 @@ ADD COLUMN operation VARCHAR(20) DEFAULT 'NONE',
 ADD COLUMN desired_state VARCHAR(20) DEFAULT 'RUNNING',
 ADD COLUMN archive_key VARCHAR(512),
 ADD COLUMN last_access_at TIMESTAMP,
-ADD COLUMN warm_ttl_seconds INT DEFAULT 1800,
+ADD COLUMN warm_ttl_seconds INT DEFAULT 300,
 ADD COLUMN cold_ttl_seconds INT DEFAULT 86400,
 ADD COLUMN error_message TEXT,
 ADD COLUMN error_count INT DEFAULT 0;
@@ -196,3 +206,5 @@ CREATE TYPE workspace_operation AS ENUM (
 
 - [spec/schema.md](../spec/schema.md) - M1 스키마
 - [states.md](./states.md) - 상태 정의
+- [activity.md](./activity.md) - 활동 감지 메커니즘
+- [limits.md](./limits.md) - RUNNING 제한
