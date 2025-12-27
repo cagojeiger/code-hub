@@ -75,16 +75,19 @@ sequenceDiagram
 
 ## 3. TTL 기반 자동 전환
 
+> 상세 활동 감지 메커니즘은 [activity.md](./activity.md) 참조
+
 ### 3.1 RUNNING → WARM
 
 | 조건 | 값 |
 |------|-----|
-| 트리거 | `last_access_at + warm_ttl < NOW()` |
-| warm_ttl 기본값 | 1800초 (30분) |
+| 트리거 | WebSocket 연결 없음 후 5분 |
+| 감지 방식 | Redis 기반 (ws_conn, idle_timer) |
+| warm_ttl 기본값 | 300초 (5분) |
 
 ```mermaid
 flowchart LR
-    R[RUNNING] -->|warm_ttl 만료| W[WARM]
+    R[RUNNING] -->|WebSocket 끊김 후 5분| W[WARM]
 ```
 
 Reconciler가 step_down 실행 → [instance.md](./instance.md) STOPPING 참조
@@ -93,7 +96,8 @@ Reconciler가 step_down 실행 → [instance.md](./instance.md) STOPPING 참조
 
 | 조건 | 값 |
 |------|-----|
-| 트리거 | `last_access_at + cold_ttl < NOW()` |
+| 트리거 | `last_access_at + cold_ttl_seconds` 경과 |
+| 감지 방식 | DB 기반 |
 | cold_ttl 기본값 | 86400초 (1일) |
 
 ```mermaid

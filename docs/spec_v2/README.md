@@ -23,14 +23,28 @@ M2는 완성형 아키텍처를 구축합니다. M3에서는 Instance Controller
 
 ## 문서 목록
 
+### 핵심 문서
+
 | 문서 | 설명 |
 |------|------|
-| [states.md](./states.md) | Ordered State Machine 기반 상태 정의 |
+| [states.md](./states.md) | Ordered State Machine 기반 상태 정의 + Health Check |
 | [schema.md](./schema.md) | DB 스키마 변경 사항 |
 | [flows.md](./flows.md) | 주요 플로우 (생성, Auto-wake, TTL, Archive/Restore) |
-| [api.md](./api.md) | 선언형 API 변경 |
-| [components.md](./components.md) | Reconciler, StorageProvider 인터페이스 |
-| [events.md](./events.md) | 신규 이벤트 정의 |
+
+### 레이어별 문서
+
+| 문서 | 설명 |
+|------|------|
+| [storage.md](./storage.md) | Storage 동작 (archive/restore/purge) |
+| [instance.md](./instance.md) | Instance 동작 (start/stop/delete) |
+| [events.md](./events.md) | SSE 이벤트 정의 |
+
+### 정책 문서
+
+| 문서 | 설명 |
+|------|------|
+| [activity.md](./activity.md) | 활동 감지 메커니즘 (WebSocket 기반) |
+| [limits.md](./limits.md) | RUNNING 워크스페이스 제한 |
 
 ---
 

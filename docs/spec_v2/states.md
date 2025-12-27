@@ -305,6 +305,77 @@ is_transitioning = operation != NONE
 
 ---
 
+## Health Check (상태 검증)
+
+DB의 `status = RUNNING`과 실제 컨테이너 상태가 불일치할 수 있습니다 (크래시, OOM Kill, 외부 삭제 등).
+
+### 문제
+
+```
+DB: status = RUNNING
+실제: 컨테이너 없음
+→ 사용자 접속 시 502 에러
+```
+
+### 해결: Reconciler 폴링 + Proxy 체크
+
+```mermaid
+flowchart TD
+    A[Reconciler 30초 폴링] --> B{status = RUNNING?}
+    B -->|No| Z[스킵]
+    B -->|Yes| C{operation = NONE?}
+    C -->|No| Z
+    C -->|Yes| D[컨테이너 존재 확인]
+    D --> E{실제 실행 중?}
+    E -->|Yes| F[정상]
+    E -->|No| G[status = WARM]
+    G --> H[desired_state 유지]
+    H --> I[Reconciler: step_up 재시도]
+```
+
+### Reconciler Health Check
+
+```python
+async def check_running_health(workspace: Workspace):
+    """RUNNING 상태 워크스페이스 실제 상태 검증 (30초마다)"""
+    if workspace.status != "RUNNING" or workspace.operation != "NONE":
+        return
+
+    container_exists = await instance_controller.exists(workspace.id)
+
+    if not container_exists:
+        # 컨테이너가 사라짐 → WARM으로 복구
+        # desired_state는 유지 → Reconciler가 다시 시작
+        await update_status(workspace.id, status="WARM")
+        logger.warning(f"Container missing for {workspace.id}, reset to WARM")
+```
+
+### Proxy Health Check
+
+```python
+async def proxy_request(workspace_id: str):
+    """프록시 요청 시 컨테이너 존재 확인"""
+    workspace = await get_workspace(workspace_id)
+
+    if workspace.status == "RUNNING":
+        if not await instance_controller.exists(workspace_id):
+            # 불일치 감지 → WARM으로 변경하고 로딩 페이지
+            await update_status(workspace_id, status="WARM")
+            return render_loading_page(workspace_id)
+
+    # 정상 프록시 진행...
+```
+
+### 핵심 동작
+
+| 상황 | 동작 |
+|------|------|
+| DB=RUNNING, 컨테이너=있음 | 정상 |
+| DB=RUNNING, 컨테이너=없음 | status→WARM, Reconciler 재시작 |
+| 연속 실패 (3회) | ERROR 상태, 관리자 개입 |
+
+---
+
 ## 참조
 
 - [ADR-008: Ordered State Machine](../adr/008-ordered-state-machine.md)
