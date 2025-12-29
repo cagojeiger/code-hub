@@ -169,31 +169,41 @@ sequenceDiagram
 
 ## DELETING
 
-Volume만 삭제. Archive는 GC가 정리.
+Container와 Volume 삭제. Archive는 GC가 정리.
 
 ### 전제 조건
 - `operation = DELETING`
-- 컨테이너가 정지된 상태 (RUNNING이 아님)
-- 모든 status에서 가능 (PENDING, COLD, WARM)
+- 모든 status에서 가능 (PENDING, COLD, WARM, RUNNING)
+
+### 삭제 순서 (중요)
+
+```
+1. Container 삭제 (Instance) - 먼저
+2. Volume 삭제 (Storage) - 나중
+```
+
+> **왜 이 순서?**: Volume 먼저 삭제하면 실행 중인 컨테이너의 mount가 끊어져 예기치 않은 동작 발생
 
 ### 동작
 
 ```mermaid
 flowchart TD
-    A[DELETING 시작] --> B[Volume 삭제]
-    B --> C[DB: deleted_at = now, status = DELETED]
-    C --> D[완료]
-    D -.-> E[GC가 Archive 정리]
+    A[DELETING 시작] --> B[Container 삭제]
+    B --> C[Volume 삭제]
+    C --> D[DB: deleted_at = now, status = DELETED]
+    D --> E[완료]
+    E -.-> F[GC가 Archive 정리]
 ```
 
 ### 삭제 대상
 
 | 리소스 | 삭제 주체 | 타이밍 |
 |--------|----------|--------|
-| Volume | DELETING | 즉시 |
+| Container | InstanceController | 즉시 |
+| Volume | StorageProvider | Container 삭제 후 |
 | Archives | GC | 1시간 후 (soft-delete 감지) |
 
-> **왜 분리?**: Volume은 즉시 해제 (컴퓨팅 비용), Archive는 GC가 일괄 정리 (저장 비용, 배치 효율)
+> **왜 분리?**: Container/Volume은 즉시 해제 (컴퓨팅 비용), Archive는 GC가 일괄 정리 (저장 비용, 배치 효율)
 
 ### Soft-Delete
 
@@ -287,21 +297,25 @@ def reconcile_restoring(ws):
 
 | 단계 | 완료 판단 기준 | 재시도 시 동작 |
 |------|---------------|---------------|
+| delete (container) | 멱등 (없으면 무시) | 항상 호출 |
 | delete_volume | 멱등 (없으면 무시) | 항상 호출 |
 | soft-delete | `status = DELETED` | skip |
 
 ```python
 def reconcile_deleting(ws):
-    """DELETING Reconciler - 멱등"""
+    """DELETING Reconciler - Instance + Storage"""
 
     # 이미 완료 체크
     if ws.status == DELETED:
         return
 
-    # 단계 1: Volume 삭제 (멱등)
+    # 단계 1: Container 삭제 (멱등) - 먼저
+    instance.delete(ws.id)
+
+    # 단계 2: Volume 삭제 (멱등) - 나중
     storage.delete_volume(ws.id)
 
-    # 단계 2: soft-delete
+    # 단계 3: soft-delete
     ws.status = DELETED
     ws.deleted_at = now()
     ws.operation = NONE
@@ -315,4 +329,5 @@ def reconcile_deleting(ws):
 - [storage.md](./storage.md) - 핵심 원칙, 인터페이스
 - [storage-job.md](./storage-job.md) - Job 스펙 (Crash-Only 설계)
 - [storage-gc.md](./storage-gc.md) - Archive GC
+- [instance.md](./instance.md) - InstanceController 인터페이스
 - [states.md](./states.md) - 상태 전환 규칙
