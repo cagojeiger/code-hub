@@ -1,6 +1,38 @@
-# Storage Operations (M2)
+# Storage (M2)
 
 > [README.md](./README.md)로 돌아가기
+
+---
+
+## 핵심 원칙
+
+재시도/크래시/부분 실패에 안전한 Storage 설계.
+
+1. **오퍼레이션은 workspace당 동시에 1개만** - `operation`이 락
+2. **Archive는 op_id로 멱등성 확보** - 불변 경로 (HEAD 체크)
+3. **Restore는 Crash-Only 설계** - 항상 재실행해도 같은 결과
+4. **StorageProvider = 데이터 이동, Reconciler = DB 커밋**
+5. **meta 파일 기반 checksum으로 무결성 검증** - sha256
+
+---
+
+## 동시성 안전
+
+**workspace당 operation은 동시에 1개만 실행 가능**:
+- `operation != 'NONE'`이면 다른 작업 시작 불가
+- 동일 workspace에 대한 동시 Archive/Restore 없음
+- 따라서 **동시 덮어쓰기 이슈 없음**
+
+---
+
+## 불변식 (Invariants)
+
+```
+- archive Job: 같은 (workspace_id, op_id)에 대해 멱등 (HEAD 체크)
+- restore Job: 같은 archive → 같은 결과 (Crash-Only)
+- archive_key DB 저장 → Volume 삭제 순서 (역순 금지)
+- Volume은 workspace당 1개 고정 (ws_{workspace_id}_home)
+```
 
 ---
 
@@ -10,208 +42,204 @@
 
 | operation | Storage 동작 |
 |-----------|-------------|
-| RESTORING | restore (archive → volume) |
-| ARCHIVING | archive (volume → archive) |
-| DELETING | purge |
+| RESTORING | restore (archive → volume) 또는 provision (빈 volume) |
+| ARCHIVING | archive (volume → archive) + delete_volume |
+| DELETING | purge (모든 리소스 삭제) |
+
+> 상세 플로우는 [storage-operations.md](./storage-operations.md) 참조
 
 ### 백엔드별 용어
 
-| 개념 | local-docker | k8s |
-|------|-------------|-----|
+| 추상 개념 | local-docker | k8s |
+|----------|-------------|-----|
 | Volume | Docker Volume | PersistentVolumeClaim (PVC) |
+| Job | 임시 컨테이너 (`docker run --rm`) | Job Pod |
 | Object Storage | MinIO | S3 / MinIO |
 
 ---
 
-## RESTORING (COLD → WARM)
+## 네이밍 규칙
 
-Object Storage에서 Volume으로 데이터 복원.
+모든 Storage 관련 식별자의 네이밍 패턴입니다.
 
-### 전제 조건
-- `status = COLD, operation = RESTORING`
-- `archive_key`가 존재
+### 키 형식
 
-### 동작
+| 항목 | 형식 | 예시 |
+|------|------|------|
+| volume_key | `ws_{workspace_id}_home` | `ws_abc123_home` |
+| archive_key | `archives/{workspace_id}/{op_id}/home.tar.gz` | `archives/abc123/550e8400.../home.tar.gz` |
 
-```mermaid
-sequenceDiagram
-    participant R as Reconciler
-    participant S as StorageProvider
-    participant O as Object Storage
-    participant V as Volume
+> **Volume은 workspace당 1개 고정** - Volume GC 불필요
 
-    R->>S: restore(archive_key)
-    S->>O: GET object (tar.gz)
-    O-->>S: archive data
-    S->>V: Volume 생성
-    S->>V: tar 압축 해제
-    S-->>R: home_store_key
-    R->>R: status = WARM, operation = NONE
+### Volume 라벨 (K8s/Docker)
+
+```yaml
+labels:
+  codehub.io/workspace-id: "abc123"
 ```
 
-### 인터페이스
+### 마운트 경로
 
-```python
-async def restore(archive_key: str) -> str:
-    """
-    Args:
-        archive_key: Object Storage 경로 (예: "archives/{workspace_id}.tar.gz")
+| 컨테이너 | 마운트 경로 | 설명 |
+|---------|-----------|------|
+| Job | `/data` | Volume 마운트 |
+| Job | `/tmp` | 임시 공간 (emptyDir) |
+| Workspace | `/home/coder` | Volume 마운트 (동일 Volume) |
 
-    Returns:
-        home_store_key: Docker Volume 이름 (예: "ws_{workspace_id}_home")
+### Volume 내부 구조
 
-    Raises:
-        StorageError: 복원 실패 시
-    """
+```
+Volume
+└── (사용자 파일들)         # 사용자 데이터만 저장
 ```
 
-### 실패 처리
-- Object Storage 접근 실패 → ERROR 상태, 재시도
-- Volume 생성 실패 → ERROR 상태, 재시도
-- 데이터 손상 → ERROR 상태, 관리자 개입
+> **단순화**: Volume에는 사용자 데이터만 존재. 임시 파일(staging, tar.gz)은 모두 `/tmp`(emptyDir)에 저장.
+
+> **상세**: [storage-job.md](./storage-job.md#마운트-구조)
 
 ---
 
-## ARCHIVING (WARM → COLD)
+## Job (임시 컨테이너)
 
-Volume을 Object Storage로 아카이브.
+Archive/Restore 작업은 **Job**이 수행합니다. Job은 Volume과 Object Storage 간 데이터 이동을 담당하는 격리된 컨테이너입니다.
 
-### 전제 조건
-- `status = WARM, operation = ARCHIVING`
-- 컨테이너가 정지된 상태 (RUNNING이 아님)
+### 핵심 특성
 
-### 동작
+| 항목 | 값 |
+|------|---|
+| 입력 | ARCHIVE_URL, S3 인증 정보 |
+| 출력 | exit code (0=성공, ≠0=실패) |
+| 의존성 | Object Storage만 (DB 없음, Reconciler 없음) |
+| 멱등성 | HEAD 체크 (Archive), 항상 재실행 (Restore) |
 
-```mermaid
-sequenceDiagram
-    participant R as Reconciler
-    participant S as StorageProvider
-    participant V as Volume
-    participant O as Object Storage
+### 설계 철학
 
-    R->>S: archive(home_store_key)
-    S->>V: Volume 데이터 읽기
-    S->>S: tar.gz 압축
-    S->>O: PUT object
-    O-->>S: archive_key
-    S->>V: Volume 삭제
-    S-->>R: archive_key
-    R->>R: status = COLD, operation = NONE
+> **Crash-Only Design**: 복잡한 상태 관리보다 단순한 재시작을 선택
+> - Stateless: Volume에 상태 저장 안 함
+> - Idempotent: 재시도해도 같은 결과
+
+### 격리 원칙
+
+```
+Job은 DB를 모르고, Reconciler를 모르고, Control Plane을 모른다.
+매개변수만 받아서 작업하고, 성공/실패만 반환한다.
 ```
 
-### 인터페이스
-
-```python
-async def archive(home_store_key: str) -> str:
-    """
-    Args:
-        home_store_key: Docker Volume 이름
-
-    Returns:
-        archive_key: Object Storage 경로
-
-    Raises:
-        StorageError: 아카이브 실패 시
-    """
-```
-
-### 실패 처리
-- Volume 읽기 실패 → ERROR 상태
-- 업로드 실패 → Volume 유지, 재시도
-- 업로드 성공 후 Volume 삭제 실패 → 수동 정리 필요
-
-### 멱등성
-- 동일한 workspace를 다시 아카이브하면 기존 archive_key 덮어쓰기
-- 이전 아카이브 자동 삭제 (선택: 버전 관리 시 유지)
+> **상세 스펙**: [storage-job.md](./storage-job.md) 참조
 
 ---
 
-## DELETING (purge)
+## 무결성 검증
 
-모든 Storage 리소스 정리.
+meta 파일 기반 checksum을 사용합니다.
 
-### 동작
+| 단계 | 방식 | 설명 |
+|------|------|------|
+| Archive | sha256 생성 | tar.gz의 sha256을 .meta에 저장 |
+| Restore | sha256 검증 | 다운로드 후 .meta와 비교 |
 
-```mermaid
-flowchart TD
-    A[purge 시작] --> B{archive_key 존재?}
-    B -->|Yes| C[Object Storage 삭제]
-    B -->|No| D{home_store_key 존재?}
-    C --> D
-    D -->|Yes| E[Docker Volume 삭제]
-    D -->|No| F[완료]
-    E --> F
-```
-
-### 인터페이스
-
-```python
-async def purge(
-    home_store_key: str | None,
-    archive_key: str | None
-) -> None:
-    """
-    모든 Storage 리소스 삭제.
-    존재하지 않는 리소스는 무시 (멱등).
-
-    Raises:
-        StorageError: 삭제 실패 시
-    """
-```
-
-### 실패 처리
-- 삭제 실패 시 로그 기록, 수동 정리 필요
-- 부분 삭제 가능 (archive만 삭제, volume은 남음)
+> **왜 ETag/Content-MD5가 아닌가?**: 멀티파트 업로드 시 ETag ≠ MD5이고,
+> Content-MD5는 멀티파트에서 파트별로만 적용됨. 별도 checksum이 확실함.
 
 ---
 
-## provision (신규 생성)
+## Job 에러 처리
 
-INITIALIZING 시 신규 Volume 생성.
+StorageProvider가 예외를 던지면 Reconciler가 ERROR 상태로 전환:
 
-### 동작
+- `previous_status` 저장 (복구 시 사용)
+- `error_message` 기록
+- `error_count` 증가
+- `op_id` 유지 (재시도 시 같은 값 사용)
 
-```mermaid
-sequenceDiagram
-    participant R as Reconciler
-    participant S as StorageProvider
-    participant V as Volume
-
-    R->>S: provision(workspace_id)
-    S->>V: Volume 생성 (빈 Volume)
-    S-->>R: home_store_key
-```
-
-### 인터페이스
-
-```python
-async def provision(workspace_id: str) -> str:
-    """
-    신규 Docker Volume 생성.
-
-    Returns:
-        home_store_key: 생성된 Volume 이름
-    """
-```
+> **에러 유형 상세**: [storage-job.md](./storage-job.md#에러-처리) 참조
 
 ---
 
-## Object Storage 구조
+## StorageProvider 인터페이스
 
-```
-bucket: codehub-archives
-├── {workspace_id}/
-│   └── home.tar.gz       # 현재 아카이브
-│   └── home.tar.gz.meta  # 메타데이터 (선택)
-```
+```python
+class StorageProvider(ABC):
+    """Storage 작업 추상 인터페이스
 
-### 아카이브 형식
-- 압축: gzip (tar.gz)
-- 암호화: 미구현 (M2 범위 외)
+    Job(임시 컨테이너)은 구현 세부사항으로,
+    각 백엔드가 내부적으로 처리함.
+
+    핵심 원칙:
+    - workspace_id, op_id를 인자로 받음 (Reconciler가 DB 관리)
+    - 모든 작업은 멱등
+    """
+
+    @abstractmethod
+    async def provision(self, workspace_id: str) -> None:
+        """신규 Volume 생성 (멱등).
+
+        Args:
+            workspace_id: 워크스페이스 ID
+
+        내부적으로 volume_key = ws_{workspace_id}_home 사용
+        멱등성: Volume이 이미 있으면 무시
+        """
+
+    @abstractmethod
+    async def restore(self, workspace_id: str, archive_key: str) -> None:
+        """Object Storage → Volume (멱등).
+
+        Args:
+            workspace_id: 워크스페이스 ID
+            archive_key: Object Storage 경로
+
+        멱등성: 같은 아카이브 → 같은 결과 (Crash-Only 설계)
+
+        Raises:
+            StorageError: 복원 실패 시
+        """
+
+    @abstractmethod
+    async def archive(self, workspace_id: str, op_id: str) -> str:
+        """Volume → Object Storage (멱등).
+
+        Args:
+            workspace_id: 워크스페이스 ID
+            op_id: 작업 ID (archive_key 생성에 사용)
+
+        Returns:
+            archive_key: 경로 (archives/{workspace_id}/{op_id}/home.tar.gz)
+
+        멱등성: HEAD 체크로 이미 존재하면 skip
+        """
+
+    @abstractmethod
+    async def delete_volume(self, workspace_id: str) -> None:
+        """Volume 삭제 (멱등).
+
+        Args:
+            workspace_id: 워크스페이스 ID
+
+        멱등성: 존재하지 않으면 무시
+        """
+
+    @abstractmethod
+    async def purge(self, workspace_id: str) -> None:
+        """모든 Storage 리소스 삭제 (멱등).
+
+        Args:
+            workspace_id: 워크스페이스 ID
+
+        동작:
+            - Volume 삭제 (ws_{workspace_id}_home)
+            - 모든 Archive 삭제 (prefix: archives/{workspace_id}/)
+
+        멱등성: 존재하지 않는 리소스는 무시
+        """
+```
 
 ---
 
 ## 참조
 
+- [storage-job.md](./storage-job.md) - Job 스펙 (Crash-Only 설계)
+- [storage-operations.md](./storage-operations.md) - RESTORING, ARCHIVING, DELETING 플로우
+- [storage-gc.md](./storage-gc.md) - Archive GC
 - [states.md](./states.md) - 상태 전환 규칙
 - [instance.md](./instance.md) - 인스턴스 동작

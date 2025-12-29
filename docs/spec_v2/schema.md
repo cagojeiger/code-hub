@@ -18,7 +18,8 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 |------|------|----------|--------|------|
 | **operation** | ENUM | NO | 'NONE' | 진행 중인 작업 (신규) |
 | desired_state | ENUM | NO | 'RUNNING' | 목표 상태 (Reconciler용) |
-| archive_key | VARCHAR(512) | YES | NULL | Object Storage 키 |
+| archive_key | VARCHAR(512) | YES | NULL | Object Storage 키 (`archives/{workspace_id}/{op_id}/home.tar.gz`) |
+| op_id | UUID | YES | NULL | 현재 작업 ID (멱등성 보장) |
 | last_access_at | TIMESTAMP | YES | NULL | 마지막 프록시 접속 시각 |
 | warm_ttl_seconds | INT | NO | 300 | RUNNING→WARM TTL (초) - WebSocket 기반 |
 | cold_ttl_seconds | INT | NO | 86400 | WARM→COLD TTL (초) - DB 기반 |
@@ -76,6 +77,15 @@ ENUM('COLD', 'WARM', 'RUNNING')
 
 ---
 
+## 동시성 보장
+
+**workspace당 operation은 동시에 1개만 실행 가능**:
+- `operation != 'NONE'`이면 다른 작업 시작 불가
+- 동일 workspace에 대한 동시 Archive/Restore 없음
+- 따라서 동시 덮어쓰기 이슈 없음
+
+---
+
 ## 전체 workspaces 스키마 (M2)
 
 | 컬럼 | 타입 | 설명 |
@@ -88,12 +98,13 @@ ENUM('COLD', 'WARM', 'RUNNING')
 | image_ref | VARCHAR(512) | 컨테이너 이미지 참조 |
 | instance_backend | ENUM | 'local-docker' / 'k8s' |
 | storage_backend | ENUM | 'docker-volume' / 'minio' |
-| home_store_key | VARCHAR(512) | Storage Provider 키 |
+| home_store_key | VARCHAR(512) | Volume 키 (`ws_{workspace_id}_home` 고정) |
 | home_ctx | JSONB | Storage Provider 컨텍스트 |
 | **status** | ENUM | 현재 상태 (6개) |
 | **operation** | ENUM | 진행 중인 작업 (신규) |
 | **desired_state** | ENUM | 목표 상태 (신규) |
 | **archive_key** | VARCHAR(512) | Object Storage 키 (신규) |
+| **op_id** | UUID | 현재 작업 ID (신규) |
 | **last_access_at** | TIMESTAMP | 마지막 접속 시각 (신규) |
 | **warm_ttl_seconds** | INT | RUNNING→WARM TTL (신규) |
 | **cold_ttl_seconds** | INT | WARM→COLD TTL (신규) |
@@ -151,6 +162,7 @@ ALTER TABLE workspaces
 ADD COLUMN operation VARCHAR(20) DEFAULT 'NONE',
 ADD COLUMN desired_state VARCHAR(20) DEFAULT 'RUNNING',
 ADD COLUMN archive_key VARCHAR(512),
+ADD COLUMN op_id UUID,
 ADD COLUMN last_access_at TIMESTAMP,
 ADD COLUMN warm_ttl_seconds INT DEFAULT 300,
 ADD COLUMN cold_ttl_seconds INT DEFAULT 86400,

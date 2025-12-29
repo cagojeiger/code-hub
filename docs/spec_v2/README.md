@@ -35,7 +35,10 @@ M2는 완성형 아키텍처를 구축합니다. M3에서는 Instance Controller
 
 | 문서 | 설명 |
 |------|------|
-| [storage.md](./storage.md) | Storage 동작 (archive/restore/purge) |
+| [storage.md](./storage.md) | Storage 핵심 원칙, 인터페이스 |
+| [storage-job.md](./storage-job.md) | Storage Job 스펙 (마커 기반 멱등성, 스크립트) |
+| [storage-operations.md](./storage-operations.md) | Storage 플로우 (RESTORING, ARCHIVING, DELETING, provision) |
+| [storage-gc.md](./storage-gc.md) | Storage 경로 규칙, Object Storage 구조, GC 시스템 |
 | [instance.md](./instance.md) | Instance 동작 (start/stop/delete) |
 | [events.md](./events.md) | SSE 이벤트 정의 |
 
