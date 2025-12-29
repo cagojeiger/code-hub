@@ -54,7 +54,7 @@ WHERE id = ? AND operation = 'NONE';
 - archive Job: 같은 (workspace_id, op_id)에 대해 멱등 (HEAD 체크)
 - restore Job: 같은 archive → 같은 결과 (Crash-Only)
 - archive_key DB 저장 → Volume 삭제 순서 (역순 금지)
-- Volume은 workspace당 1개 고정 (ws_{workspace_id}_home)
+- Volume은 workspace당 1개 고정 (ws-{workspace_id}-home)
 ```
 
 ---
@@ -65,7 +65,8 @@ WHERE id = ? AND operation = 'NONE';
 
 | operation | Storage 동작 |
 |-----------|-------------|
-| RESTORING | restore (archive → volume) 또는 provision (빈 volume) |
+| PROVISIONING | provision (빈 volume 생성) |
+| RESTORING | restore (archive → volume) |
 | ARCHIVING | archive (volume → archive) + delete_volume |
 | DELETING | delete_volume (Volume만 삭제, Archive는 GC가 정리) |
 
@@ -83,16 +84,22 @@ WHERE id = ? AND operation = 'NONE';
 
 ## 네이밍 규칙
 
+> ⚠️ **강한 가정**: 아래 패턴은 프로젝트 전체에서 동일하게 사용되는 불변 규칙입니다.
+> Storage, Instance 모두 내부에서 동일 패턴으로 계산합니다.
+
 모든 Storage 관련 식별자의 네이밍 패턴입니다.
 
 ### 키 형식
 
 | 항목 | 형식 | 예시 |
 |------|------|------|
-| volume_key | `ws_{workspace_id}_home` | `ws_abc123_home` |
+| volume_key | `ws-{workspace_id}-home` | `ws-abc123-home` |
 | archive_key | `archives/{workspace_id}/{op_id}/home.tar.gz` | `archives/abc123/550e8400.../home.tar.gz` |
 
+> **K8s DNS-1123 호환**: 하이픈(`-`) 사용, 언더스코어(`_`) 사용 금지
+
 > **Volume은 workspace당 1개 고정** - Volume GC 불필요
+> **패턴 변경 시**: Storage + Instance 동시 수정 필수
 
 ### Volume 라벨 (K8s/Docker)
 
@@ -200,7 +207,7 @@ class StorageProvider(ABC):
         Args:
             workspace_id: 워크스페이스 ID
 
-        내부적으로 volume_key = ws_{workspace_id}_home 사용
+        내부적으로 volume_key = ws-{workspace_id}-home 사용
         멱등성: Volume이 이미 있으면 무시
         """
 
@@ -242,6 +249,23 @@ class StorageProvider(ABC):
         멱등성: 존재하지 않으면 무시
         """
 
+    # --- 센서 메서드 (Reconciler observe용) ---
+
+    @abstractmethod
+    async def volume_exists(self, workspace_id: str) -> bool:
+        """Volume이 존재하는지 확인.
+
+        Args:
+            workspace_id: 워크스페이스 ID
+
+        Returns:
+            True: Volume 존재
+            False: Volume 없음
+
+        용도: Reconciler의 observe_actual_state()에서 호출
+        """
+
+    # archive_exists() 제거됨 - DB archive_key 컬럼으로 has_archive 판단
     # purge 메서드 제거됨 - DELETING은 delete_volume만 호출
     # Archive는 GC가 별도로 정리 (soft-delete된 workspace의 archive는 orphan 취급)
 ```
@@ -253,5 +277,6 @@ class StorageProvider(ABC):
 - [storage-job.md](./storage-job.md) - Job 스펙 (Crash-Only 설계)
 - [storage-operations.md](./storage-operations.md) - RESTORING, ARCHIVING, DELETING 플로우
 - [storage-gc.md](./storage-gc.md) - Archive GC
+- [reconciler.md](./reconciler.md) - Reconciler 알고리즘 (센서 사용)
 - [states.md](./states.md) - 상태 전환 규칙
 - [instance.md](./instance.md) - 인스턴스 동작

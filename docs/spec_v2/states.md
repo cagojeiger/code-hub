@@ -4,101 +4,136 @@
 
 ---
 
-## 개요
+## 핵심 원칙
 
-M2에서는 **Ordered State Machine** 패턴을 사용합니다. 상태에 순서(레벨)를 부여하고, 인접 상태로만 전환합니다.
+**Active 상태와 Archive 속성을 분리**하여 모순 없는 상태 모델을 구축합니다.
 
-> 상세 결정 배경은 [ADR-008: Ordered State Machine](../adr/008-ordered-state-machine.md) 참조
+1. **Active (Ordered)**: 활성 리소스 존재 여부 → `PENDING < STANDBY < RUNNING`
+2. **Archive (Flag)**: 아카이브 존재 여부 → `has_archive: bool`
+3. **Display**: 사용자에게 표시되는 파생 상태 → `ARCHIVED = PENDING + has_archive`
 
 ---
 
-## 상태 모델: status + operation
-
-M2에서는 전이 상태를 별도 컬럼(`operation`)으로 분리하여 상태 모델을 단순화합니다.
+## 상태 모델: status + operation + archive_key
 
 ```python
 class WorkspaceStatus(Enum):
-    # 핵심 상태 (6개) - 리소스 존재 여부
-    PENDING = 0    # 리소스 없음
-    COLD = 10      # Object Storage
-    WARM = 20      # Volume
-    RUNNING = 30   # Container + Volume
+    """Active 상태 (Ordered) - 활성 리소스 존재 여부"""
+    PENDING = 0    # 활성 리소스 없음
+    STANDBY = 10   # Volume만 존재
+    RUNNING = 20   # Container + Volume
     ERROR = -1     # 오류 (레벨 없음)
     DELETED = -2   # 삭제됨 (레벨 없음)
 
 class WorkspaceOperation(Enum):
-    # 진행 중인 작업 (7개)
+    """진행 중인 작업"""
     NONE = "NONE"              # 작업 없음
-    INITIALIZING = "INITIALIZING"  # PENDING → COLD
-    RESTORING = "RESTORING"    # COLD → WARM
-    STARTING = "STARTING"      # WARM → RUNNING
-    STOPPING = "STOPPING"      # RUNNING → WARM
-    ARCHIVING = "ARCHIVING"    # WARM → COLD
+    PROVISIONING = "PROVISIONING"  # PENDING → STANDBY (빈 Volume)
+    RESTORING = "RESTORING"    # PENDING(has_archive) → STANDBY
+    STARTING = "STARTING"      # STANDBY → RUNNING
+    STOPPING = "STOPPING"      # RUNNING → STANDBY
+    ARCHIVING = "ARCHIVING"    # STANDBY → PENDING + has_archive
     DELETING = "DELETING"      # * → DELETED
 ```
 
-### 상태 (status)
+### Active 상태 (status)
 
-리소스 존재 여부를 나타내는 핵심 상태입니다.
+활성 리소스 존재 여부를 나타냅니다. **레벨은 활성 리소스 기준**입니다.
 
-| 상태 | 레벨 | Container | Volume | Object Storage | 설명 |
-|------|------|-----------|--------|----------------|------|
-| PENDING | 0 | - | - | - | 최초 생성, 리소스 없음 |
-| COLD | 10 | - | - | ✅ (또는 없음) | 아카이브됨 |
-| WARM | 20 | - | ✅ | - | Volume만 존재 |
-| RUNNING | 30 | ✅ | ✅ | - | 컨테이너 실행 중 |
-| ERROR | -1 | (이전 상태) | (이전 상태) | (이전 상태) | 전환 실패, 복구 필요 |
-| DELETED | -2 | - | - | - | 소프트 삭제됨 |
+| 상태 | 레벨 | Container | Volume | 설명 |
+|------|------|-----------|--------|------|
+| PENDING | 0 | - | - | 활성 리소스 없음 |
+| STANDBY | 10 | - | ✅ | Volume만 존재 |
+| RUNNING | 20 | ✅ | ✅ | 컨테이너 실행 중 |
+| ERROR | -1 | (이전 상태) | (이전 상태) | 전환 실패, 복구 필요 |
+| DELETED | -2 | - | - | 소프트 삭제됨 |
 
 ```
-레벨:    0         10        20        30
-       PENDING → COLD → WARM → RUNNING
-               ←      ←      ←
+레벨:    0           10         20
+       PENDING → STANDBY → RUNNING
+               ←         ←
 ```
 
-### 작업 (operation)
+### Archive 속성
 
-전환 진행 중을 나타내는 상태입니다. API에서 직접 설정할 수 없습니다.
+Archive는 **별도 축**으로, status와 독립적입니다.
+
+| 속성 | 판단 기준 | 설명 |
+|------|----------|------|
+| `has_archive` | `archive_key != NULL` | Object Storage에 아카이브 존재 |
+
+### 파생 상태 (Display)
+
+UI/API에서 사용자에게 표시하는 상태입니다.
+
+| 조건 | Display 상태 | 설명 |
+|------|-------------|------|
+| status=PENDING, has_archive=True | **ARCHIVED** | 아카이브됨 (복원 가능) |
+| status=PENDING, has_archive=False | PENDING | 새 워크스페이스 |
+| status=STANDBY | STANDBY | Volume 준비됨 |
+| status=RUNNING | RUNNING | 실행 중 |
+
+```python
+def get_display_status(workspace):
+    """UI/API용 파생 상태 계산"""
+    if workspace.status == "PENDING" and workspace.archive_key is not None:
+        return "ARCHIVED"
+    return workspace.status
+```
+
+### 왜 이 모델인가?
+
+기존 모델의 문제점:
+
+```
+기존: COLD는 status (레벨 10)
+  → PENDING(Lv0) → COLD(Lv10)로 step_up 필요
+  → INITIALIZING 작업이 Archive를 생성해야 함
+  → 하지만 새 워크스페이스는 Archive가 없음
+  → 모순! (COLD에 도달 불가)
+
+신규: ARCHIVED는 파생 상태 (PENDING + has_archive)
+  → Archive는 ARCHIVING 작업으로만 생성
+  → PENDING → STANDBY는 PROVISIONING (Archive 불필요)
+  → 모순 해결!
+```
+
+---
+
+## 작업 (operation)
+
+전환 진행 중을 나타냅니다. API에서 직접 설정할 수 없습니다.
 
 | 작업 | 전환 | 설명 |
 |------|------|------|
 | NONE | - | 작업 없음 (안정 상태) |
-| INITIALIZING | PENDING → COLD | 최초 리소스 준비 중 |
-| RESTORING | COLD → WARM | Object Storage에서 Volume으로 복원 중 |
-| STARTING | WARM → RUNNING | 컨테이너 시작 중 |
-| STOPPING | RUNNING → WARM | 컨테이너 정지 중 |
-| ARCHIVING | WARM → COLD | Volume을 Object Storage로 아카이브 중 |
-| DELETING | * → DELETED | 삭제 진행 중 |
+| PROVISIONING | PENDING → STANDBY | 빈 Volume 생성 |
+| RESTORING | PENDING(has_archive) → STANDBY | Archive → Volume 복원 |
+| STARTING | STANDBY → RUNNING | 컨테이너 시작 |
+| STOPPING | RUNNING → STANDBY | 컨테이너 정지 |
+| ARCHIVING | STANDBY → PENDING + has_archive | Volume → Archive |
+| DELETING | * → DELETED | 전체 삭제 |
 
 ### 상태 표현 예시
 
-| status | operation | 의미 |
-|--------|-----------|------|
-| PENDING | NONE | 생성됨, 대기 중 |
-| PENDING | INITIALIZING | 초기화 진행 중 |
-| COLD | NONE | 아카이브됨 |
-| COLD | RESTORING | 복원 진행 중 |
-| WARM | NONE | Volume 준비됨 |
-| WARM | STARTING | 컨테이너 시작 중 |
-| WARM | ARCHIVING | 아카이브 진행 중 |
-| RUNNING | NONE | 실행 중 |
-| RUNNING | STOPPING | 정지 진행 중 |
-| ERROR | NONE | 오류 발생 (복구 필요) |
-
-### 장점
-
-| 장점 | 설명 |
-|------|------|
-| **레벨 비교 단순화** | `status.level`로 직접 비교 가능 |
-| **전이 중 명확** | `operation != NONE`이면 전환 진행 중 |
-| **모순 방지** | `status = WARM, operation = STARTING` → "WARM이고 RUNNING으로 가는 중" |
-| **Reconciler 단순화** | `status != desired_state` 비교가 직관적 |
+| status | operation | archive_key | 의미 | Display |
+|--------|-----------|-------------|------|---------|
+| PENDING | NONE | NULL | 새 워크스페이스, 대기 중 | PENDING |
+| PENDING | NONE | 있음 | 아카이브됨 | ARCHIVED |
+| PENDING | PROVISIONING | NULL | 빈 Volume 생성 중 | PENDING |
+| PENDING | RESTORING | 있음 | Archive에서 복원 중 | ARCHIVED |
+| STANDBY | NONE | 있음/없음 | Volume 준비됨 | STANDBY |
+| STANDBY | STARTING | - | 컨테이너 시작 중 | STANDBY |
+| STANDBY | ARCHIVING | - | 아카이브 진행 중 | STANDBY |
+| RUNNING | NONE | - | 실행 중 | RUNNING |
+| RUNNING | STOPPING | - | 정지 진행 중 | RUNNING |
+| ERROR | NONE | - | 오류 발생 (복구 필요) | ERROR |
 
 ---
 
 ## 상태 다이어그램
 
-### 정상 흐름 (status 전환)
+### 정상 흐름 (Active status 전환)
 
 ```mermaid
 stateDiagram-v2
@@ -106,33 +141,38 @@ stateDiagram-v2
 
     [*] --> PENDING: 생성
 
-    PENDING --> COLD: step_up
-    COLD --> WARM: step_up
-    WARM --> RUNNING: step_up
+    PENDING --> STANDBY: step_up (PROVISIONING/RESTORING)
+    STANDBY --> RUNNING: step_up (STARTING)
 
-    RUNNING --> WARM: step_down
-    WARM --> COLD: step_down
+    RUNNING --> STANDBY: step_down (STOPPING)
+    STANDBY --> PENDING: step_down (ARCHIVING)
 
-    note right of PENDING: Level 0<br/>리소스 없음
-    note right of COLD: Level 10<br/>Object Storage
-    note right of WARM: Level 20<br/>Volume
-    note right of RUNNING: Level 30<br/>Container + Volume
+    note right of PENDING: Level 0<br/>활성 리소스 없음
+    note right of STANDBY: Level 10<br/>Volume
+    note right of RUNNING: Level 20<br/>Container + Volume
 ```
 
-### 전환 중 상태 (status + operation)
+### step_up 분기
 
 ```mermaid
-flowchart LR
-    subgraph "step_up 방향"
-        P1["PENDING<br/>INITIALIZING"] --> C1["COLD<br/>NONE"]
-        C1a["COLD<br/>RESTORING"] --> W1["WARM<br/>NONE"]
-        W1a["WARM<br/>STARTING"] --> R1["RUNNING<br/>NONE"]
-    end
+flowchart TD
+    P[PENDING] --> A{archive_key?}
+    A -->|있음| R[RESTORING]
+    A -->|없음| V[PROVISIONING]
+    R --> S[STANDBY]
+    V --> S
+    S --> T[STARTING]
+    T --> U[RUNNING]
+```
 
-    subgraph "step_down 방향"
-        R2["RUNNING<br/>STOPPING"] --> W2["WARM<br/>NONE"]
-        W2a["WARM<br/>ARCHIVING"] --> C2["COLD<br/>NONE"]
-    end
+### step_down 흐름
+
+```mermaid
+flowchart TD
+    R[RUNNING] --> ST[STOPPING]
+    ST --> S[STANDBY]
+    S --> AR[ARCHIVING]
+    AR --> P["PENDING<br/>(has_archive=True)"]
 ```
 
 ### 삭제 흐름
@@ -159,11 +199,113 @@ stateDiagram-v2
     ERROR --> any: 복구 후 재시도
 ```
 
-### ERROR 전환 시
+---
+
+## 상태 × 액션 매트릭스
+
+### desired_state 설정
+
+desired_state는 **Active 상태 (PENDING, STANDBY, RUNNING)** 만 설정 가능합니다.
+
+| 현재 status | Display | → PENDING | → STANDBY | → RUNNING | Delete |
+|-------------|---------|-----------|-----------|-----------|--------|
+| PENDING | PENDING | - | ✓ | ✓ | ✓ |
+| PENDING | ARCHIVED | - | ✓ | ✓ | ✓ |
+| STANDBY | STANDBY | ✓ | - | ✓ | ✓ |
+| RUNNING | RUNNING | ✓ | ✓ | - | ✓ |
+| 전이 중 | * | 409 | 409 | 409 | 409 |
+| ERROR | ERROR | 복구 후 | 복구 후 | 복구 후 | ✓ |
+| DELETED | DELETED | 404 | 404 | 404 | 404 |
+
+> **참고**: desired_state=PENDING은 "아카이브 후 대기"를 의미합니다.
+
+### 프록시 접속
+
+| status | archive_key | Display | 동작 |
+|--------|-------------|---------|------|
+| RUNNING | - | RUNNING | ✅ 정상 연결 |
+| STANDBY | - | STANDBY | 로딩 페이지 → Auto-wake → 연결 |
+| PENDING | 있음 | ARCHIVED | 502 + "복원 필요" 안내 (수동 복원) |
+| PENDING | 없음 | PENDING | 502 + "시작 필요" 안내 |
+| ERROR | - | ERROR | 502 + "오류 발생" 안내 |
+
+> **핵심**: STANDBY는 Auto-wake 가능, ARCHIVED는 수동 복원 필요
+
+---
+
+## TTL 기반 자동 전환
+
+```mermaid
+flowchart LR
+    R[RUNNING] -->|warm_ttl 만료| S[STANDBY]
+    S -->|cold_ttl 만료| P["PENDING<br/>(ARCHIVED)"]
+```
+
+| 전환 | 트리거 | 기본값 | 감지 방식 |
+|------|--------|--------|----------|
+| RUNNING → STANDBY | WebSocket 연결 없음 후 5분 | 5분 | Redis 기반 |
+| STANDBY → ARCHIVED | `last_access_at + cold_ttl_seconds` 경과 | 1일 | DB 기반 |
+
+> 상세 활동 감지 메커니즘은 [activity.md](./activity.md) 참조
+
+### TTL 만료 시 동작 (중요)
+
+**TTL 만료 시 `desired_state`도 함께 변경해야 합니다.**
+
+```
+잘못된 방식:
+  TTL 만료 → status만 변경
+  → Reconciler: status != desired_state → step_up
+  → 무한 루프!
+
+올바른 방식:
+  TTL 만료 → desired_state = STANDBY (또는 PENDING)
+  → Reconciler: step_down 실행
+  → 안정
+```
+
+### TTL 흐름
+
+```mermaid
+flowchart TD
+    A[RUNNING, desired=RUNNING] --> B{WebSocket 연결?}
+    B -->|Yes| A
+    B -->|No| C[5분 타이머]
+    C --> D{타이머 만료?}
+    D -->|No| B
+    D -->|Yes| E[desired_state = STANDBY]
+    E --> F[Reconciler: STOPPING]
+    F --> G[STANDBY, desired=STANDBY]
+    G --> H{1일 경과?}
+    H -->|No| G
+    H -->|Yes| I[desired_state = PENDING]
+    I --> J[Reconciler: ARCHIVING]
+    J --> K["PENDING, has_archive=True<br/>(Display: ARCHIVED)"]
+```
+
+### Auto-wake
+
+STANDBY 상태에서만 Auto-wake가 작동합니다.
+
+```
+STANDBY → 프록시 접속 → desired_state = RUNNING
+→ Reconciler: STARTING → RUNNING
+
+ARCHIVED → 프록시 접속 → 수동 복원 필요 (Auto-wake 없음)
+→ 502 + 안내 페이지
+```
+
+> TTL은 워크스페이스별로 설정 가능 (schema.md 참조)
+
+---
+
+## ERROR 상태
+
+### ERROR 전환
 
 ```python
-# operation 실패 시 ERROR로 전환
 async def transition_to_error(workspace: Workspace, error_msg: str):
+    """operation 실패 시 ERROR로 전환"""
     await update_workspace(
         workspace.id,
         previous_status=workspace.status,  # 현재 상태 저장
@@ -182,10 +324,9 @@ async def recover_from_error(workspace: Workspace):
     if workspace.status != "ERROR":
         return
 
-    # 이전 상태로 복원
     await update_workspace(
         workspace.id,
-        status=workspace.previous_status,  # WARM, COLD 등
+        status=workspace.previous_status,  # STANDBY, PENDING 등
         previous_status=None,
         operation="NONE",
         error_message=None,
@@ -204,222 +345,67 @@ async def recover_from_error(workspace: Workspace):
 
 ---
 
-## 상태 × 액션 매트릭스
-
-### desired_state 설정
-
-| 현재 상태 | → COLD | → WARM | → RUNNING | Delete |
-|-----------|--------|--------|-----------|--------|
-| PENDING | ✓ (초기화 후) | ✓ | ✓ | ✓ |
-| COLD | - | ✓ | ✓ | ✓ |
-| WARM | ✓ | - | ✓ | ✓ |
-| RUNNING | ✓ | ✓ | - | ✓ |
-| 전이 상태 | 409 | 409 | 409 | 409 |
-| ERROR | 복구 후 | 복구 후 | 복구 후 | ✓ |
-| DELETED | 404 | 404 | 404 | 404 |
-
-### 프록시 접속
-
-| 상태 | 동작 |
-|------|------|
-| RUNNING | ✅ 정상 연결 |
-| WARM | 로딩 페이지 → Auto-wake → 연결 |
-| COLD | 502 + "복원 필요" 안내 |
-| 그 외 | 502 |
-
----
-
-## TTL 기반 자동 전환
-
-```mermaid
-flowchart LR
-    R[RUNNING] -->|warm_ttl 만료| W[WARM]
-    W -->|cold_ttl 만료| C[COLD]
-```
-
-| 전환 | 트리거 | 기본값 | 감지 방식 |
-|------|--------|--------|----------|
-| RUNNING → WARM | WebSocket 연결 없음 후 5분 | 5분 | Redis 기반 |
-| WARM → COLD | `last_access_at + cold_ttl_seconds` 경과 | 1일 | DB 기반 |
-
-> 상세 활동 감지 메커니즘은 [activity.md](./activity.md) 참조
-
-### TTL 만료 시 동작 (중요)
-
-**TTL 만료 시 `desired_state`도 함께 변경해야 합니다.**
-
-```
-잘못된 방식:
-  TTL 만료 → status만 변경
-  → Reconciler: status != desired_state → step_up
-  → 무한 루프!
-
-올바른 방식:
-  TTL 만료 → desired_state = WARM (또는 COLD)
-  → Reconciler: step_down 실행
-  → 안정
-```
-
-### TTL 흐름
-
-```mermaid
-flowchart TD
-    A[RUNNING, desired=RUNNING] --> B{WebSocket 연결?}
-    B -->|Yes| A
-    B -->|No| C[5분 타이머]
-    C --> D{타이머 만료?}
-    D -->|No| B
-    D -->|Yes| E[desired_state = WARM]
-    E --> F[Reconciler: step_down]
-    F --> G[WARM, desired=WARM]
-    G --> H{1일 경과?}
-    H -->|No| G
-    H -->|Yes| I[desired_state = COLD]
-    I --> J[Reconciler: step_down]
-    J --> K[COLD, desired=COLD]
-```
-
-### Auto-wake
-
-사용자가 WARM 또는 COLD 상태 워크스페이스에 접속하면:
-
-```
-Proxy: desired_state = RUNNING 설정
-→ Reconciler: step_up 실행
-→ RUNNING 복귀
-```
-
-> TTL은 워크스페이스별로 설정 가능 (schema.md 참조)
-
----
-
 ## Reconciler 동작
 
-### 수렴 알고리즘
+> **상세 알고리즘**: [reconciler.md](./reconciler.md)에서 Two-Track 구조,
+> observe → compute → compare → act 전체 플로우 참조
 
-```mermaid
-flowchart TD
-    A[Reconcile 시작] --> A1{operation != NONE?}
-    A1 -->|Yes| A2[전환 완료 대기]
-    A1 -->|No| B{status == desired_state?}
-    B -->|Yes| C[완료]
-    B -->|No| D{status.level < desired_state.level?}
-    D -->|Yes| E[step_up 실행]
-    D -->|No| F[step_down 실행]
-    E --> G[operation 설정]
-    F --> G
-    G --> H[작업 수행]
-    H --> I[operation = NONE, status 갱신]
-    I --> B
-```
+### choose_next_operation()
 
-### 레벨 비교 (단순화)
+Reconciler는 현재 상태와 목표 상태로 다음 operation을 결정합니다.
 
 ```python
-# 기존 (복잡) - 전이 상태를 안정 상태에 매핑 필요
-if status in (PENDING, INITIALIZING):
-    current_level = 0
-elif status in (COLD, RESTORING):
-    current_level = 10
-...
+def choose_next_operation(observed: str, desired: str, ws: Workspace) -> str:
+    """현재 상태와 목표 상태로 다음 operation 결정"""
 
-# 신규 (단순) - 직접 비교
-current_level = status.level  # PENDING=0, COLD=10, WARM=20, RUNNING=30
-is_transitioning = operation != NONE
+    # DELETING은 최우선
+    if ws.deleted_at is not None:
+        return "DELETING"
+
+    # step_up 방향
+    if observed == "PENDING":
+        if desired in ("STANDBY", "RUNNING"):
+            if ws.archive_key is not None:
+                return "RESTORING"  # Archive → Volume
+            else:
+                return "PROVISIONING"  # 빈 Volume 생성
+
+    elif observed == "STANDBY":
+        if desired == "RUNNING":
+            return "STARTING"
+        elif desired == "PENDING":
+            return "ARCHIVING"
+
+    # step_down 방향
+    elif observed == "RUNNING":
+        if desired in ("STANDBY", "PENDING"):
+            return "STOPPING"
+
+    return "NONE"  # 전환 불필요
 ```
 
-### step_up 동작
-
-| status | operation | 동작 |
-|--------|-----------|------|
-| PENDING | INITIALIZING | 메타데이터 초기화 |
-| COLD | RESTORING | `archive_key` 있으면 restore, 없으면 provision |
-| WARM | STARTING | 컨테이너 시작 |
-
-### step_down 동작
-
-| status | operation | 동작 |
-|--------|-----------|------|
-| RUNNING | STOPPING | 컨테이너 정지 |
-| WARM | ARCHIVING | Volume을 Object Storage에 아카이브 |
-| COLD | - | (일반적으로 사용 안 함) |
-
----
-
-## Health Check (상태 검증)
-
-DB의 `status = RUNNING`과 실제 컨테이너 상태가 불일치할 수 있습니다 (크래시, OOM Kill, 외부 삭제 등).
-
-### 문제
-
-```
-DB: status = RUNNING
-실제: 컨테이너 없음
-→ 사용자 접속 시 502 에러
-```
-
-### 해결: Reconciler 폴링 + Proxy 체크
-
-```mermaid
-flowchart TD
-    A[Reconciler 30초 폴링] --> B{status = RUNNING?}
-    B -->|No| Z[스킵]
-    B -->|Yes| C{operation = NONE?}
-    C -->|No| Z
-    C -->|Yes| D[컨테이너 존재 확인]
-    D --> E{실제 실행 중?}
-    E -->|Yes| F[정상]
-    E -->|No| G[status = WARM]
-    G --> H[desired_state 유지]
-    H --> I[Reconciler: step_up 재시도]
-```
-
-### Reconciler Health Check
+### 레벨 비교
 
 ```python
-async def check_running_health(workspace: Workspace):
-    """RUNNING 상태 워크스페이스 실제 상태 검증 (30초마다)"""
-    if workspace.status != "RUNNING" or workspace.operation != "NONE":
-        return
-
-    container_exists = await instance_controller.exists(workspace.id)
-
-    if not container_exists:
-        # 컨테이너가 사라짐 → WARM으로 복구
-        # desired_state는 유지 → Reconciler가 다시 시작
-        await update_status(workspace.id, status="WARM")
-        logger.warning(f"Container missing for {workspace.id}, reset to WARM")
+def get_level(status: str) -> int:
+    """Active 상태의 레벨 반환"""
+    if status == "PENDING":
+        return 0
+    elif status == "STANDBY":
+        return 10
+    elif status == "RUNNING":
+        return 20
+    else:
+        return -1  # ERROR, DELETED
 ```
-
-### Proxy Health Check
-
-```python
-async def proxy_request(workspace_id: str):
-    """프록시 요청 시 컨테이너 존재 확인"""
-    workspace = await get_workspace(workspace_id)
-
-    if workspace.status == "RUNNING":
-        if not await instance_controller.exists(workspace_id):
-            # 불일치 감지 → WARM으로 변경하고 로딩 페이지
-            await update_status(workspace_id, status="WARM")
-            return render_loading_page(workspace_id)
-
-    # 정상 프록시 진행...
-```
-
-### 핵심 동작
-
-| 상황 | 동작 |
-|------|------|
-| DB=RUNNING, 컨테이너=있음 | 정상 |
-| DB=RUNNING, 컨테이너=없음 | status→WARM, Reconciler 재시작 |
-| 연속 실패 (3회) | ERROR 상태, 관리자 개입 |
 
 ---
 
 ## 참조
 
+- [reconciler.md](./reconciler.md) - Reconciler 알고리즘 (Two-Track, Level-Triggered)
 - [ADR-008: Ordered State Machine](../adr/008-ordered-state-machine.md)
+- [ADR-009: Status와 Operation 분리](../adr/009-status-operation-separation.md)
 - [schema.md](./schema.md) - TTL 관련 컬럼
 - [activity.md](./activity.md) - 활동 감지 메커니즘
 - [limits.md](./limits.md) - RUNNING 제한

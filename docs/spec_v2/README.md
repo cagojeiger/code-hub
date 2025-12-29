@@ -13,11 +13,11 @@ M2는 완성형 아키텍처를 구축합니다. M3에서는 Instance Controller
 | 항목 | M1 (MVP) | M2 |
 |------|----------|-----|
 | Storage | Bind Mount | Docker Volume + Object Storage |
-| 상태 모델 | CREATED/RUNNING/STOPPED | PENDING/COLD/WARM/RUNNING (Ordered) |
+| 상태 모델 | CREATED/RUNNING/STOPPED | PENDING/STANDBY/RUNNING (Ordered) + ARCHIVED (Display) |
 | 상태 전환 | 명령형 (start/stop) | 선언형 (desired_state) |
 | 전환 주체 | API 직접 실행 | Reconciler |
-| TTL | 없음 | RUNNING→WARM→COLD 자동 전환 |
-| Auto-wake | 없음 | WARM 상태에서 프록시 접속 시 자동 시작 |
+| TTL | 없음 | RUNNING→STANDBY→ARCHIVED 자동 전환 |
+| Auto-wake | 없음 | STANDBY 상태에서 프록시 접속 시 자동 시작 |
 
 ---
 

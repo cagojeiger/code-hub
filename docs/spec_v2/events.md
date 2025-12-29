@@ -51,7 +51,7 @@ Accept: text/event-stream
 
 ```
 event: state_changed
-data: {"workspace_id": "abc123", "status": "WARM", "operation": "STARTING", "desired_state": "RUNNING"}
+data: {"workspace_id": "abc123", "status": "STANDBY", "operation": "STARTING", "desired_state": "RUNNING"}
 ```
 
 | 필드 | 타입 | 설명 |

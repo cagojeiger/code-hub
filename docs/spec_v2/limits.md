@@ -176,7 +176,7 @@ async def update_workspace(
 
 ```python
 async def handle_auto_wake(workspace_id: str, user_id: str):
-    """WARM 상태 워크스페이스 접근 시 Auto-wake 처리"""
+    """STANDBY 상태 워크스페이스 접근 시 Auto-wake 처리"""
 
     allowed, message, details = await can_start_workspace(user_id)
     if not allowed:

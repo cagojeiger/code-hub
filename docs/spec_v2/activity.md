@@ -128,8 +128,8 @@ async def check_activity_ttl(workspace: Workspace):
         return
 
     # 연결도 없고 타이머도 없음 (만료됨) → 비활성
-    # desired_state를 WARM으로 변경하여 step_down 트리거
-    await set_desired_state(workspace.id, "WARM")
+    # desired_state를 STANDBY로 변경하여 step_down 트리거
+    await set_desired_state(workspace.id, "STANDBY")
 ```
 
 ### 핵심 규칙
@@ -138,15 +138,15 @@ async def check_activity_ttl(workspace: Workspace):
 
 ```
 잘못된 방식:
-  TTL 만료 → status만 WARM으로 변경
-  → Reconciler: status(WARM) != desired_state(RUNNING)
+  TTL 만료 → status만 STANDBY로 변경
+  → Reconciler: status(STANDBY) != desired_state(RUNNING)
   → step_up 실행 → 다시 RUNNING
   → 무한 루프!
 
 올바른 방식:
-  TTL 만료 → desired_state = WARM으로 변경
+  TTL 만료 → desired_state = STANDBY로 변경
   → Reconciler: step_down 실행
-  → status = WARM, desired_state = WARM
+  → status = STANDBY, desired_state = STANDBY
   → 안정
 ```
 
@@ -162,9 +162,9 @@ flowchart TD
     C -->|Yes| D[5분 대기]
     D --> E{타이머 만료?}
     E -->|No| C
-    E -->|Yes| F[desired_state = WARM]
+    E -->|Yes| F[desired_state = STANDBY]
     F --> G[Reconciler: step_down]
-    G --> H[WARM]
+    G --> H[STANDBY]
 ```
 
 ---
@@ -192,8 +192,44 @@ ws_conn = 0 → 타이머 시작
 
 ```
 연결 끊김 → ws_conn = 0 → 타이머 시작
-5분 후 → WARM
+5분 후 → STANDBY
 깨어나서 접속 → Auto-wake → RUNNING
+```
+
+---
+
+## Archive TTL 체크 (STANDBY → PENDING)
+
+STANDBY 상태에서 archive_ttl 경과 시 PENDING으로 전환.
+
+> **Note**: 이 로직은 Redis 기반이 아닌 DB 기반 (last_access_at 체크)
+
+```python
+async def check_archive_ttl(workspace: Workspace):
+    """Archive TTL 체크 (DB 폴링)"""
+
+    # STANDBY 상태가 아니면 스킵
+    if workspace.status != "STANDBY":
+        return
+
+    # operation 진행 중이면 스킵
+    if workspace.operation != "NONE":
+        return
+
+    # archive_ttl 경과 확인
+    elapsed = now() - workspace.last_access_at
+    if elapsed.total_seconds() >= workspace.archive_ttl_seconds:
+        await set_desired_state(workspace.id, "PENDING")
+```
+
+### 흐름
+
+```mermaid
+flowchart LR
+    S[STANDBY] -->|archive_ttl 만료| P[desired_state = PENDING]
+    P --> R[Reconciler: ARCHIVING]
+    R --> A[PENDING + archive_key]
+    A --> D[Display: ARCHIVED]
 ```
 
 ---
@@ -201,4 +237,5 @@ ws_conn = 0 → 타이머 시작
 ## 참조
 
 - [states.md](./states.md) - TTL 기반 상태 전환
-- [schema.md](./schema.md) - warm_ttl_seconds 설정
+- [schema.md](./schema.md) - standby_ttl_seconds, archive_ttl_seconds 설정
+- [flows.md](./flows.md) - TTL 기반 자동 전환 플로우

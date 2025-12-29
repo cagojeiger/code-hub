@@ -21,8 +21,8 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 | archive_key | VARCHAR(512) | YES | NULL | Object Storage 키 (`archives/{workspace_id}/{op_id}/home.tar.gz`) |
 | op_id | UUID | YES | NULL | 현재 작업 ID (멱등성 보장) |
 | last_access_at | TIMESTAMP | YES | NULL | 마지막 프록시 접속 시각 |
-| warm_ttl_seconds | INT | NO | 300 | RUNNING→WARM TTL (초) - WebSocket 기반 |
-| cold_ttl_seconds | INT | NO | 86400 | WARM→COLD TTL (초) - DB 기반 |
+| standby_ttl_seconds | INT | NO | 300 | RUNNING→STANDBY TTL (초) - WebSocket 기반 |
+| archive_ttl_seconds | INT | NO | 86400 | STANDBY→PENDING(ARCHIVED) TTL (초) - DB 기반 |
 | error_message | TEXT | YES | NULL | 에러 상세 메시지 |
 | error_count | INT | NO | 0 | 연속 전환 실패 횟수 |
 | previous_status | ENUM | YES | NULL | ERROR 전 상태 (복구용) |
@@ -40,29 +40,30 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 -- M1
 ENUM('CREATED', 'PROVISIONING', 'RUNNING', 'STOPPING', 'STOPPED', 'DELETING', 'ERROR', 'DELETED')
 
--- M2 (6개 - 핵심 상태만)
+-- M2 (5개 - Active 상태만, ARCHIVED는 파생)
 ENUM(
-  'PENDING',   -- Level 0: 리소스 없음
-  'COLD',      -- Level 10: Object Storage
-  'WARM',      -- Level 20: Volume
-  'RUNNING',   -- Level 30: Container + Volume
+  'PENDING',   -- Level 0: 활성 리소스 없음 (archive_key 있으면 Display: ARCHIVED)
+  'STANDBY',   -- Level 10: Volume만 존재
+  'RUNNING',   -- Level 20: Container + Volume
   'ERROR',     -- 오류 (레벨 없음)
   'DELETED'    -- 소프트 삭제 (레벨 없음)
 )
 ```
 
-> 전이 상태(INITIALIZING, STARTING 등)는 `operation` 컬럼으로 분리됨
+> - COLD 제거: ARCHIVED는 파생 상태 (PENDING + archive_key != NULL)
+> - WARM → STANDBY: 용어 통일
+> - 전이 상태(PROVISIONING, STARTING 등)는 `operation` 컬럼으로 분리됨
 
 ### operation ENUM 값
 
 ```sql
 ENUM(
   'NONE',         -- 작업 없음 (안정 상태)
-  'INITIALIZING', -- PENDING → COLD
-  'RESTORING',    -- COLD → WARM
-  'STARTING',     -- WARM → RUNNING
-  'STOPPING',     -- RUNNING → WARM
-  'ARCHIVING',    -- WARM → COLD
+  'PROVISIONING', -- PENDING → STANDBY (빈 Volume 생성)
+  'RESTORING',    -- PENDING(has_archive) → STANDBY (Archive 복원)
+  'STARTING',     -- STANDBY → RUNNING
+  'STOPPING',     -- RUNNING → STANDBY
+  'ARCHIVING',    -- STANDBY → PENDING + has_archive
   'DELETING'      -- * → DELETED
 )
 ```
@@ -70,10 +71,13 @@ ENUM(
 ### desired_state ENUM 값
 
 ```sql
-ENUM('COLD', 'WARM', 'RUNNING')
+ENUM('PENDING', 'STANDBY', 'RUNNING')
 ```
 
-> PENDING, ERROR, DELETED는 desired_state로 설정 불가
+> - PENDING: 아카이브 상태 목표 (archive_key 있으면 Display: ARCHIVED)
+> - STANDBY: Volume만 유지 (Container 없음)
+> - RUNNING: 실행 상태
+> - ERROR, DELETED는 desired_state로 설정 불가
 
 ---
 
@@ -98,16 +102,16 @@ ENUM('COLD', 'WARM', 'RUNNING')
 | image_ref | VARCHAR(512) | 컨테이너 이미지 참조 |
 | instance_backend | ENUM | 'local-docker' / 'k8s' |
 | storage_backend | ENUM | 'docker-volume' / 'minio' |
-| home_store_key | VARCHAR(512) | Volume 키 (`ws_{workspace_id}_home` 고정) |
+| home_store_key | VARCHAR(512) | Volume 키 (`ws-{workspace_id}-home` 고정) |
 | home_ctx | JSONB | Storage Provider 컨텍스트 |
-| **status** | ENUM | 현재 상태 (6개) |
+| **status** | ENUM | 현재 상태 (5개: PENDING, STANDBY, RUNNING, ERROR, DELETED) |
 | **operation** | ENUM | 진행 중인 작업 (신규) |
-| **desired_state** | ENUM | 목표 상태 (신규) |
+| **desired_state** | ENUM | 목표 상태 (신규: PENDING, STANDBY, RUNNING) |
 | **archive_key** | VARCHAR(512) | Object Storage 키 (신규) |
 | **op_id** | UUID | 현재 작업 ID (신규) |
 | **last_access_at** | TIMESTAMP | 마지막 접속 시각 (신규) |
-| **warm_ttl_seconds** | INT | RUNNING→WARM TTL (신규) |
-| **cold_ttl_seconds** | INT | WARM→COLD TTL (신규) |
+| **standby_ttl_seconds** | INT | RUNNING→STANDBY TTL (신규) |
+| **archive_ttl_seconds** | INT | STANDBY→PENDING(ARCHIVED) TTL (신규) |
 | **error_message** | TEXT | 에러 메시지 (신규) |
 | **error_count** | INT | 에러 횟수 (신규) |
 | **previous_status** | ENUM | ERROR 전 상태 (신규) |
@@ -125,7 +129,7 @@ ENUM('COLD', 'WARM', 'RUNNING')
 -- TTL 체크용 (Reconciler 폴링)
 CREATE INDEX idx_workspaces_ttl_check
 ON workspaces (status, last_access_at)
-WHERE status IN ('RUNNING', 'WARM')
+WHERE status IN ('RUNNING', 'STANDBY')
   AND operation = 'NONE'
   AND deleted_at IS NULL;
 
@@ -164,8 +168,8 @@ ADD COLUMN desired_state VARCHAR(20) DEFAULT 'RUNNING',
 ADD COLUMN archive_key VARCHAR(512),
 ADD COLUMN op_id UUID,
 ADD COLUMN last_access_at TIMESTAMP,
-ADD COLUMN warm_ttl_seconds INT DEFAULT 300,
-ADD COLUMN cold_ttl_seconds INT DEFAULT 86400,
+ADD COLUMN standby_ttl_seconds INT DEFAULT 300,
+ADD COLUMN archive_ttl_seconds INT DEFAULT 86400,
 ADD COLUMN error_message TEXT,
 ADD COLUMN error_count INT DEFAULT 0,
 ADD COLUMN previous_status VARCHAR(20);
@@ -185,14 +189,14 @@ UPDATE workspaces SET
   END,
   status = CASE status
     WHEN 'CREATED' THEN 'PENDING'
-    WHEN 'PROVISIONING' THEN 'WARM'  -- WARM + STARTING
-    WHEN 'STOPPED' THEN 'WARM'
-    WHEN 'STOPPING' THEN 'RUNNING'   -- RUNNING + STOPPING
+    WHEN 'PROVISIONING' THEN 'STANDBY'  -- STANDBY + STARTING
+    WHEN 'STOPPED' THEN 'STANDBY'
+    WHEN 'STOPPING' THEN 'RUNNING'      -- RUNNING + STOPPING
     ELSE status
   END,
   desired_state = CASE
     WHEN status IN ('RUNNING', 'PROVISIONING') THEN 'RUNNING'
-    WHEN status IN ('STOPPED', 'STOPPING') THEN 'WARM'
+    WHEN status IN ('STOPPED', 'STOPPING') THEN 'STANDBY'
     ELSE 'RUNNING'
   END
 WHERE deleted_at IS NULL;
@@ -202,16 +206,20 @@ WHERE deleted_at IS NULL;
 
 ```sql
 -- PostgreSQL에서 ENUM 변경
--- status: 6개 값으로 단순화
+-- status: 5개 값으로 단순화 (COLD 제거, WARM → STANDBY)
 ALTER TYPE workspace_status ADD VALUE 'PENDING';
-ALTER TYPE workspace_status ADD VALUE 'COLD';
-ALTER TYPE workspace_status ADD VALUE 'WARM';
+ALTER TYPE workspace_status ADD VALUE 'STANDBY';
 -- PROVISIONING, STOPPING 등 제거는 불가 → 사용하지 않도록 제약
 
--- operation: 새 타입 생성
+-- operation: 새 타입 생성 (INITIALIZING 제거, PROVISIONING 추가)
 CREATE TYPE workspace_operation AS ENUM (
-  'NONE', 'INITIALIZING', 'RESTORING', 'STARTING',
+  'NONE', 'PROVISIONING', 'RESTORING', 'STARTING',
   'STOPPING', 'ARCHIVING', 'DELETING'
+);
+
+-- desired_state: 새 타입 생성
+CREATE TYPE workspace_desired_state AS ENUM (
+  'PENDING', 'STANDBY', 'RUNNING'
 );
 ```
 

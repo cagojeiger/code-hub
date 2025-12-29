@@ -31,25 +31,25 @@ sequenceDiagram
     API->>API: INSERT (desired_state=RUNNING)
     API->>U: 201 Created
 
-    R->>R: step_up (PENDING → COLD)
-    Note right of R: INITIALIZING
-    R->>R: step_up (COLD → WARM)
-    Note right of R: storage.md 참조
-    R->>R: step_up (WARM → RUNNING)
-    Note right of R: instance.md 참조
+    R->>R: step_up (PENDING → STANDBY)
+    Note right of R: PROVISIONING (빈 Volume 생성)
+    R->>R: step_up (STANDBY → RUNNING)
+    Note right of R: STARTING (instance.md 참조)
 ```
 
 ### 상태 변화
 
 ```
-PENDING → COLD → WARM → RUNNING
+PENDING → STANDBY → RUNNING
 ```
+
+> 새 워크스페이스는 archive_key가 없으므로 PROVISIONING 실행
 
 ---
 
-## 2. Auto-wake (WARM → RUNNING)
+## 2. Auto-wake (STANDBY → RUNNING)
 
-프록시가 WARM 상태 접속을 감지하면 자동으로 시작.
+프록시가 STANDBY 상태 접속을 감지하면 자동으로 시작.
 
 ```mermaid
 sequenceDiagram
@@ -59,17 +59,19 @@ sequenceDiagram
     participant R as Reconciler
 
     U->>P: GET /w/{workspace_id}/
-    P->>P: status = WARM 확인
+    P->>P: status = STANDBY 확인
     P->>U: 로딩 페이지 (SSE 연결)
     P->>API: desired_state = RUNNING
 
-    R->>R: step_up (WARM → RUNNING)
-    Note right of R: instance.md 참조
+    R->>R: step_up (STANDBY → RUNNING)
+    Note right of R: STARTING (instance.md 참조)
 
     R-->>U: SSE: status=RUNNING
     Note right of U: events.md 참조
     U->>P: 리다이렉트
 ```
+
+> **Note**: PENDING(ARCHIVED) 상태에서는 auto-wake 없음. 수동 복원 필요.
 
 ---
 
@@ -77,39 +79,42 @@ sequenceDiagram
 
 > 상세 활동 감지 메커니즘은 [activity.md](./activity.md) 참조
 
-### 3.1 RUNNING → WARM
+### 3.1 RUNNING → STANDBY
 
 | 조건 | 값 |
 |------|-----|
 | 트리거 | WebSocket 연결 없음 후 5분 |
 | 감지 방식 | Redis 기반 (ws_conn, idle_timer) |
-| warm_ttl 기본값 | 300초 (5분) |
+| standby_ttl 기본값 | 300초 (5분) |
 
 ```mermaid
 flowchart LR
-    R[RUNNING] -->|WebSocket 끊김 후 5분| W[WARM]
+    R[RUNNING] -->|WebSocket 끊김 후 5분| S[STANDBY]
 ```
 
 Reconciler가 step_down 실행 → [instance.md](./instance.md) STOPPING 참조
 
-### 3.2 WARM → COLD
+### 3.2 STANDBY → PENDING (ARCHIVED)
 
 | 조건 | 값 |
 |------|-----|
-| 트리거 | `last_access_at + cold_ttl_seconds` 경과 |
+| 트리거 | `last_access_at + archive_ttl_seconds` 경과 |
 | 감지 방식 | DB 기반 |
-| cold_ttl 기본값 | 86400초 (1일) |
+| archive_ttl 기본값 | 86400초 (1일) |
 
 ```mermaid
 flowchart LR
-    W[WARM] -->|cold_ttl 만료| C[COLD]
+    S[STANDBY] -->|archive_ttl 만료| P[PENDING]
+    P --> D{archive_key?}
+    D -->|있음| A[Display: ARCHIVED]
+    D -->|없음| A2[Display: PENDING]
 ```
 
 Reconciler가 step_down 실행 → [storage.md](./storage.md) ARCHIVING 참조
 
 ---
 
-## 4. Manual Restore (COLD → RUNNING)
+## 4. Manual Restore (ARCHIVED → RUNNING)
 
 사용자가 아카이브된 워크스페이스를 복원.
 
@@ -123,15 +128,17 @@ sequenceDiagram
     API->>API: desired_state = RUNNING
     API->>U: 202 Accepted
 
-    R->>R: step_up (COLD → WARM)
-    Note right of R: storage.md RESTORING 참조
-    R->>R: step_up (WARM → RUNNING)
-    Note right of R: instance.md STARTING 참조
+    R->>R: step_up (PENDING → STANDBY)
+    Note right of R: RESTORING (archive_key 있음, storage.md 참조)
+    R->>R: step_up (STANDBY → RUNNING)
+    Note right of R: STARTING (instance.md 참조)
 ```
+
+> PENDING 상태에서 archive_key가 있으면 RESTORING, 없으면 PROVISIONING
 
 ---
 
-## 5. Manual Stop (RUNNING → WARM)
+## 5. Manual Stop (RUNNING → STANDBY)
 
 사용자가 워크스페이스를 정지.
 
@@ -141,16 +148,16 @@ sequenceDiagram
     participant API as Control Plane
     participant R as Reconciler
 
-    U->>API: PATCH /workspaces/{id} {desired_state: "WARM"}
+    U->>API: PATCH /workspaces/{id} {desired_state: "STANDBY"}
     API->>U: 200 OK
 
-    R->>R: step_down (RUNNING → WARM)
-    Note right of R: instance.md STOPPING 참조
+    R->>R: step_down (RUNNING → STANDBY)
+    Note right of R: STOPPING (instance.md 참조)
 ```
 
 ---
 
-## 6. Manual Archive (WARM → COLD)
+## 6. Manual Archive (STANDBY → ARCHIVED)
 
 사용자가 워크스페이스를 아카이브.
 
@@ -160,12 +167,15 @@ sequenceDiagram
     participant API as Control Plane
     participant R as Reconciler
 
-    U->>API: PATCH /workspaces/{id} {desired_state: "COLD"}
+    U->>API: PATCH /workspaces/{id} {desired_state: "PENDING"}
     API->>U: 200 OK
 
-    R->>R: step_down (WARM → COLD)
-    Note right of R: storage.md ARCHIVING 참조
+    R->>R: step_down (STANDBY → PENDING)
+    Note right of R: ARCHIVING (storage.md 참조)
+    Note right of R: 완료 후 archive_key 저장 → Display: ARCHIVED
 ```
+
+> desired_state="PENDING" + ARCHIVING 완료 → archive_key 생성 → Display: ARCHIVED
 
 ---
 
@@ -183,11 +193,14 @@ sequenceDiagram
 
     R->>R: operation = DELETING
     Note right of R: 상태별 정리
-    R->>R: RUNNING → instance.md delete
-    R->>R: WARM → storage.md purge
-    R->>R: COLD → storage.md purge
+    R->>R: RUNNING → Container 삭제 (instance.md)
+    R->>R: STANDBY → Volume 삭제 (storage.md)
+    R->>R: PENDING → Volume 없음 (skip)
     R->>R: status = DELETED
+    Note right of R: Archive는 GC가 정리 (storage-gc.md)
 ```
+
+> Volume/Container만 즉시 삭제, Archive는 GC가 나중에 정리
 
 ---
 

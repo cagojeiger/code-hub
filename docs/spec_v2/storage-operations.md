@@ -8,6 +8,7 @@
 
 | Operation | op_id 필요 | 이유 |
 |-----------|-----------|------|
+| PROVISIONING | ❌ | Volume 생성만, archive_key 생성 안 함 |
 | RESTORING | ❌ | 기존 archive_key 사용, 새 경로 생성 안 함 |
 | ARCHIVING | ✅ | archive_key 경로 생성에 필요 (`archives/{id}/{op_id}/...`) |
 | DELETING | ❌ | Volume만 삭제, Archive는 GC가 처리 |
@@ -24,26 +25,15 @@
 
 ---
 
-## RESTORING (COLD → WARM)
+## PROVISIONING (PENDING → STANDBY)
 
-Object Storage에서 Volume으로 데이터 복원.
+새 워크스페이스의 빈 Volume 생성.
 
 ### 전제 조건
-- `status = COLD, operation = RESTORING`
+- `status = PENDING, operation = PROVISIONING`
+- `archive_key = NULL` (아카이브 없음)
 
-> **참고**: PENDING → COLD (INITIALIZING)는 메타데이터만 초기화하며, Storage 작업이 없습니다.
-
-### 분기
-
-| archive_key | Object Storage 파일 | 동작 |
-|-------------|-------------------|------|
-| 있음 | 있음 | `provision(workspace_id)` → `restore(workspace_id, archive_key)` |
-| 있음 | 없음 | ERROR (`ARCHIVE_NOT_FOUND`) - 관리자 개입 필요 |
-| 없음 | - | `provision(workspace_id)` - 빈 Volume 생성 |
-
-> **참고**: provision은 멱등 (Volume 있으면 무시). ARCHIVING에서 Volume 삭제 후 복원할 때도 안전.
-
-### 동작 (첫 시도)
+### 동작
 
 ```mermaid
 sequenceDiagram
@@ -51,21 +41,63 @@ sequenceDiagram
     participant R as Reconciler
     participant S as StorageProvider
 
-    Note over DB,R: 시작: status=COLD, operation=RESTORING
+    Note over DB,R: 시작: status=PENDING, operation=PROVISIONING
     R->>S: provision(workspace_id)
     Note over S: Volume 생성 (멱등: 이미 있으면 무시)
     S-->>R: success
 
-    alt archive_key 있음
-        R->>S: restore(workspace_id, archive_key)
-        Note over S: Job 실행 (Volume: ws_{workspace_id}_home)
-        S-->>R: success
-    else archive_key 없음
-        Note over R: 빈 Volume 사용 (restore 호출 안 함)
-    end
+    R->>DB: status = STANDBY, operation = NONE
+    Note over DB,R: 완료: status=STANDBY, operation=NONE
+```
 
-    R->>DB: status = WARM, operation = NONE
-    Note over DB,R: 완료: status=WARM, operation=NONE
+### Reconciler pseudo-code
+
+```python
+def reconcile_provisioning(ws):
+    """PROVISIONING Reconciler - 멱등"""
+
+    # 이미 완료 체크
+    if ws.status == STANDBY and ws.operation == NONE:
+        return
+
+    # Volume 생성 (멱등)
+    storage.provision(ws.id)
+
+    # 완료
+    ws.status = STANDBY
+    ws.operation = NONE
+    db.update(ws)
+```
+
+---
+
+## RESTORING (PENDING + has_archive → STANDBY)
+
+Archive에서 Volume으로 데이터 복원.
+
+### 전제 조건
+- `status = PENDING, operation = RESTORING`
+- `archive_key != NULL` (아카이브 있음)
+
+### 동작
+
+```mermaid
+sequenceDiagram
+    participant DB as Database
+    participant R as Reconciler
+    participant S as StorageProvider
+
+    Note over DB,R: 시작: status=PENDING, operation=RESTORING
+    R->>S: provision(workspace_id)
+    Note over S: Volume 생성 (멱등: 이미 있으면 무시)
+    S-->>R: success
+
+    R->>S: restore(workspace_id, archive_key)
+    Note over S: Job 실행 (Archive → Volume)
+    S-->>R: success
+
+    R->>DB: status = STANDBY, operation = NONE
+    Note over DB,R: 완료: status=STANDBY, operation=NONE
 ```
 
 > **Job 내부 동작**: [storage-job.md](./storage-job.md#restore-job) 참조
@@ -83,13 +115,31 @@ sequenceDiagram
     Note over S: Volume 생성 (멱등: 이미 있으면 무시)
     S-->>R: success
 
-    alt archive_key 있음
-        R->>S: restore(workspace_id, archive_key)
-        Note over S: Crash-Only 설계 → 항상 처음부터 재실행
-        S-->>R: success (멱등)
-    else archive_key 없음
-        Note over R: 빈 Volume 사용 (restore 호출 안 함)
-    end
+    R->>S: restore(workspace_id, archive_key)
+    Note over S: Crash-Only 설계 → 항상 처음부터 재실행
+    S-->>R: success (멱등)
+```
+
+### Reconciler pseudo-code
+
+```python
+def reconcile_restoring(ws):
+    """RESTORING Reconciler - 멱등 (Crash-Only)"""
+
+    # 이미 완료 체크
+    if ws.status == STANDBY and ws.operation == NONE:
+        return
+
+    # 단계 1: Volume 생성 (멱등)
+    storage.provision(ws.id)
+
+    # 단계 2: restore (Crash-Only: 항상 재실행)
+    storage.restore(ws.id, ws.archive_key)
+
+    # 단계 3: 완료
+    ws.status = STANDBY
+    ws.operation = NONE
+    db.update(ws)
 ```
 
 ### 실패 처리
@@ -103,12 +153,12 @@ sequenceDiagram
 
 ---
 
-## ARCHIVING (WARM → COLD)
+## ARCHIVING (STANDBY → PENDING + has_archive)
 
 Volume을 Object Storage로 아카이브.
 
 ### 전제 조건
-- `status = WARM, operation = ARCHIVING`
+- `status = STANDBY, operation = ARCHIVING`
 - 컨테이너가 정지된 상태 (RUNNING이 아님)
 
 ### 핵심 규칙
@@ -129,7 +179,7 @@ sequenceDiagram
     participant R as Reconciler
     participant S as StorageProvider
 
-    Note over DB,R: 시작: status=WARM, operation=ARCHIVING
+    Note over DB,R: 시작: status=STANDBY, operation=ARCHIVING
     alt op_id가 NULL (첫 시도)
         R->>DB: op_id = uuid()
     end
@@ -146,8 +196,8 @@ sequenceDiagram
     R->>S: delete_volume(workspace_id)
     S-->>R: success
 
-    R->>DB: status=COLD, operation=NONE, op_id=NULL
-    Note over DB,R: 완료: status=COLD, operation=NONE
+    R->>DB: status=PENDING, operation=NONE, op_id=NULL
+    Note over DB,R: 완료: status=PENDING (Display: ARCHIVED)
 ```
 
 > **Job 내부 동작**: [storage-job.md](./storage-job.md#archive-job) 참조
@@ -165,6 +215,37 @@ sequenceDiagram
 - **Job HEAD 체크**: S3에 이미 있으면 skip
 - **archive_key 체크**: DB에 저장되어 있으면 업로드 skip
 
+### Reconciler pseudo-code
+
+```python
+def reconcile_archiving(ws):
+    """ARCHIVING Reconciler - 멱등"""
+
+    # 이미 완료 체크
+    if ws.status == PENDING and ws.operation == NONE and ws.archive_key:
+        return
+
+    # 단계 1: op_id 확보
+    if ws.op_id is None:
+        ws.op_id = uuid()
+        db.update(ws)  # 커밋 포인트 1
+
+    # 단계 2-3: archive (archive_key로 skip 판단)
+    if ws.archive_key is None:
+        archive_key = storage.archive(ws.id, ws.op_id)
+        ws.archive_key = archive_key
+        db.update(ws)  # 커밋 포인트 2
+
+    # 단계 4: Volume 삭제 (멱등)
+    storage.delete_volume(ws.id)
+
+    # 단계 5: 완료
+    ws.status = PENDING  # Display: ARCHIVED (archive_key 있으므로)
+    ws.operation = NONE
+    ws.op_id = None
+    db.update(ws)  # 커밋 포인트 3
+```
+
 ---
 
 ## DELETING
@@ -173,7 +254,7 @@ Container와 Volume 삭제. Archive는 GC가 정리.
 
 ### 전제 조건
 - `operation = DELETING`
-- 모든 status에서 가능 (PENDING, COLD, WARM, RUNNING)
+- 모든 status에서 가능 (PENDING, STANDBY, RUNNING)
 
 ### 삭제 순서 (중요)
 
@@ -216,90 +297,7 @@ DELETING 완료 시:
 
 > **중요**: archive_key를 NULL로 하지 않음. deleted workspace는 GC 보호 목록에서 제외되므로, 해당 archive는 자연스럽게 orphan이 됨.
 
-### 실패 처리
-- Volume 삭제 실패 시 재시도
-- Archive는 GC 주기에 정리됨 (별도 처리 불필요)
-
----
-
-## Reconciler 멱등성
-
-Reconciler는 각 단계의 "완료 여부"를 DB 상태로 판단하여 멱등성을 보장합니다.
-
-### ARCHIVING Reconciler
-
-| 단계 | 완료 판단 기준 | 재시도 시 동작 |
-|------|---------------|---------------|
-| op_id 생성 | `op_id != NULL` | skip |
-| archive | `archive_key != NULL` | skip |
-| delete_volume | 멱등 (없으면 무시) | 항상 호출 |
-| 최종 커밋 | `status = COLD, operation = NONE` | skip |
-
-```python
-def reconcile_archiving(ws):
-    """ARCHIVING Reconciler - 멱등"""
-
-    # 이미 완료 체크
-    if ws.status == COLD and ws.operation == NONE:
-        return
-
-    # 단계 1: op_id 확보
-    if ws.op_id is None:
-        ws.op_id = uuid()
-        db.update(ws)  # 커밋 포인트 1
-
-    # 단계 2-3: archive (archive_key로 skip 판단)
-    if ws.archive_key is None:
-        archive_key = storage.archive(ws.id, ws.op_id)
-        ws.archive_key = archive_key
-        db.update(ws)  # 커밋 포인트 2
-
-    # 단계 4: Volume 삭제 (멱등)
-    storage.delete_volume(ws.id)
-
-    # 단계 5: 완료
-    ws.status = COLD
-    ws.operation = NONE
-    ws.op_id = None
-    db.update(ws)  # 커밋 포인트 3
-```
-
-### RESTORING Reconciler
-
-| 단계 | 완료 판단 기준 | 재시도 시 동작 |
-|------|---------------|---------------|
-| provision | 멱등 (있으면 무시) | 항상 호출 |
-| restore | Crash-Only | 항상 재실행 |
-| 최종 커밋 | `status = WARM, operation = NONE` | skip |
-
-```python
-def reconcile_restoring(ws):
-    """RESTORING Reconciler - 멱등 (Crash-Only)"""
-
-    # 이미 완료 체크
-    if ws.status == WARM and ws.operation == NONE:
-        return
-
-    # 단계 1: Volume 생성 (멱등)
-    storage.provision(ws.id)
-
-    # 단계 2: restore (Crash-Only: 항상 재실행)
-    if ws.archive_key:
-        storage.restore(ws.id, ws.archive_key)
-
-    # 단계 3: 완료
-    ws.status = WARM
-    ws.operation = NONE
-    db.update(ws)
-```
-
-### DELETING Reconciler
-
-| 단계 | 완료 판단 기준 | 재시도 시 동작 |
-|------|---------------|---------------|
-| delete (container) | 멱등 (없으면 무시) | 항상 호출 |
-| delete_volume | 멱등 (없으면 무시) | 항상 호출 |
-| soft-delete | `status = DELETED` | skip |
+### Reconciler pseudo-code
 
 ```python
 def reconcile_deleting(ws):
@@ -321,6 +319,10 @@ def reconcile_deleting(ws):
     ws.operation = NONE
     db.update(ws)
 ```
+
+### 실패 처리
+- Volume 삭제 실패 시 재시도
+- Archive는 GC 주기에 정리됨 (별도 처리 불필요)
 
 ---
 
