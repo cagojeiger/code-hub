@@ -12,6 +12,16 @@
 | ARCHIVING | ✅ | archive_key 경로 생성에 필요 (`archives/{id}/{op_id}/...`) |
 | DELETING | ❌ | Volume만 삭제, Archive는 GC가 처리 |
 
+### op_id 생성/조회
+
+| 시점 | op_id 상태 | 동작 |
+|------|-----------|------|
+| 첫 시도 | NULL | 생성 후 DB 저장 |
+| 재시도 | NOT NULL | 기존 값 사용 (DB에서 조회) |
+
+> **핵심**: op_id는 archive 호출 전에 DB에 먼저 저장됨.
+> 크래시 후 재시도 시 같은 op_id로 같은 경로에 업로드.
+
 ---
 
 ## RESTORING (COLD → WARM)
@@ -199,6 +209,104 @@ DELETING 완료 시:
 ### 실패 처리
 - Volume 삭제 실패 시 재시도
 - Archive는 GC 주기에 정리됨 (별도 처리 불필요)
+
+---
+
+## Reconciler 멱등성
+
+Reconciler는 각 단계의 "완료 여부"를 DB 상태로 판단하여 멱등성을 보장합니다.
+
+### ARCHIVING Reconciler
+
+| 단계 | 완료 판단 기준 | 재시도 시 동작 |
+|------|---------------|---------------|
+| op_id 생성 | `op_id != NULL` | skip |
+| archive | `archive_key != NULL` | skip |
+| delete_volume | 멱등 (없으면 무시) | 항상 호출 |
+| 최종 커밋 | `status = COLD, operation = NONE` | skip |
+
+```python
+def reconcile_archiving(ws):
+    """ARCHIVING Reconciler - 멱등"""
+
+    # 이미 완료 체크
+    if ws.status == COLD and ws.operation == NONE:
+        return
+
+    # 단계 1: op_id 확보
+    if ws.op_id is None:
+        ws.op_id = uuid()
+        db.update(ws)  # 커밋 포인트 1
+
+    # 단계 2-3: archive (archive_key로 skip 판단)
+    if ws.archive_key is None:
+        archive_key = storage.archive(ws.id, ws.op_id)
+        ws.archive_key = archive_key
+        db.update(ws)  # 커밋 포인트 2
+
+    # 단계 4: Volume 삭제 (멱등)
+    storage.delete_volume(ws.id)
+
+    # 단계 5: 완료
+    ws.status = COLD
+    ws.operation = NONE
+    ws.op_id = None
+    db.update(ws)  # 커밋 포인트 3
+```
+
+### RESTORING Reconciler
+
+| 단계 | 완료 판단 기준 | 재시도 시 동작 |
+|------|---------------|---------------|
+| provision | 멱등 (있으면 무시) | 항상 호출 |
+| restore | Crash-Only | 항상 재실행 |
+| 최종 커밋 | `status = WARM, operation = NONE` | skip |
+
+```python
+def reconcile_restoring(ws):
+    """RESTORING Reconciler - 멱등 (Crash-Only)"""
+
+    # 이미 완료 체크
+    if ws.status == WARM and ws.operation == NONE:
+        return
+
+    # 단계 1: Volume 생성 (멱등)
+    storage.provision(ws.id)
+
+    # 단계 2: restore (Crash-Only: 항상 재실행)
+    if ws.archive_key:
+        storage.restore(ws.id, ws.archive_key)
+
+    # 단계 3: 완료
+    ws.status = WARM
+    ws.operation = NONE
+    db.update(ws)
+```
+
+### DELETING Reconciler
+
+| 단계 | 완료 판단 기준 | 재시도 시 동작 |
+|------|---------------|---------------|
+| delete_volume | 멱등 (없으면 무시) | 항상 호출 |
+| soft-delete | `status = DELETED` | skip |
+
+```python
+def reconcile_deleting(ws):
+    """DELETING Reconciler - 멱등"""
+
+    # 이미 완료 체크
+    if ws.status == DELETED:
+        return
+
+    # 단계 1: Volume 삭제 (멱등)
+    storage.delete_volume(ws.id)
+
+    # 단계 2: soft-delete
+    ws.status = DELETED
+    ws.deleted_at = now()
+    ws.operation = NONE
+    db.update(ws)
+```
 
 ---
 
