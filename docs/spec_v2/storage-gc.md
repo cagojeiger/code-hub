@@ -10,7 +10,7 @@ GC는 **Archive 정리**만 담당합니다.
 
 | 리소스 | GC 필요 | 이유 |
 |--------|---------|------|
-| Volume | ❌ | workspace당 1개 고정, purge 시에만 삭제 |
+| Volume | ❌ | workspace당 1개 고정, ARCHIVING/DELETING에서 삭제 |
 | Archive | ✅ | op_id 변경 시 이전 버전이 orphan으로 남음 |
 
 ### DELETING vs GC
@@ -57,7 +57,8 @@ def is_orphan_archive(archive_path, workspaces):
 
         # ARCHIVING 진행 중인 op_id 경로 보호
         if ws.operation == "ARCHIVING" and ws.op_id:
-            if ws.op_id in archive_path:
+            expected_prefix = f"archives/{ws.id}/{ws.op_id}/"
+            if archive_path.startswith(expected_prefix):
                 return False
 
     return True
@@ -76,8 +77,8 @@ flowchart TD
     D -->|ARCHIVING 중 op_id| E
     D -->|그 외| F[orphan 마킹]
     F --> G{1시간 경과?}
-    G -->|Yes| H[삭제]
-    G -->|No| I[다음 GC까지 대기]
+    G -->|No| H[다음 GC까지 대기]
+    G -->|Yes| I[삭제]
 ```
 
 ### 안전 지연
@@ -92,91 +93,6 @@ orphan 판단 후 **즉시 삭제하지 않고 1시간 대기** 후 삭제합니
 | 조건 | 1시간 연속 orphan이면 삭제 |
 
 > **왜 1시간?**: Archive Job timeout(30분) + 여유. 크래시 후 재시도가 완료되기 전에 삭제 방지.
-
----
-
-## 시간 복잡도
-
-GC 알고리즘은 **O(W + A)** 로 최적화합니다.
-
-| 방식 | 복잡도 | 설명 |
-|------|--------|------|
-| Naive (이중 루프) | O(A × W) | 각 archive마다 모든 workspace 순회 |
-| **Optimized (Set)** | O(W + A) | protected_keys Set 구축 후 O(1) lookup |
-
-### 최적화된 구현
-
-```python
-def find_orphan_archives(archives, workspaces):
-    """O(W + A) 복잡도로 orphan 탐지"""
-
-    # O(W): 보호 목록 구축
-    protected_keys = set()
-    archiving_op_ids = set()
-
-    for ws in workspaces:
-        if ws.deleted_at is not None:
-            continue  # soft-deleted는 보호 안 함
-
-        if ws.archive_key:
-            protected_keys.add(ws.archive_key)
-
-        if ws.operation == "ARCHIVING" and ws.op_id:
-            archiving_op_ids.add(ws.op_id)
-
-    # O(A): orphan 판단
-    orphans = []
-    for archive in archives:
-        if archive in protected_keys:
-            continue
-        if any(op_id in archive for op_id in archiving_op_ids):
-            continue
-        orphans.append(archive)
-
-    return orphans
-```
-
-### 메모리 분석
-
-| 규모 | 메모리 (Set 방식) | 비고 |
-|------|------------------|------|
-| 10K workspaces | ~1.5 MB | 충분히 작음 |
-| 100K workspaces | ~15 MB | 허용 범위 |
-| 1M workspaces | ~150 MB | 최적화 필요 |
-
----
-
-## 대규모 최적화: Counting Bloom Filter (P3)
-
-M2에서는 Set 방식 사용. 대규모(100K+ workspaces) 시 Counting Bloom Filter 고려.
-
-| 항목 | Set | Counting Bloom Filter |
-|------|-----|----------------------|
-| 메모리 | O(W) ~15MB/100K | O(1) ~480KB 고정 |
-| 정확도 | 100% | 99%+ |
-| 증분 업데이트 | ❌ 매번 재구축 | ✅ Insert/Delete 지원 |
-| False Negative | 불가능 | 가능 (삭제 지연, 안전) |
-
-### 왜 Counting Bloom Filter인가?
-
-- **표준 Bloom Filter 한계**: Delete 불가 (비트 공유 문제)
-- **Counting Bloom Filter**: 카운터 사용 → Insert/Delete 모두 지원
-- **이벤트 기반 증분 업데이트**:
-  - workspace 생성 → `filter.insert(archive_key)`
-  - workspace 삭제 → `filter.delete(archive_key)`
-  - ARCHIVING 시작 → `filter.insert(op_id)`
-  - ARCHIVING 완료 → `filter.delete(old_key)`, `filter.insert(new_key)`
-
-### 안전성
-
-| 오류 유형 | 발생 가능성 | 영향 |
-|----------|-------------|------|
-| False Positive | 불가능 | - |
-| False Negative | ~1% | 삭제 지연 (안전) |
-
-> **안전한 이유**: False negative는 "orphan을 정상으로 오판" → 삭제가 다음 GC 사이클로 미뤄질 뿐, 데이터 손실 없음.
->
-> 여러 GC 사이클 후 모든 orphan 삭제됨: P(N번 후에도 남음) = (0.01)^N
 
 ---
 

@@ -97,7 +97,7 @@ sequenceDiagram
 | 에러 코드 | 상황 | 복구 방법 |
 |----------|------|----------|
 | `ARCHIVE_NOT_FOUND` | archive_key 있으나 Object Storage에 파일 없음 | 관리자 개입: archive_key NULL 처리 또는 백업 복원 |
-| `S3_ACCESS_ERROR` | Object Storage 접근 실패 | 자동 재시도 (같은 op_id) |
+| `S3_ACCESS_ERROR` | Object Storage 접근 실패 | 자동 재시도 |
 | `CHECKSUM_MISMATCH` | sha256 불일치 | 관리자 개입 |
 | `TAR_EXTRACT_FAILED` | tar.gz 해제 실패 | 관리자 개입 |
 
@@ -204,7 +204,7 @@ DELETING 완료 시:
   - archive_key 유지 (GC가 orphan 판단에 사용)
 ```
 
-> **중요**: archive_key를 NULL로 하지 않음. GC가 이 값을 보고 해당 Archive를 orphan으로 판단.
+> **중요**: archive_key를 NULL로 하지 않음. deleted workspace는 GC 보호 목록에서 제외되므로, 해당 archive는 자연스럽게 orphan이 됨.
 
 ### 실패 처리
 - Volume 삭제 실패 시 재시도

@@ -25,6 +25,27 @@
 - 동일 workspace에 대한 동시 Archive/Restore 없음
 - 따라서 **동시 덮어쓰기 이슈 없음**
 
+> **참고**: 부분 실패 복구 시 같은 경로에 재업로드는 가능하나, 이는 순차적 재시도이므로 안전.
+
+### Reconciler 동시성 제어
+
+여러 Reconciler 인스턴스가 동시에 같은 workspace를 처리하는 것을 방지합니다.
+
+**조건부 UPDATE (Optimistic Locking)**:
+
+```sql
+UPDATE workspaces
+SET operation = ?, updated_at = NOW()
+WHERE id = ? AND operation = 'NONE';
+```
+
+| 결과 | 의미 | 동작 |
+|------|------|------|
+| affected_rows = 1 | 성공 | 작업 진행 |
+| affected_rows = 0 | 다른 Reconciler가 선점 | 이번 사이클 skip |
+
+> **구현 참고**: ORM에서 `update().where(operation='NONE')` 후 affected rows 체크
+
 ---
 
 ## 불변식 (Invariants)
