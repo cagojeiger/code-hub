@@ -10,7 +10,7 @@
 |-----------|-----------|------|
 | RESTORING | ❌ | 기존 archive_key 사용, 새 경로 생성 안 함 |
 | ARCHIVING | ✅ | archive_key 경로 생성에 필요 (`archives/{id}/{op_id}/...`) |
-| DELETING | ❌ | prefix 기반 삭제, 특정 경로 불필요 |
+| DELETING | ❌ | Volume만 삭제, Archive는 GC가 처리 |
 
 ---
 
@@ -157,9 +157,9 @@ sequenceDiagram
 
 ---
 
-## DELETING (purge)
+## DELETING
 
-모든 Storage 리소스 정리. 사용자가 workspace 삭제 요청 시 즉시 실행.
+Volume만 삭제. Archive는 GC가 정리.
 
 ### 전제 조건
 - `operation = DELETING`
@@ -170,22 +170,35 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    A[purge 시작] --> B[Volume 삭제]
-    B --> C[prefix로 모든 Archive 검색]
-    C --> D[모든 Archive 삭제]
-    D --> E[완료]
+    A[DELETING 시작] --> B[Volume 삭제]
+    B --> C[DB: deleted_at = now, status = DELETED]
+    C --> D[완료]
+    D -.-> E[GC가 Archive 정리]
 ```
 
 ### 삭제 대상
 
-| 리소스 | 식별자 |
-|--------|--------|
-| Volume | `ws_{workspace_id}_home` |
-| Archives | `archives/{workspace_id}/*` |
+| 리소스 | 삭제 주체 | 타이밍 |
+|--------|----------|--------|
+| Volume | DELETING | 즉시 |
+| Archives | GC | 1시간 후 (soft-delete 감지) |
+
+> **왜 분리?**: Volume은 즉시 해제 (컴퓨팅 비용), Archive는 GC가 일괄 정리 (저장 비용, 배치 효율)
+
+### Soft-Delete
+
+```
+DELETING 완료 시:
+  - deleted_at = NOW()
+  - status = DELETED
+  - archive_key 유지 (GC가 orphan 판단에 사용)
+```
+
+> **중요**: archive_key를 NULL로 하지 않음. GC가 이 값을 보고 해당 Archive를 orphan으로 판단.
 
 ### 실패 처리
-- 삭제 실패 시 로그 기록, 수동 정리 필요
-- 부분 삭제 가능 (일부만 삭제되어도 다음 호출에서 나머지 삭제)
+- Volume 삭제 실패 시 재시도
+- Archive는 GC 주기에 정리됨 (별도 처리 불필요)
 
 ---
 

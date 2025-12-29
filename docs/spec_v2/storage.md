@@ -13,6 +13,8 @@
 3. **Restore는 Crash-Only 설계** - 항상 재실행해도 같은 결과
 4. **StorageProvider = 데이터 이동, Reconciler = DB 커밋**
 5. **meta 파일 기반 checksum으로 무결성 검증** - sha256
+6. **DELETING은 Volume만, Archive는 GC가 정리** - 책임 분리
+7. **Workspace는 soft-delete** - GC가 orphan 판단에 필요
 
 ---
 
@@ -44,7 +46,7 @@
 |-----------|-------------|
 | RESTORING | restore (archive → volume) 또는 provision (빈 volume) |
 | ARCHIVING | archive (volume → archive) + delete_volume |
-| DELETING | purge (모든 리소스 삭제) |
+| DELETING | delete_volume (Volume만 삭제, Archive는 GC가 정리) |
 
 > 상세 플로우는 [storage-operations.md](./storage-operations.md) 참조
 
@@ -219,19 +221,8 @@ class StorageProvider(ABC):
         멱등성: 존재하지 않으면 무시
         """
 
-    @abstractmethod
-    async def purge(self, workspace_id: str) -> None:
-        """모든 Storage 리소스 삭제 (멱등).
-
-        Args:
-            workspace_id: 워크스페이스 ID
-
-        동작:
-            - Volume 삭제 (ws_{workspace_id}_home)
-            - 모든 Archive 삭제 (prefix: archives/{workspace_id}/)
-
-        멱등성: 존재하지 않는 리소스는 무시
-        """
+    # purge 메서드 제거됨 - DELETING은 delete_volume만 호출
+    # Archive는 GC가 별도로 정리 (soft-delete된 workspace의 archive는 orphan 취급)
 ```
 
 ---
