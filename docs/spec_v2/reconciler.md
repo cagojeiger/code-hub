@@ -596,6 +596,6 @@ Docker 환경 (M=10~50)에서는 현재 구조로 충분:
 
 - [states.md](./states.md) - 상태 정의, 전환 규칙
 - [instance.md](./instance.md) - InstanceController 인터페이스 (is_running)
-- [storage.md](./storage.md) - StorageProvider 인터페이스 (volume_exists, archive_exists)
+- [storage.md](./storage.md) - StorageProvider 인터페이스 (volume_exists)
 - [storage-operations.md](./storage-operations.md) - operation별 상세 플로우
 - [ADR-007: Reconciler 구현 전략](../adr/007-reconciler-implementation.md) - 인프라 결정 (Leader Election, Hints)

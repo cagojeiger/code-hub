@@ -347,7 +347,7 @@ async def recover_from_error(workspace: Workspace):
 
 ## Reconciler 동작
 
-> **상세 알고리즘**: [reconciler.md](./reconciler.md)에서 Two-Track 구조,
+> **상세 알고리즘**: [reconciler.md](./reconciler.md)에서 Plan/Execute 구조,
 > observe → compute → compare → act 전체 플로우 참조
 
 ### choose_next_operation()
@@ -403,7 +403,7 @@ def get_level(status: str) -> int:
 
 ## 참조
 
-- [reconciler.md](./reconciler.md) - Reconciler 알고리즘 (Two-Track, Level-Triggered)
+- [reconciler.md](./reconciler.md) - Reconciler 알고리즘 (Plan/Execute, Level-Triggered)
 - [ADR-008: Ordered State Machine](../adr/008-ordered-state-machine.md)
 - [ADR-009: Status와 Operation 분리](../adr/009-status-operation-separation.md)
 - [schema.md](./schema.md) - TTL 관련 컬럼
