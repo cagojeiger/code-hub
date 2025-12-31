@@ -18,23 +18,14 @@ Coordinator는 모든 백그라운드 프로세스를 관리하는 **단일 리�
 
 ## 아키텍처
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Coordinator Process                       │
-│                    (pg_advisory_lock 보유)                   │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │HealthMonitor│  │StateReconciler│ │ TTL Manager │         │
-│  │  (30s 주기) │  │  (10s 주기)  │  │  (1m 주기)  │         │
-│  └─────────────┘  └─────────────┘  └─────────────┘         │
-│                                                             │
-│  ┌─────────────┐                                            │
-│  │ Archive GC  │                                            │
-│  │  (1h 주기)  │                                            │
-│  └─────────────┘                                            │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph Coordinator["Coordinator Process<br/>(pg_advisory_lock 보유)"]
+        HM["HealthMonitor<br/>(30s 주기)"]
+        SR["StateReconciler<br/>(10s 주기)"]
+        TTL["TTL Manager<br/>(1m 주기)"]
+        GC["Archive GC<br/>(1h 주기)"]
+    end
 ```
 
 ---
@@ -53,45 +44,45 @@ PostgreSQL의 `pg_advisory_lock`을 사용한 세션 기반 리더 선출.
 
 ### 동작 원리
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  Node 1 (Active)                                            │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │ Coordinator                                          │   │
-│  │ - pg_advisory_lock(12345) 보유                      │   │
-│  │ - 모든 컴포넌트 실행 중                              │   │
-│  └─────────────────────────────────────────────────────┘   │
-│  [DB 연결 유지 중]                                          │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph Node1["Node 1 (Active)"]
+        C1["Coordinator<br/>• pg_advisory_lock(12345) 보유<br/>• 모든 컴포넌트 실행 중"]
+        DB1["[DB 연결 유지 중]"]
+    end
 
-┌─────────────────────────────────────────────────────────────┐
-│  Node 2 (Standby)                                           │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │ Coordinator                                          │   │
-│  │ - pg_try_advisory_lock(12345) 실패                  │   │
-│  │ - 대기 중 (5초마다 재시도)                          │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
+    subgraph Node2["Node 2 (Standby)"]
+        C2["Coordinator<br/>• pg_try_advisory_lock 실패<br/>• 대기 중 (5초마다 재시도)"]
+    end
+
+    C1 --> DB1
 ```
 
 ### Failover 시나리오
 
-```
-T0: Node 1 = Active (lock 보유)
-    Node 2 = Standby
+```mermaid
+sequenceDiagram
+    participant N1 as Node 1
+    participant PG as PostgreSQL
+    participant N2 as Node 2
 
-T1: Node 1 크래시 (또는 네트워크 단절)
-    → DB 연결 끊김
+    Note over N1,N2: T0: 정상 상태
+    N1->>PG: lock 보유 (Active)
+    N2->>PG: 대기 중 (Standby)
 
-T2: PostgreSQL이 세션 종료 감지
-    → pg_advisory_lock 자동 해제
+    Note over N1: T1: 크래시/네트워크 단절
+    N1--xPG: DB 연결 끊김
 
-T3: Node 2의 pg_try_advisory_lock() 성공
-    → Node 2 = Active
+    Note over PG: T2: 세션 종료 감지
+    PG->>PG: pg_advisory_lock 자동 해제
 
-T4: Node 1 복구
-    → pg_try_advisory_lock() 실패 (Node 2가 보유 중)
-    → Node 1 = Standby
+    Note over N2: T3: Lock 획득 성공
+    N2->>PG: pg_try_advisory_lock() 성공
+    Note over N2: Node 2 = Active
+
+    Note over N1: T4: 복구 시도
+    N1->>PG: pg_try_advisory_lock() 실패
+    Note over N1: Node 1 = Standby
 ```
 
 ---

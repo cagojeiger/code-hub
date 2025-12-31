@@ -154,24 +154,56 @@ async def can_start_workspace(user_id: str) -> tuple[bool, str, dict]:
 
 ### Race Condition 방지
 
+#### 문제: RUNNING만 체크 시 동시 요청으로 초과 할당 가능
+
+```mermaid
+sequenceDiagram
+    participant A as User A
+    participant B as User B
+    participant API
+    participant DB
+
+    Note over DB: 현재 RUNNING = 1, max = 2
+
+    par 동시 요청
+        A->>API: workspace 시작 요청
+        B->>API: workspace 시작 요청
+    end
+
+    API->>DB: RUNNING 카운트 조회
+    DB-->>API: count = 1 (통과)
+
+    API->>DB: RUNNING 카운트 조회
+    DB-->>API: count = 1 (통과)
+
+    API->>DB: A의 operation = STARTING
+    API->>DB: B의 operation = STARTING
+
+    Note over DB: 결과: 3개 RUNNING (제한 초과!)
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  문제: RUNNING만 체크 시 동시 요청으로 초과 할당 가능                        │
-└─────────────────────────────────────────────────────────────────────────────┘
 
-  T0: User A, B가 동시에 workspace 시작 요청
-  T1: 둘 다 RUNNING 카운트 = 1 (max=2) → 통과
-  T2: 둘 다 operation = STARTING 설정
-  T3: 결과: 3개 RUNNING (제한 초과!)
+#### 해결: RUNNING + STARTING 모두 카운트
 
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  해결: RUNNING + STARTING 모두 카운트                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant A as User A
+    participant B as User B
+    participant API
+    participant DB
 
-  T0: User A 요청
-  T1: (RUNNING + STARTING) 카운트 = 1 → 통과, STARTING 설정
-  T2: User B 요청
-  T3: (RUNNING + STARTING) 카운트 = 2 (A의 STARTING 포함) → 제한 도달
+    Note over DB: 현재 RUNNING = 1, max = 2
+
+    A->>API: workspace 시작 요청
+    API->>DB: (RUNNING + STARTING) 카운트 조회
+    DB-->>API: count = 1 (통과)
+    API->>DB: A의 operation = STARTING
+
+    B->>API: workspace 시작 요청
+    API->>DB: (RUNNING + STARTING) 카운트 조회
+    DB-->>API: count = 2 (A의 STARTING 포함)
+
+    Note over API,B: 제한 도달 → 요청 거부
+    API-->>B: 429 Too Many Requests
 ```
 
 ### API 엔드포인트

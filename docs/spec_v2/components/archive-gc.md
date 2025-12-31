@@ -18,14 +18,10 @@ Archive GC는 orphan archive를 정리하는 컴포넌트입니다.
 
 ## 핵심 원칙
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  GC는 Archive 정리만 담당                                   │
-│                                                             │
-│  Volume: GC 불필요 (workspace당 1개 고정)                   │
-│  Archive: GC 필요 (op_id 변경 시 orphan 발생)               │
-└─────────────────────────────────────────────────────────────┘
-```
+> **GC는 Archive 정리만 담당**
+>
+> - **Volume**: GC 불필요 (workspace당 1개 고정)
+> - **Archive**: GC 필요 (op_id 변경 시 orphan 발생)
 
 ### DELETING vs GC
 
@@ -204,47 +200,31 @@ def is_protected(archive_path: str, protected: Set[str]) -> bool:
 
 ## 상태 전이 다이어그램
 
-```
-                    ┌──────────────────────┐
-                    │   GC 주기 실행       │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │ S3 ListObjects       │
-                    │ prefix=archives/     │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │ DB 보호 목록 조회    │
-                    └──────────┬───────────┘
-                               │
-                               ▼
-                    ┌──────────────────────┐
-                    │   보호 대상?         │
-                    └──────────┬───────────┘
-                               │
-              Yes ─────────────┴─────────────── No
-               │                                 │
-               ▼                                 ▼
-        ┌──────────────┐              ┌──────────────────────┐
-        │ orphan 타이머│              │ 첫 감지?             │
-        │ 삭제         │              └──────────┬───────────┘
-        └──────────────┘                         │
-                                    Yes ─────────┴─────── No
-                                     │                     │
-                                     ▼                     ▼
-                              ┌──────────────┐    ┌──────────────────┐
-                              │ 타이머 시작  │    │ 2시간 경과?      │
-                              │ (Redis)      │    └──────────┬───────┘
-                              └──────────────┘               │
-                                                  Yes ───────┴─── No
-                                                   │              │
-                                                   ▼              ▼
-                                            ┌──────────────┐ ┌──────────┐
-                                            │ S3 삭제     │ │ 대기     │
-                                            └──────────────┘ └──────────┘
+```mermaid
+flowchart TB
+    START["GC 주기 실행"]
+    LIST["S3 ListObjects<br/>prefix=archives/"]
+    QUERY["DB 보호 목록 조회"]
+    PROTECTED{"보호 대상?"}
+    DEL_TIMER["orphan 타이머 삭제"]
+    FIRST{"첫 감지?"}
+    START_TIMER["타이머 시작 (Redis)"]
+    EXPIRED{"2시간 경과?"}
+    DELETE["S3 삭제"]
+    WAIT["대기"]
+
+    START --> LIST
+    LIST --> QUERY
+    QUERY --> PROTECTED
+
+    PROTECTED -->|Yes| DEL_TIMER
+    PROTECTED -->|No| FIRST
+
+    FIRST -->|Yes| START_TIMER
+    FIRST -->|No| EXPIRED
+
+    EXPIRED -->|Yes| DELETE
+    EXPIRED -->|No| WAIT
 ```
 
 ---

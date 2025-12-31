@@ -23,52 +23,45 @@ M2는 완성형 아키텍처를 구축합니다. M3에서는 Instance Controller
 
 ## 아키텍처
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Control Plane                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   ┌─────────────┐                                                           │
-│   │  API Server │─────────── desired_state 변경 ──────────────┐            │
-│   └─────────────┘                                              │            │
-│                                                                ▼            │
-│   ┌─────────────────────────────────────────────────────────────────────┐  │
-│   │                        Coordinator Process                           │  │
-│   │                     (pg_advisory_lock 리더 선출)                     │  │
-│   │                                                                       │  │
-│   │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │  │
-│   │  │HealthMonitor│  │StateReconciler│ │ TTL Manager │  │ Archive GC │ │  │
-│   │  │  (30s)      │  │  (10s)       │  │  (1m)       │  │  (1h)      │ │  │
-│   │  │             │  │              │  │             │  │            │ │  │
-│   │  │ observe     │  │ DB만 읽고   │  │ idle체크   │  │ orphan     │ │  │
-│   │  │ → status    │  │ Plan/Execute│  │ →desired   │  │ 정리       │ │  │
-│   │  └──────┬──────┘  └──────┬───────┘  └──────┬──────┘  └─────┬──────┘ │  │
-│   │         │                │                 │               │        │  │
-│   └─────────┼────────────────┼─────────────────┼───────────────┼────────┘  │
-│             │                │                 │               │           │
-│             ▼                ▼                 ▼               ▼           │
-│   ┌─────────────────────────────────────────────────────────────────────┐  │
-│   │                          Database (PostgreSQL)                       │  │
-│   │  workspaces: status, desired_state, operation, archive_key, ...    │  │
-│   │  system_locks: 리더 선출용                                          │  │
-│   └─────────────────────────────────────────────────────────────────────┘  │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                               Data Plane                                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│   Container Runtime                    Object Storage (S3)                  │
-│   ┌───────────────────┐               ┌───────────────────┐                │
-│   │ Workspace         │               │ archives/         │                │
-│   │ Containers        │               │   {ws_id}/        │                │
-│   │                   │               │     {op_id}/      │                │
-│   │ /home/coder ──────┼───────────────│       home.tar.gz │                │
-│   │      ↓            │               └───────────────────┘                │
-│   │   Volume          │                                                     │
-│   └───────────────────┘                                                     │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph ControlPlane["Control Plane"]
+        API["API Server"]
+
+        subgraph Coordinator["Coordinator Process<br/>(pg_advisory_lock 리더 선출)"]
+            HM["HealthMonitor<br/>(30s)<br/>observe → status"]
+            SR["StateReconciler<br/>(10s)<br/>Plan/Execute"]
+            TTL["TTL Manager<br/>(1m)<br/>idle → desired"]
+            GC["Archive GC<br/>(1h)<br/>orphan 정리"]
+        end
+
+        subgraph DB["Database (PostgreSQL)"]
+            WS["workspaces: status, desired_state, operation, archive_key, ..."]
+            SL["system_locks: 리더 선출용"]
+        end
+
+        API -->|"desired_state 변경"| DB
+        HM --> DB
+        SR --> DB
+        TTL --> DB
+        GC --> DB
+    end
+
+    subgraph DataPlane["Data Plane"]
+        subgraph Container["Container Runtime"]
+            WC["Workspace Containers"]
+            VOL["Volume<br/>/home/coder"]
+        end
+
+        subgraph S3["Object Storage (S3)"]
+            ARCH["archives/{ws_id}/{op_id}/<br/>home.tar.gz"]
+        end
+
+        WC --> VOL
+        VOL <-.->|"archive/restore"| ARCH
+    end
+
+    ControlPlane --> DataPlane
 ```
 
 ### 컬럼 소유권 (단일 Writer 원칙)

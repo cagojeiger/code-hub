@@ -18,14 +18,11 @@ TTL Manager는 비활성 워크스페이스의 TTL을 체크하고 desired_state
 
 ## 핵심 원칙
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  TTL Manager는 desired_state만 변경한다                      │
-│  (observed_status는 HealthMonitor, operation은 StateReconciler)│
-│                                                             │
-│  TTL 만료 → desired_state 변경 → StateReconciler가 수렴     │
-└─────────────────────────────────────────────────────────────┘
-```
+> **TTL Manager는 desired_state만 변경한다**
+>
+> (observed_status는 HealthMonitor, operation은 StateReconciler)
+>
+> TTL 만료 → desired_state 변경 → StateReconciler가 수렴
 
 ---
 
@@ -153,54 +150,51 @@ async def run_loop(self):
 
 ### Standby TTL (WebSocket 기반)
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        Standby TTL 흐름                                      │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant P as Proxy
+    participant R as Redis
+    participant T as TTL Manager
 
-Browser                    Proxy                     Redis                  TTL Manager
-   │                         │                         │                         │
-   │─── WebSocket Connect ──▶│                         │                         │
-   │                         │─── INCR ws_conn:{id} ──▶│                         │
-   │                         │─── DEL idle_timer:{id} ▶│                         │
-   │                         │                         │                         │
-   │       (사용 중...)       │                         │                         │
-   │                         │                         │                         │
-   │─── WebSocket Close ────▶│                         │                         │
-   │                         │─── DECR ws_conn:{id} ──▶│                         │
-   │                         │                         │                         │
-   │                         │   (count == 0)          │                         │
-   │                         │─ SETEX idle_timer 300 ─▶│                         │
-   │                         │                         │                         │
-   │                         │                         │─── 5분 후 자동 만료 ───▶│
-   │                         │                         │                         │
-   │                         │                         │          TTL Manager 체크
-   │                         │                         │◀── ws_conn=0, no timer ─│
-   │                         │                         │                         │
-   │                         │                         │   desired_state=STANDBY │
-   │                         │                         │                         │
+    B->>P: WebSocket Connect
+    P->>R: INCR ws_conn:{id}
+    P->>R: DEL idle_timer:{id}
+
+    Note over B,P: 사용 중...
+
+    B->>P: WebSocket Close
+    P->>R: DECR ws_conn:{id}
+
+    Note over P,R: count == 0
+    P->>R: SETEX idle_timer 300
+
+    Note over R: 5분 후 자동 만료
+
+    T->>R: TTL Manager 체크
+    R-->>T: ws_conn=0, no timer
+
+    Note over T: desired_state=STANDBY
 ```
 
 ### Archive TTL (DB 기반)
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        Archive TTL 흐름                                      │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant SR as StateReconciler
+    participant DB as Database
+    participant T as TTL Manager
 
-                           Database                             TTL Manager
-                              │                                      │
-      STOPPING 완료 시        │                                      │
-    last_access_at 업데이트 ─▶│                                      │
-                              │                                      │
-                              │        (archive_ttl_seconds 경과)    │
-                              │                                      │
-                              │◀─────── TTL Manager 주기 체크 ───────│
-                              │                                      │
-                              │   NOW() - last_access_at > ttl?     │
-                              │                                      │
-                              │─── desired_state = PENDING ─────────▶│
-                              │                                      │
+    Note over SR,DB: STOPPING 완료 시
+    SR->>DB: last_access_at 업데이트
+
+    Note over DB: archive_ttl_seconds 경과...
+
+    T->>DB: TTL Manager 주기 체크
+    DB-->>T: NOW() - last_access_at > ttl?
+
+    Note over T: desired_state = PENDING
+    T->>DB: UPDATE desired_state = 'PENDING'
 ```
 
 ---

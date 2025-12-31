@@ -15,20 +15,22 @@
 
 ## 크로스 컴포넌트 에러 처리
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                        ERROR 상태 설정 흐름                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant SR as StateReconciler
+    participant DB as Database
+    participant HM as HealthMonitor
 
-  StateReconciler                              HealthMonitor
-  ─────────────────                            ──────────────
-  1. Timeout 감지                              1. 관측 시 error_info 확인
-     또는 재시도 초과                          2. if is_terminal:
-  2. error_info 저장                              observed_status = ERROR
-     (is_terminal = true)
-  3. operation은 유지
+    Note over SR: 1. Timeout 또는 재시도 초과 감지
+    SR->>DB: error_info 저장<br/>(is_terminal = true)
+    Note over SR: operation은 유지
 
-  ※ StateReconciler는 error_info만 쓰고, observed_status는 HealthMonitor만 변경
+    Note over HM: 다음 관측 시
+    HM->>DB: error_info 읽기
+    Note over HM: is_terminal == true 확인
+    HM->>DB: observed_status = ERROR
+
+    Note over SR,HM: ※ StateReconciler는 error_info만,<br/>observed_status는 HealthMonitor만 변경
 ```
 
 ### 책임 분리
@@ -341,22 +343,31 @@ def get_max_retries(reason: str) -> int:
 
 ### ERROR 전환 흐름
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           ERROR 전환 시퀀스                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant SR as StateReconciler
+    participant DB as Database
+    participant HM as HealthMonitor
 
-1. StateReconciler: 재시도 초과 또는 Timeout 감지
-   → error_info.is_terminal = true 설정
-   → previous_status = observed_status 저장
-   → operation은 유지 (NONE으로 변경 안 함)
+    rect rgb(255, 230, 230)
+        Note over SR: Step 1: 재시도 초과/Timeout 감지
+        SR->>DB: error_info.is_terminal = true
+        SR->>DB: previous_status = observed_status
+        Note over SR: operation은 유지
+    end
 
-2. HealthMonitor: 다음 관측 시
-   → error_info.is_terminal == true 확인
-   → observed_status = ERROR 설정
+    rect rgb(230, 255, 230)
+        Note over HM: Step 2: 다음 관측 시
+        HM->>DB: error_info 읽기
+        Note over HM: is_terminal == true
+        HM->>DB: observed_status = ERROR
+    end
 
-3. StateReconciler: 다음 tick
-   → observed_status == ERROR → skip (수렴 중단)
+    rect rgb(230, 230, 255)
+        Note over SR: Step 3: 다음 tick
+        SR->>DB: observed_status 읽기
+        Note over SR: ERROR → skip (수렴 중단)
+    end
 ```
 
 ### set_terminal_error() (StateReconciler)
@@ -403,23 +414,32 @@ async def set_terminal_error(ws: Workspace, reason: str, error: Exception, error
 
 ### 복구 흐름
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           ERROR 복구 시퀀스                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant Admin as 관리자/API
+    participant DB as Database
+    participant HM as HealthMonitor
+    participant SR as StateReconciler
 
-1. 관리자/API: error_info 초기화 요청
-   → error_info = NULL 설정
-   → error_count = 0 설정
-   → operation = NONE 설정
+    rect rgb(255, 250, 230)
+        Note over Admin: Step 1: 복구 요청
+        Admin->>DB: error_info = NULL
+        Admin->>DB: error_count = 0
+        Admin->>DB: operation = NONE
+    end
 
-2. HealthMonitor: 다음 관측 시
-   → error_info.is_terminal 없음
-   → 실제 리소스 기반으로 observed_status 계산
-   → observed_status = previous_status (또는 실제 상태)
+    rect rgb(230, 255, 230)
+        Note over HM: Step 2: 다음 관측 시
+        HM->>DB: error_info 읽기
+        Note over HM: is_terminal 없음
+        HM->>DB: observed_status = 실제 상태
+    end
 
-3. StateReconciler: 다음 tick
-   → observed_status ≠ ERROR → 정상 수렴 재개
+    rect rgb(230, 230, 255)
+        Note over SR: Step 3: 다음 tick
+        SR->>DB: observed_status 읽기
+        Note over SR: ≠ ERROR → 정상 수렴 재개
+    end
 ```
 
 ### recover_from_error() (API/관리자)
