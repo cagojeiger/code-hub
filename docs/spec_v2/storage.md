@@ -70,7 +70,41 @@ WHERE id = ? AND operation = 'NONE';
 | ARCHIVING | archive (volume → archive) + delete_volume |
 | DELETING | delete_volume (Volume만 삭제, Archive는 GC가 정리) |
 
-> 상세 플로우는 [storage-operations.md](./storage-operations.md) 참조
+### op_id 정책
+
+| Operation | op_id 필요 | 이유 |
+|-----------|-----------|------|
+| PROVISIONING | ❌ | Volume 생성만, archive_key 생성 안 함 |
+| RESTORING | ❌ | 기존 archive_key 사용, 새 경로 생성 안 함 |
+| ARCHIVING | ✅ | archive_key 경로 생성에 필요 (`archives/{id}/{op_id}/...`) |
+| DELETING | ❌ | Volume만 삭제, Archive는 GC가 처리 |
+
+| 시점 | op_id 상태 | 동작 |
+|------|-----------|------|
+| 첫 시도 | NULL | 생성 후 DB 저장 |
+| 재시도 | NOT NULL | 기존 값 사용 (DB에서 조회) |
+
+> **핵심**: op_id는 archive 호출 전에 DB에 먼저 저장됨. 크래시 후 재시도 시 같은 op_id로 같은 경로에 업로드.
+
+### 완료 판단 원칙
+
+**관측 기반 완료 판단**을 사용합니다.
+
+```
+Actuator 성공 반환 ≠ Operation 완료
+관측 조건 충족 = Operation 완료
+```
+
+| Operation | Actuator | 완료 조건 (관측 기반) |
+|-----------|----------|---------------------|
+| PROVISIONING | `provision()` | `volume_exists() == True` |
+| RESTORING | `provision()` + `restore()` | `volume_exists() == True` |
+| STARTING | `start()` | `is_running() AND volume_exists()` |
+| STOPPING | `delete()` | `!is_running() AND volume_exists()` |
+| ARCHIVING | `archive()` + `delete_volume()` | `!volume_exists()` |
+| DELETING | `delete()` + `delete_volume()` | `!is_running() AND !volume_exists()` |
+
+> **이유**: Level-Triggered 철학 일관성. 크래시 복구 시 관측으로 현재 상태 확인.
 
 ### 백엔드별 용어
 
@@ -173,6 +207,136 @@ meta 파일 기반 checksum을 사용합니다.
 
 ---
 
+## Operation 플로우
+
+### PROVISIONING (PENDING → STANDBY)
+
+새 워크스페이스의 빈 Volume 생성.
+
+| 항목 | 값 |
+|------|---|
+| 전제 조건 | `status = PENDING, operation = PROVISIONING, archive_key = NULL` |
+| Actuator | `storage.provision()` |
+| 완료 조건 | `volume_exists() == True` |
+
+```mermaid
+sequenceDiagram
+    participant R as Reconciler
+    participant S as StorageProvider
+
+    R->>S: provision(workspace_id)
+    Note over S: Volume 생성 (멱등: 이미 있으면 무시)
+    S-->>R: success
+    R->>R: status = STANDBY, operation = NONE
+```
+
+### RESTORING (PENDING + has_archive → STANDBY)
+
+Archive에서 Volume으로 데이터 복원.
+
+| 항목 | 값 |
+|------|---|
+| 전제 조건 | `status = PENDING, operation = RESTORING, archive_key != NULL` |
+| Actuator | `storage.provision()` → `storage.restore()` |
+| 완료 조건 | `volume_exists() == True` |
+
+```mermaid
+sequenceDiagram
+    participant R as Reconciler
+    participant S as StorageProvider
+
+    R->>S: provision(workspace_id)
+    Note over S: Volume 생성 (멱등)
+    S-->>R: success
+    R->>S: restore(workspace_id, archive_key)
+    Note over S: Job: Archive → Volume
+    S-->>R: success
+    R->>R: status = STANDBY, operation = NONE
+```
+
+> **Job 상세**: [storage-job.md](./storage-job.md#restore-job)
+
+#### 실패 처리
+
+| 에러 코드 | ErrorReason | 복구 방법 |
+|----------|-------------|----------|
+| `ARCHIVE_NOT_FOUND` | DataLost | 관리자 개입 |
+| `S3_ACCESS_ERROR` | Unreachable | 자동 재시도 (3회) |
+| `CHECKSUM_MISMATCH` | DataLost | 관리자 개입 |
+| `TAR_EXTRACT_FAILED` | ActionFailed | 자동 재시도 (3회) |
+
+### ARCHIVING (STANDBY → PENDING + has_archive)
+
+Volume을 Object Storage로 아카이브.
+
+| 항목 | 값 |
+|------|---|
+| 전제 조건 | `status = STANDBY, operation = ARCHIVING` |
+| Actuator | `storage.archive()` → `storage.delete_volume()` |
+| 완료 조건 | `!volume_exists()` |
+| 순서 | 업로드 → archive_key DB 저장 → Volume 삭제 |
+
+```mermaid
+sequenceDiagram
+    participant R as Reconciler
+    participant S as StorageProvider
+    participant DB as Database
+
+    alt op_id가 NULL (첫 시도)
+        R->>DB: op_id = uuid()
+    end
+
+    R->>S: archive(workspace_id, op_id)
+    Note over S: Job: Volume → Archive (HEAD 체크)
+    S-->>R: archive_key
+    R->>DB: archive_key 저장
+
+    R->>S: delete_volume(workspace_id)
+    S-->>R: success
+    R->>DB: status=PENDING, operation=NONE, op_id=NULL
+```
+
+> **Job 상세**: [storage-job.md](./storage-job.md#archive-job)
+
+#### 크래시 복구
+
+| 크래시 시점 | DB 상태 | 재시도 동작 |
+|------------|---------|------------|
+| 업로드 중 | op_id 있음, archive_key 불일치 | 같은 op_id로 재시도 (Job HEAD 체크) |
+| archive_key 저장 후 | archive_key 일치 | 업로드 skip → delete_volume만 |
+| Volume 삭제 후 | archive_key 일치, !volume_exists | 최종 커밋만 |
+
+### DELETING
+
+Container와 Volume 삭제. Archive는 GC가 정리.
+
+| 항목 | 값 |
+|------|---|
+| 전제 조건 | `operation = DELETING` (모든 status에서 가능) |
+| Actuator | `instance.delete()` → `storage.delete_volume()` |
+| 완료 조건 | `!is_running() AND !volume_exists()` |
+| 순서 | Container 삭제 → Volume 삭제 (역순 금지) |
+
+```mermaid
+flowchart LR
+    A[DELETING] --> B[Container 삭제]
+    B --> C[Volume 삭제]
+    C --> D[status = DELETED]
+    D -.-> E[GC: Archive 정리]
+```
+
+#### 삭제 대상
+
+| 리소스 | 삭제 주체 | 타이밍 |
+|--------|----------|--------|
+| Container | InstanceController | 즉시 |
+| Volume | StorageProvider | Container 삭제 후 |
+| Archives | GC | 2시간 후 (soft-delete 감지) |
+
+> **분리 이유**: Container/Volume은 컴퓨팅 비용 즉시 해제, Archive는 GC가 배치로 정리
+
+---
+
 ## Job 에러 처리
 
 StorageProvider가 예외를 던지면 Reconciler가 ERROR 상태로 전환:
@@ -255,7 +419,7 @@ class StorageProvider(ABC):
         멱등성: 존재하지 않으면 무시
         """
 
-    # --- 센서 메서드 (Reconciler observe용) ---
+    # --- 관측 메서드 (Reconciler observe용) ---
 
     @abstractmethod
     async def volume_exists(self, workspace_id: str) -> bool:
@@ -290,9 +454,8 @@ class StorageProvider(ABC):
 ## 참조
 
 - [storage-job.md](./storage-job.md) - Job 스펙 (Crash-Only 설계)
-- [storage-operations.md](./storage-operations.md) - RESTORING, ARCHIVING, DELETING 플로우
 - [storage-gc.md](./storage-gc.md) - Archive GC
 - [error.md](./error.md) - ERROR 상태, 에러 처리
-- [reconciler.md](./reconciler.md) - Reconciler 알고리즘 (센서 사용)
+- [reconciler.md](./reconciler.md) - Reconciler 알고리즘 (관측 메서드 사용)
 - [states.md](./states.md) - 상태 전환 규칙
 - [instance.md](./instance.md) - 인스턴스 동작

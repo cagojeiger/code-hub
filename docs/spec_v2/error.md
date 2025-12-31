@@ -50,7 +50,7 @@ class ErrorInfo:
 
 ### Mismatch - 상태 불일치
 
-센서(check) 결과가 예상과 다른 경우.
+관측(check) 결과가 예상과 다른 경우.
 
 ```python
 ErrorInfo(
@@ -67,7 +67,7 @@ ErrorInfo(
 | 필드 | 설명 |
 |------|------|
 | expected | DB/operation이 기대하는 상태 |
-| actual | 센서가 관찰한 실제 상태 |
+| actual | 관측된 실제 상태 |
 
 ### Unreachable - API 호출 실패
 
@@ -303,5 +303,5 @@ async def recover_from_error(ws: Workspace):
 
 - [states.md](./states.md) - ERROR 상태 정의
 - [reconciler.md](./reconciler.md) - 에러 처리 로직, timeout
-- [storage-operations.md](./storage-operations.md) - operation별 에러 발생 지점
+- [storage.md](./storage.md) - Operation 플로우, 에러 처리
 - [storage-gc.md](./storage-gc.md) - ERROR 상태 GC 보호

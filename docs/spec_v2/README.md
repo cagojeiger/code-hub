@@ -27,26 +27,31 @@ M2는 완성형 아키텍처를 구축합니다. M3에서는 Instance Controller
 
 | 문서 | 설명 |
 |------|------|
-| [states.md](./states.md) | Ordered State Machine 기반 상태 정의 + Health Check |
+| [states.md](./states.md) | 상태 정의 + 주요 시나리오 (Ordered State Machine) |
+| [reconciler.md](./reconciler.md) | Reconciler 알고리즘 (Plan/Execute, Level-Triggered) |
 | [schema.md](./schema.md) | DB 스키마 변경 사항 |
-| [flows.md](./flows.md) | 주요 플로우 (생성, Auto-wake, TTL, Archive/Restore) |
 
 ### 레이어별 문서
 
 | 문서 | 설명 |
 |------|------|
-| [storage.md](./storage.md) | Storage 핵심 원칙, 인터페이스 |
-| [storage-job.md](./storage-job.md) | Storage Job 스펙 (마커 기반 멱등성, 스크립트) |
-| [storage-operations.md](./storage-operations.md) | Storage 플로우 (RESTORING, ARCHIVING, DELETING, provision) |
-| [storage-gc.md](./storage-gc.md) | Storage 경로 규칙, Object Storage 구조, GC 시스템 |
-| [instance.md](./instance.md) | Instance 동작 (start/stop/delete) |
+| [storage.md](./storage.md) | Storage 원칙, 인터페이스, Operation 플로우 |
+| [storage-job.md](./storage-job.md) | Storage Job 스펙 (Crash-Only 설계) |
+| [instance.md](./instance.md) | InstanceController (start/stop/delete) |
 | [events.md](./events.md) | SSE 이벤트 정의 |
+
+### 독립 프로세스
+
+| 문서 | 실행 단위 | 설명 |
+|------|----------|------|
+| [activity.md](./activity.md) | TTL Manager | 활동 감지 + TTL 기반 desired_state 변경 |
+| [storage-gc.md](./storage-gc.md) | Archive GC | orphan archive 정리 |
 
 ### 정책 문서
 
 | 문서 | 설명 |
 |------|------|
-| [activity.md](./activity.md) | 활동 감지 메커니즘 (WebSocket 기반) |
+| [error.md](./error.md) | ERROR 상태, ErrorInfo, 재시도 정책 |
 | [limits.md](./limits.md) | RUNNING 워크스페이스 제한 |
 
 ---

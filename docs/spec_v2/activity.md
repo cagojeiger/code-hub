@@ -8,6 +8,16 @@
 
 워크스페이스 활동 감지 메커니즘을 정의합니다. WebSocket 연결 기반으로 사용자 활동을 추적합니다.
 
+### 역할 분리
+
+| 구분 | 책임 |
+|------|------|
+| **Proxy** | WebSocket 연결 추적 (Redis) |
+| **TTL Manager** | TTL 만료 → desired_state 변경 |
+| **Reconciler** | desired_state로 status 수렴 |
+
+> **핵심**: TTL Manager가 `desired_state`를 WRITE, Reconciler는 READ만
+
 ---
 
 ## 활동 감지 방식
@@ -100,55 +110,38 @@ sequenceDiagram
 
 ---
 
-## Reconciler 동작
+## TTL Manager
 
-### TTL 만료 감지
+TTL Manager는 **별도 프로세스**로 실행되며, TTL 만료 시 `desired_state`를 변경합니다.
 
-```python
-async def check_activity_ttl(workspace: Workspace):
-    """활동 TTL 체크 (30초마다 폴링)"""
+### 실행 모델
 
-    # RUNNING 상태가 아니면 스킵
-    if workspace.status != "RUNNING":
-        return
+| 항목 | 값 |
+|------|-----|
+| 실행 주기 | 1분 |
+| 단일 인스턴스 | DB Lock |
+| 체크 대상 | RUNNING (standby_ttl), STANDBY (archive_ttl) |
 
-    # operation 진행 중이면 스킵
-    if workspace.operation != "NONE":
-        return
+> **DB Lock**: Archive GC와 동일한 메커니즘 사용. [schema.md](./schema.md) 참조.
 
-    ws_conn = await redis.get(f"ws_conn:{workspace.id}")
-    idle_timer = await redis.exists(f"idle_timer:{workspace.id}")
+### standby_ttl 체크 (RUNNING → STANDBY)
 
-    # 연결 있음 → 활성
-    if ws_conn and int(ws_conn) > 0:
-        return
-
-    # 타이머 있음 → 아직 대기 중
-    if idle_timer:
-        return
-
-    # 연결도 없고 타이머도 없음 (만료됨) → 비활성
-    # desired_state를 STANDBY로 변경하여 step_down 트리거
-    await set_desired_state(workspace.id, "STANDBY")
-```
+| 조건 | 동작 |
+|------|------|
+| status ≠ RUNNING | skip |
+| operation ≠ NONE | skip |
+| ws_conn > 0 (Redis) | 활성 상태, skip |
+| idle_timer 존재 (Redis) | 5분 대기 중, skip |
+| 그 외 (idle_timer 만료) | `desired_state = STANDBY` |
 
 ### 핵심 규칙
 
-**TTL 만료 시 desired_state도 함께 변경**
+**TTL 만료 시 `desired_state` 변경** (status 직접 변경 금지)
 
-```
-잘못된 방식:
-  TTL 만료 → status만 STANDBY로 변경
-  → Reconciler: status(STANDBY) != desired_state(RUNNING)
-  → step_up 실행 → 다시 RUNNING
-  → 무한 루프!
-
-올바른 방식:
-  TTL 만료 → desired_state = STANDBY로 변경
-  → Reconciler: step_down 실행
-  → status = STANDBY, desired_state = STANDBY
-  → 안정
-```
+| 방식 | 동작 | 결과 |
+|------|------|------|
+| ❌ 잘못된 | status만 STANDBY 변경 | Reconciler가 다시 RUNNING으로 수렴 → 무한 루프 |
+| ✅ 올바른 | desired_state = STANDBY 변경 | Reconciler가 STOPPING → STANDBY 수렴 |
 
 ---
 
@@ -200,27 +193,18 @@ ws_conn = 0 → 타이머 시작
 
 ## Archive TTL 체크 (STANDBY → PENDING)
 
-STANDBY 상태에서 archive_ttl 경과 시 PENDING으로 전환.
+STANDBY 상태에서 archive_ttl 경과 시 PENDING으로 전환합니다.
 
-> **Note**: 이 로직은 Redis 기반이 아닌 DB 기반 (last_access_at 체크)
+> **Note**: Redis 기반이 아닌 DB 기반 (last_access_at 체크)
 
-```python
-async def check_archive_ttl(workspace: Workspace):
-    """Archive TTL 체크 (DB 폴링)"""
+### archive_ttl 체크
 
-    # STANDBY 상태가 아니면 스킵
-    if workspace.status != "STANDBY":
-        return
-
-    # operation 진행 중이면 스킵
-    if workspace.operation != "NONE":
-        return
-
-    # archive_ttl 경과 확인
-    elapsed = now() - workspace.last_access_at
-    if elapsed.total_seconds() >= workspace.archive_ttl_seconds:
-        await set_desired_state(workspace.id, "PENDING")
-```
+| 조건 | 동작 |
+|------|------|
+| status ≠ STANDBY | skip |
+| operation ≠ NONE | skip |
+| now() - last_access_at < archive_ttl_seconds | skip |
+| 그 외 (TTL 만료) | `desired_state = PENDING` |
 
 ### 흐름
 
@@ -234,8 +218,41 @@ flowchart LR
 
 ---
 
+## Known Issues
+
+### desired_state 경쟁 조건
+
+TTL Manager와 다른 소스(API, Proxy)가 동시에 `desired_state`를 변경할 수 있습니다.
+
+| 시나리오 | 문제 |
+|---------|------|
+| API → RUNNING, TTL → STANDBY | 사용자 의도가 덮어쓰여질 수 있음 |
+| Proxy Auto-wake, TTL 만료 | 마지막 쓰기가 우선 (Last-Write-Wins) |
+
+**현재 설계의 한계**:
+
+```
+T1: 사용자가 API로 desired_state=RUNNING 설정
+T2: TTL Manager가 idle_timer 만료 감지 (동시)
+T3: TTL Manager가 desired_state=STANDBY 덮어쓰기
+T4: 사용자 의도(RUNNING)가 무시됨
+```
+
+**잠재적 해결책** (M2에서는 미구현):
+
+| 방식 | 설명 |
+|------|------|
+| CAS | `UPDATE ... WHERE desired_state = ?` |
+| 우선순위 | `last_manual_change_at > last_ttl_change_at`이면 TTL 무시 |
+| 버전 | `version` 컬럼으로 Optimistic Locking |
+
+> 상세: [schema.md](./schema.md#미래-개선-사항)
+
+---
+
 ## 참조
 
 - [states.md](./states.md) - TTL 기반 상태 전환
-- [schema.md](./schema.md) - standby_ttl_seconds, archive_ttl_seconds 설정
-- [flows.md](./flows.md) - TTL 기반 자동 전환 플로우
+- [schema.md](./schema.md) - standby_ttl_seconds, archive_ttl_seconds, system_locks 테이블
+- [reconciler.md](./reconciler.md) - 관련 컴포넌트 (TTL Manager 참조)
+- [storage-gc.md](./storage-gc.md) - Archive GC (동일한 DB Lock 메커니즘)

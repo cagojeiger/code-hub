@@ -43,27 +43,14 @@ GC는 **Archive 정리**만 담당합니다.
 
 ### Orphan 판단 규칙
 
-```python
-def is_orphan_archive(archive_path, workspaces):
-    """Archive가 orphan인지 판단"""
-    for ws in workspaces:
-        # soft-deleted된 workspace는 보호하지 않음 (orphan 취급)
-        if ws.deleted_at is not None:
-            continue
+Archive가 **보호 대상이 아니면** orphan입니다.
 
-        # DB에 저장된 archive_key와 일치하면 보호
-        if archive_path == ws.archive_key:
-            return False
-
-        # op_id가 있으면 보호 (operation/status 무관)
-        # ERROR 상태에서도 유효한 archive 보호
-        if ws.op_id:
-            expected_prefix = f"archives/{ws.id}/{ws.op_id}/"
-            if archive_path.startswith(expected_prefix):
-                return False
-
-    return True
-```
+| 조건 | 결과 | 이유 |
+|------|------|------|
+| `deleted_at != NULL` | 보호 안 함 → orphan | soft-deleted workspace |
+| `archive_path == ws.archive_key` | 보호 | 현재 사용 중인 archive |
+| `ws.op_id`가 있고 경로가 `archives/{id}/{op_id}/`로 시작 | 보호 | 진행 중/ERROR 상태 archive |
+| 그 외 | orphan | 어떤 workspace도 참조하지 않음 |
 
 > **Soft-Delete 처리**: `deleted_at != NULL`인 workspace의 archive는 보호하지 않음 → orphan으로 판단 → GC 대상
 
@@ -138,55 +125,47 @@ T4: 다음 GC 사이클
 
 ---
 
-## GC와 Reconciler 통합
+## GC 실행 모델
 
-GC는 **Reconciler 프로세스 내에서 실행**됩니다.
+GC는 **별도 프로세스**로 실행됩니다.
 
-### 통합 이유
+### 설계 원칙
 
-| 항목 | 분리 운영 | 통합 운영 |
-|------|----------|----------|
-| Leader Election | 2개 필요 | 1개 |
-| 프로세스 관리 | 2개 | 1개 |
-| 배포 복잡도 | 높음 | 낮음 |
+| 항목 | 값 |
+|------|-----|
+| 실행 주기 | 2시간 |
+| 단일 인스턴스 | DB Lock |
+| 프로세스 | Reconciler와 분리 |
 
-> **핵심**: Reconciler도 GC도 싱글 인스턴스로 실행되어야 함 (동시성 이슈 방지). 어차피 둘 다 싱글이면 통합이 합리적.
+> **분리 이유**: Reconciler는 상태 수렴, GC는 정리 작업 - 서로 다른 책임
 
-### 실행 구조
+### DB Lock 메커니즘
 
-```python
-class Reconciler:
-    def __init__(self):
-        self.gc_interval = 7200  # 2시간
-        self.last_gc_time = 0
+단일 인스턴스 실행을 보장하는 간단한 Lock입니다.
 
-    async def main_loop(self):
-        while True:
-            # 1. Workspace reconciliation (매 루프)
-            for ws in await get_workspaces_to_reconcile():
-                await self.reconcile_one(ws)
+| 단계 | 동작 |
+|------|------|
+| 1 | `system_locks` 테이블에 lock 시도 (CAS) |
+| 2 | 성공 시 GC 실행 |
+| 3 | 완료/실패 시 lock 해제 |
+| 4 | `expires_at`로 dead lock 방지 (5분 TTL) |
 
-            # 2. GC (2시간마다, 같은 Leader)
-            if self._should_run_gc():
-                await self._run_gc()
+### Lock 획득 조건
 
-            await asyncio.sleep(60)
+| 조건 | 결과 |
+|------|------|
+| lock 없음 | 획득 성공 |
+| lock 있음, expires_at > now() | 획득 실패 (다른 인스턴스 실행 중) |
+| lock 있음, expires_at ≤ now() | 만료된 lock 덮어쓰기 → 획득 성공 |
 
-    def _should_run_gc(self) -> bool:
-        return time.time() - self.last_gc_time >= self.gc_interval
-```
-
-### 코드 구조
-
-- **프로세스**: 통합 (운영 단순화)
-- **코드**: 모듈 분리 (관심사 분리 유지)
-- **파일**: `reconciler.py` + `gc.py` → 같은 main_loop에서 호출
+> **상세**: [schema.md](./schema.md) - system_locks 테이블 정의
 
 ---
 
 ## 참조
 
-- [storage.md](./storage.md) - 네이밍 규칙, 인터페이스
+- [storage.md](./storage.md) - 네이밍 규칙, 인터페이스, Operation 플로우
 - [storage-job.md](./storage-job.md) - Job 스펙
-- [storage-operations.md](./storage-operations.md) - 플로우 상세
 - [error.md](./error.md) - ERROR 상태 GC 보호
+- [schema.md](./schema.md) - system_locks 테이블 정의
+- [reconciler.md](./reconciler.md) - 관련 컴포넌트 참조

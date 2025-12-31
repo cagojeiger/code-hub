@@ -90,6 +90,95 @@ ENUM('PENDING', 'STANDBY', 'RUNNING')
 
 ---
 
+## 미래 개선 사항
+
+### desired_state 동시성 제어
+
+> ⚠️ **현재 한계**: `desired_state`는 CAS 없이 업데이트됩니다. 여러 소스(API, TTL Manager, Proxy)가 동시에 변경 시 경쟁 조건 발생 가능.
+
+**잠재적 해결책**:
+
+| 방식 | 구현 | 장단점 |
+|------|------|--------|
+| CAS | `UPDATE ... WHERE desired_state = ?` | 단순, 재시도 필요 |
+| 우선순위 | `last_manual_change_at` 컬럼 추가 | 사용자 의도 보존 |
+| 버전 | `version` 컬럼 + Optimistic Lock | 범용적, 복잡도 증가 |
+
+**예시 (CAS)**:
+
+```sql
+-- 현재 (경쟁 조건 있음)
+UPDATE workspaces SET desired_state = 'STANDBY' WHERE id = ?;
+
+-- 개선안 (CAS)
+UPDATE workspaces SET desired_state = 'STANDBY'
+WHERE id = ? AND desired_state = 'RUNNING';
+-- affected_rows = 0이면 재시도 또는 skip
+```
+
+**예시 (우선순위)**:
+
+```sql
+-- 컬럼 추가
+ALTER TABLE workspaces ADD COLUMN last_manual_change_at TIMESTAMP;
+
+-- TTL Manager는 우선순위 체크
+UPDATE workspaces SET desired_state = 'STANDBY'
+WHERE id = ?
+  AND (last_manual_change_at IS NULL
+       OR last_manual_change_at < NOW() - INTERVAL '5 minutes');
+```
+
+> **Note**: M2에서는 Last-Write-Wins로 동작합니다. 상세: [activity.md](./activity.md#known-issues)
+
+---
+
+## system_locks 테이블 (신규)
+
+TTL Manager, Archive GC 등 **주기적 배치 작업**의 단일 인스턴스 실행을 보장합니다.
+
+### 스키마
+
+| 컬럼 | 타입 | Nullable | 설명 |
+|------|------|----------|------|
+| lock_name | VARCHAR(64) | NO | PK, lock 식별자 |
+| holder_id | VARCHAR(64) | NO | lock 소유자 (인스턴스 ID) |
+| acquired_at | TIMESTAMP | NO | lock 획득 시각 |
+| expires_at | TIMESTAMP | NO | lock 만료 시각 |
+
+### Lock 이름
+
+| lock_name | 용도 | 만료 TTL |
+|-----------|------|----------|
+| `ttl_manager` | TTL Manager | 5분 |
+| `archive_gc` | Archive GC | 10분 |
+
+### 동작 방식
+
+| 단계 | SQL |
+|------|-----|
+| 획득 시도 | `INSERT ... ON CONFLICT DO UPDATE WHERE expires_at < NOW()` |
+| 해제 | `DELETE WHERE lock_name = ? AND holder_id = ?` |
+| 갱신 | `UPDATE expires_at WHERE lock_name = ? AND holder_id = ?` |
+
+> **Dead Lock 방지**: `expires_at` 초과 시 다른 인스턴스가 덮어쓰기 가능
+
+### DDL
+
+```sql
+CREATE TABLE system_locks (
+  lock_name VARCHAR(64) PRIMARY KEY,
+  holder_id VARCHAR(64) NOT NULL,
+  acquired_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMP NOT NULL
+);
+
+-- 만료된 lock 정리용 인덱스
+CREATE INDEX idx_system_locks_expires ON system_locks (expires_at);
+```
+
+---
+
 ## 전체 workspaces 스키마 (M2)
 
 | 컬럼 | 타입 | 설명 |
@@ -126,7 +215,7 @@ ENUM('PENDING', 'STANDBY', 'RUNNING')
 ### 신규 인덱스
 
 ```sql
--- TTL 체크용 (Reconciler 폴링)
+-- TTL 체크용 (TTL Manager 폴링)
 CREATE INDEX idx_workspaces_ttl_check
 ON workspaces (status, last_access_at)
 WHERE status IN ('RUNNING', 'STANDBY')
@@ -229,5 +318,6 @@ CREATE TYPE workspace_desired_state AS ENUM (
 
 - [spec/schema.md](../spec/schema.md) - M1 스키마
 - [states.md](./states.md) - 상태 정의
-- [activity.md](./activity.md) - 활동 감지 메커니즘
+- [activity.md](./activity.md) - TTL Manager (system_locks 사용)
+- [storage-gc.md](./storage-gc.md) - Archive GC (system_locks 사용)
 - [limits.md](./limits.md) - RUNNING 제한

@@ -219,6 +219,16 @@ desired_state는 **Active 상태 (PENDING, STANDBY, RUNNING)** 만 설정 가능
 
 > **참고**: desired_state=PENDING은 "아카이브 후 대기"를 의미합니다.
 
+> ⚠️ **주의: 경쟁 조건**
+>
+> `desired_state` 변경은 여러 소스에서 발생할 수 있습니다:
+> - API (사용자 요청)
+> - TTL Manager (자동 전환)
+> - Proxy (Auto-wake)
+>
+> 현재 설계는 마지막 쓰기가 우선(Last-Write-Wins)입니다. 사용자 의도가 TTL Manager에 의해 덮어쓰여질 수 있습니다.
+> 상세: [activity.md](./activity.md#known-issues)
+
 ### 프록시 접속
 
 | status | archive_key | Display | 동작 |
@@ -235,67 +245,19 @@ desired_state는 **Active 상태 (PENDING, STANDBY, RUNNING)** 만 설정 가능
 
 ## TTL 기반 자동 전환
 
-```mermaid
-flowchart LR
-    R[RUNNING] -->|warm_ttl 만료| S[STANDBY]
-    S -->|cold_ttl 만료| P["PENDING<br/>(ARCHIVED)"]
-```
+> **상세**: [activity.md](./activity.md) - TTL Manager가 담당
 
-| 전환 | 트리거 | 기본값 | 감지 방식 |
-|------|--------|--------|----------|
-| RUNNING → STANDBY | WebSocket 연결 없음 후 5분 | 5분 | Redis 기반 |
-| STANDBY → ARCHIVED | `last_access_at + cold_ttl_seconds` 경과 | 1일 | DB 기반 |
-
-> 상세 활동 감지 메커니즘은 [activity.md](./activity.md) 참조
-
-### TTL 만료 시 동작 (중요)
-
-**TTL 만료 시 `desired_state`도 함께 변경해야 합니다.**
-
-```
-잘못된 방식:
-  TTL 만료 → status만 변경
-  → Reconciler: status != desired_state → step_up
-  → 무한 루프!
-
-올바른 방식:
-  TTL 만료 → desired_state = STANDBY (또는 PENDING)
-  → Reconciler: step_down 실행
-  → 안정
-```
-
-### TTL 흐름
-
-```mermaid
-flowchart TD
-    A[RUNNING, desired=RUNNING] --> B{WebSocket 연결?}
-    B -->|Yes| A
-    B -->|No| C[5분 타이머]
-    C --> D{타이머 만료?}
-    D -->|No| B
-    D -->|Yes| E[desired_state = STANDBY]
-    E --> F[Reconciler: STOPPING]
-    F --> G[STANDBY, desired=STANDBY]
-    G --> H{1일 경과?}
-    H -->|No| G
-    H -->|Yes| I[desired_state = PENDING]
-    I --> J[Reconciler: ARCHIVING]
-    J --> K["PENDING, has_archive=True<br/>(Display: ARCHIVED)"]
-```
+| 전환 | 트리거 | TTL Manager 동작 |
+|------|--------|-----------------|
+| RUNNING → STANDBY | standby_ttl 만료 (5분) | `desired_state = STANDBY` |
+| STANDBY → ARCHIVED | archive_ttl 만료 (1일) | `desired_state = PENDING` |
 
 ### Auto-wake
 
-STANDBY 상태에서만 Auto-wake가 작동합니다.
-
-```
-STANDBY → 프록시 접속 → desired_state = RUNNING
-→ Reconciler: STARTING → RUNNING
-
-ARCHIVED → 프록시 접속 → 수동 복원 필요 (Auto-wake 없음)
-→ 502 + 안내 페이지
-```
-
-> TTL은 워크스페이스별로 설정 가능 (schema.md 참조)
+| status | 프록시 접속 시 |
+|--------|--------------|
+| STANDBY | `desired_state = RUNNING` → 자동 시작 |
+| ARCHIVED | 502 + 수동 복원 안내 |
 
 ---
 
@@ -322,77 +284,102 @@ ERROR는 operation 실패 시 전환되는 상태입니다.
 | error_count | int | 연속 실패 횟수 (3회 초과 시 관리자 개입) |
 | op_id | str | ERROR에서도 유지 (GC 보호, 재시도 시 재사용) |
 
-### 간단 예시
-
-```python
-# ERROR 전환
-await transition_to_error(ws, ErrorInfo(
-    reason="ActionFailed",
-    message="Archive job failed",
-    context={"action": "archive", "exit_code": 1},
-    occurred_at=datetime.utcnow()
-))
-
-# ERROR 복구
-await recover_from_error(ws)
-```
-
-> **함수 상세**: [error.md](./error.md#error-전환) 참조
+> **상세 스펙**: [error.md](./error.md#error-전환) - 전환 함수, 복구 프로세스
 
 ---
 
 ## Reconciler 동작
 
-> **상세 알고리즘**: [reconciler.md](./reconciler.md)에서 Plan/Execute 구조,
-> observe → compute → compare → act 전체 플로우 참조
+> **상세**: [reconciler.md](./reconciler.md) - Operation 선택, Plan/Execute 구조
 
-### choose_next_operation()
+### Operation 선택 (요약)
 
-Reconciler는 현재 상태와 목표 상태로 다음 operation을 결정합니다.
-
-```python
-def choose_next_operation(observed: str, desired: str, ws: Workspace) -> str:
-    """현재 상태와 목표 상태로 다음 operation 결정"""
-
-    # DELETING은 최우선
-    if ws.deleted_at is not None:
-        return "DELETING"
-
-    # step_up 방향
-    if observed == "PENDING":
-        if desired in ("STANDBY", "RUNNING"):
-            if ws.archive_key is not None:
-                return "RESTORING"  # Archive → Volume
-            else:
-                return "PROVISIONING"  # 빈 Volume 생성
-
-    elif observed == "STANDBY":
-        if desired == "RUNNING":
-            return "STARTING"
-        elif desired == "PENDING":
-            return "ARCHIVING"
-
-    # step_down 방향
-    elif observed == "RUNNING":
-        if desired in ("STANDBY", "PENDING"):
-            return "STOPPING"
-
-    return "NONE"  # 전환 불필요
-```
+| status | desired | archive_key | → Operation |
+|--------|---------|-------------|-------------|
+| PENDING | STANDBY/RUNNING | NULL | PROVISIONING |
+| PENDING | STANDBY/RUNNING | 있음 | RESTORING |
+| STANDBY | RUNNING | - | STARTING |
+| STANDBY | PENDING | - | ARCHIVING |
+| RUNNING | STANDBY/PENDING | - | STOPPING |
+| * (deleted_at) | * | * | DELETING |
 
 ### 레벨 비교
 
-```python
-def get_level(status: str) -> int:
-    """Active 상태의 레벨 반환"""
-    if status == "PENDING":
-        return 0
-    elif status == "STANDBY":
-        return 10
-    elif status == "RUNNING":
-        return 20
-    else:
-        return -1  # ERROR, DELETED
+| status | Level | 설명 |
+|--------|-------|------|
+| PENDING | 0 | 활성 리소스 없음 |
+| STANDBY | 10 | Volume만 존재 |
+| RUNNING | 20 | Container + Volume |
+| ERROR/DELETED | -1 | 레벨 없음 |
+
+---
+
+## 주요 시나리오
+
+### 새 Workspace 생성 → RUNNING
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant API as Control Plane
+    participant R as Reconciler
+
+    U->>API: POST /workspaces
+    API->>API: INSERT (desired_state=RUNNING)
+    API->>U: 201 Created
+
+    R->>R: PROVISIONING (빈 Volume 생성)
+    R->>R: STARTING (Container 시작)
+```
+
+**상태 흐름**: `PENDING → STANDBY → RUNNING`
+
+### Auto-wake (STANDBY → RUNNING)
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant P as Proxy
+    participant R as Reconciler
+
+    U->>P: GET /w/{id}/
+    P->>P: status = STANDBY 확인
+    P->>P: desired_state = RUNNING
+
+    R->>R: STARTING
+    R-->>U: SSE: status=RUNNING
+```
+
+### Manual Archive (STANDBY → ARCHIVED)
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant API as Control Plane
+    participant R as Reconciler
+
+    U->>API: PATCH {desired_state: "PENDING"}
+    API->>U: 200 OK
+
+    R->>R: ARCHIVING (Volume → Archive)
+    Note right of R: archive_key 생성 → Display: ARCHIVED
+```
+
+### Workspace 삭제
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant API as Control Plane
+    participant R as Reconciler
+
+    U->>API: DELETE /workspaces/{id}
+    API->>API: deleted_at = NOW()
+    API->>U: 204 No Content
+
+    R->>R: DELETING
+    Note right of R: Container → Volume 순서로 삭제
+    Note right of R: Archive는 GC가 정리
 ```
 
 ---
@@ -401,9 +388,8 @@ def get_level(status: str) -> int:
 
 - [reconciler.md](./reconciler.md) - Reconciler 알고리즘 (Plan/Execute, Level-Triggered)
 - [error.md](./error.md) - ERROR 상태 상세 (ErrorInfo, 복구, 재시도 정책)
+- [activity.md](./activity.md) - TTL Manager (활동 감지, desired_state 변경)
+- [schema.md](./schema.md) - TTL 관련 컬럼
+- [limits.md](./limits.md) - RUNNING 제한
 - [ADR-008: Ordered State Machine](../adr/008-ordered-state-machine.md)
 - [ADR-009: Status와 Operation 분리](../adr/009-status-operation-separation.md)
-- [schema.md](./schema.md) - TTL 관련 컬럼
-- [activity.md](./activity.md) - 활동 감지 메커니즘
-- [limits.md](./limits.md) - RUNNING 제한
-- [flows.md](./flows.md) - 상세 플로우

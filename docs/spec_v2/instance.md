@@ -267,38 +267,13 @@ sequenceDiagram
     Note over DB,R: 완료: status=RUNNING, operation=NONE
 ```
 
-### Reconciler pseudo-code
+### 동작 요약
 
-```python
-def reconcile_starting(ws):
-    """STARTING Reconciler - 멱등"""
-
-    # 이미 완료 체크
-    if ws.status == RUNNING and ws.operation == NONE:
-        return
-
-    # 컨테이너 시작 (멱등: running이면 무시, not running이면 정리 후 재생성)
-    instance.start(ws.id, ws.image_ref)
-
-    # 완료
-    ws.status = RUNNING
-    ws.operation = NONE
-    db.update(ws)
-```
-
-### start() 내부 pseudo-code
-
-```python
-async def start(self, workspace_id: str, image_ref: str) -> None:
-    """컨테이너 시작 (Archive Job 패턴)"""
-
-    if self.is_running(workspace_id):
-        return  # running이면 skip
-
-    # not running (없거나 stopped) → 정리 후 생성
-    self._remove_if_exists(workspace_id)
-    self._create_container(workspace_id, image_ref)
-```
+| 단계 | 조건 | 동작 |
+|------|------|------|
+| 1 | is_running() == True | skip (성공 반환) |
+| 2 | is_running() == False | 기존 컨테이너 정리 → 새로 생성 |
+| 3 | 완료 | status=RUNNING, operation=NONE |
 
 ### 컨테이너 설정
 
@@ -359,24 +334,13 @@ sequenceDiagram
     Note over DB,R: 완료: status=STANDBY, operation=NONE
 ```
 
-### Reconciler pseudo-code
+### 동작 요약
 
-```python
-def reconcile_stopping(ws):
-    """STOPPING Reconciler - 멱등"""
-
-    # 이미 완료 체크
-    if ws.status == STANDBY and ws.operation == NONE:
-        return
-
-    # 컨테이너 즉시 종료 + 삭제 (멱등: 없으면 무시)
-    instance.delete(ws.id)
-
-    # 완료
-    ws.status = STANDBY
-    ws.operation = NONE
-    db.update(ws)
-```
+| 단계 | 동작 |
+|------|------|
+| 1 | instance.delete() - SIGKILL 전송 |
+| 2 | 컨테이너 없으면 무시 (멱등) |
+| 3 | status=STANDBY, operation=NONE |
 
 ### 즉시 종료 이유
 - **Volume 유지**: 데이터는 Volume에 저장, STOPPING 후에도 유지
@@ -425,28 +389,13 @@ sequenceDiagram
     Note over DB,R: 완료: status=DELETED
 ```
 
-### Reconciler pseudo-code
+### 동작 요약
 
-```python
-def reconcile_deleting(ws):
-    """DELETING Reconciler - Instance + Storage"""
-
-    # 이미 완료 체크
-    if ws.status == DELETED:
-        return
-
-    # 1. 컨테이너 삭제 (멱등) - 먼저
-    instance.delete(ws.id)
-
-    # 2. Volume 삭제 (멱등) - 나중
-    storage.delete_volume(ws.id)
-
-    # 3. soft-delete
-    ws.status = DELETED
-    ws.deleted_at = now()
-    ws.operation = NONE
-    db.update(ws)
-```
+| 순서 | 동작 | 주체 |
+|------|------|------|
+| 1 | Container 삭제 (먼저) | InstanceController |
+| 2 | Volume 삭제 (나중) | StorageProvider |
+| 3 | status=DELETED, deleted_at=now() | Reconciler |
 
 ### 삭제 대상
 
@@ -520,7 +469,6 @@ resources:
 
 ## 참조
 
-- [reconciler.md](./reconciler.md) - Reconciler 알고리즘 (is_running 센서 사용)
+- [reconciler.md](./reconciler.md) - Reconciler 알고리즘 (is_running 관측 메서드 사용)
 - [states.md](./states.md) - 상태 전환 규칙
-- [storage.md](./storage.md) - StorageProvider 인터페이스
-- [storage-operations.md](./storage-operations.md) - DELETING 전체 플로우
+- [storage.md](./storage.md) - StorageProvider 인터페이스, Operation 플로우

@@ -6,15 +6,45 @@
 
 ## 개요
 
-Reconciler는 **Level-Triggered Control** 패턴과 **Plan/Execute 구조**로 워크스페이스 상태를 desired_state로 수렴시킵니다.
+Reconciler는 **Level-Triggered Control** 패턴으로 워크스페이스 상태를 `desired_state`로 수렴시킵니다.
+
+### 역할 분리
+
+| 주체 | 역할 | 설정하는 값 |
+|------|------|------------|
+| **API** | 사용자 의도 반영 | `desired_state` |
+| **Reconciler** | 실제 상태를 desired_state로 수렴 | `status`, `operation` |
+
+```
+API: desired_state = RUNNING 설정
+         ↓
+Reconciler: status ≠ desired_state 감지
+         ↓
+Reconciler: operation 실행하여 수렴
+         ↓
+결과: status = RUNNING (수렴 완료)
+```
 
 ### 핵심 원칙
 
-1. **DB status는 캐시** - 실제 리소스 상태가 진실의 원천
-2. **Level-Triggered** - 이벤트가 아닌 현재 상태를 관찰
-3. **Plan/Execute** - Plan Phase: observe+claim, Execute Phase: operation 실행
-4. **멱등성** - 같은 상태에서 몇 번 실행해도 같은 결과
-5. **워크스페이스별 독립** - 병렬 처리 가능
+| 원칙 | 설명 |
+|------|------|
+| **DB status는 캐시** | 실제 리소스 상태가 진실의 원천 |
+| **Level-Triggered** | 이벤트가 아닌 현재 상태를 관찰 |
+| **Plan/Execute** | Plan: observe+claim, Execute: operation 실행 |
+| **멱등성** | 같은 상태에서 몇 번 실행해도 같은 결과 |
+| **워크스페이스별 독립** | 병렬 처리 가능 |
+
+### 책임 범위
+
+| 구분 | Reconciler 역할 |
+|------|----------------|
+| ✅ | status → desired_state 수렴 |
+| ❌ | desired_state 변경 (TTL Manager) |
+| ❌ | Archive 정리 (Archive GC) |
+
+> **핵심**: Reconciler는 `desired_state`를 **READ**만 합니다.
+> `desired_state` 변경은 API 또는 TTL Manager가 담당.
 
 ### Level-Triggered vs Edge-Triggered
 
@@ -25,456 +55,170 @@ Reconciler는 **Level-Triggered Control** 패턴과 **Plan/Execute 구조**로 �
 
 ---
 
-## 수학적 기반: Closed-Loop Control
+## Reconciler가 사용하는 DB 컬럼
 
-### 제어 이론 매핑
+### 핵심 컬럼 (Reconciliation Loop)
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Reconciliation Loop                           │
-│                                                                   │
-│   ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐  │
-│   │ OBSERVE  │ →  │ COMPUTE  │ →  │ COMPARE  │ →  │   ACT    │  │
-│   │ 실제상태   │    │ status   │    │ vs desired│    │ action   │  │
-│   └──────────┘    └──────────┘    └──────────┘    └──────────┘  │
-│        ↑                                               │         │
-│        └───────────────────────────────────────────────┘         │
-└─────────────────────────────────────────────────────────────────┘
-```
+| 컬럼 | R/W | 용도 |
+|------|-----|------|
+| **status** | R/W | 현재 Active 상태 (관측 결과로 갱신) |
+| **operation** | R/W | 진행 중인 작업 (선점/완료 시 변경) |
+| **desired_state** | R | 목표 상태 (API가 설정, Reconciler는 읽기만) |
+| **deleted_at** | R | 삭제 여부 (DELETING 최우선 판단) |
 
-| 제어 이론 | 우리 시스템 |
-|----------|------------|
-| Plant (제어 대상) | Container, Volume |
-| Sensor (관측) | `is_running()`, `volume_exists()` |
-| Reference (목표) | `desired_state` |
-| Controller (제어) | Reconciler |
-| Actuator (실행) | `instance.start()`, `instance.delete()`, `storage.provision()`, `storage.restore()`, `storage.archive()`, `storage.delete_volume()` |
+### Archive 관련
 
-> **Note**: Archive 존재 여부는 DB의 `archive_key` 컬럼으로 판단 (센서 호출 불필요)
+| 컬럼 | R/W | 용도 |
+|------|-----|------|
+| **archive_key** | R/W | Object Storage 경로 (RESTORING 판단, ARCHIVING 결과 저장) |
+| **op_id** | R/W | 작업 ID (ARCHIVING 멱등성 보장) |
 
----
+### 에러 관련
 
-## Plan/Execute 구조
-
-### 왜 분리하는가?
-
-기존 "operation 스킵" 방식의 문제:
-
-```python
-# 버그가 있는 설계
-if ws.operation != "NONE":
-    return  # 스킵 → 아무도 operation을 실행하지 않음!
-```
-
-Plan/Execute 해결:
-
-```python
-# Execute Phase: operation이 있으면 "실행" (스킵 아님!)
-if ws.operation != "NONE":
-    await execute_operation(ws)
-    return
-
-# Plan Phase: operation이 없으면 "관찰 + 선점"
-...
-```
-
-### 핵심 차이점
-
-| 항목 | 기존 (버그) | Plan/Execute |
-|------|------------|--------------|
-| operation != NONE | return (스킵) | execute_operation() 호출 |
-| 작업 실행 주체 | 없음 (stuck) | Reconciler가 직접 실행 |
-| 완료 처리 | 없음 | observe → 조건 충족 시 NONE |
-| 에러 처리 | 없음 | error_count++, 재시도 |
+| 컬럼 | R/W | 용도 |
+|------|-----|------|
+| **error_count** | R/W | 연속 실패 횟수 |
+| **error_message** | W | 에러 상세 메시지 |
+| **previous_status** | W | ERROR 전환 시 복구용 |
 
 ---
 
-## 핵심 함수
+## 용어 정의
 
-### observe_actual_state()
+### Control Loop (OBSERVE → COMPUTE → COMPARE → ACT)
 
-실제 리소스 상태를 확인합니다 (DB 아님!).
+K8s Controller 패턴을 따릅니다.
 
-```python
-@dataclass
-class ActualState:
-    container_running: bool  # InstanceController.is_running()
-    volume_exists: bool      # StorageProvider.volume_exists()
-
-async def observe_actual_state(workspace_id: str) -> ActualState:
-    """실제 리소스 존재 여부 확인.
-
-    센서 호출:
-        - InstanceController.is_running(workspace_id)
-        - StorageProvider.volume_exists(workspace_id)
-
-    Note: Archive 존재 여부는 DB archive_key로 판단 (센서 불필요)
-    """
-    return ActualState(
-        container_running=await instance_controller.is_running(workspace_id),
-        volume_exists=await storage_provider.volume_exists(workspace_id),
-    )
+```mermaid
+flowchart LR
+    subgraph "Reconciliation Loop"
+        OBSERVE["OBSERVE<br/>실제상태"] --> COMPUTE["COMPUTE<br/>status"]
+        COMPUTE --> COMPARE["COMPARE<br/>vs desired"]
+        COMPARE --> ACT["ACT<br/>action"]
+        ACT --> OBSERVE
+    end
 ```
 
-### compute_status()
+| 단계 | 설명 | 구현 |
+|------|------|------|
+| **OBSERVE** | 실제 리소스 상태 관측 | `is_running()`, `volume_exists()` |
+| **COMPUTE** | 관측 결과를 status로 변환 | 상태 결정 테이블 |
+| **COMPARE** | status vs desired_state 비교 | `status ≠ desired_state` |
+| **ACT** | 차이 해소를 위한 동작 수행 | Operation 실행 |
 
-관찰된 실제 상태를 Active status로 변환합니다.
+### 관측 메서드
 
-```python
-def compute_status(actual: ActualState) -> WorkspaceStatus:
-    """실제 상태 → Active status 변환.
+실제 리소스 존재 여부를 확인하는 메서드입니다.
 
-    레벨 기준 (활성 리소스):
-        RUNNING (Lv 20): container + volume
-        STANDBY (Lv 10): volume only
-        PENDING (Lv 0):  nothing active
+| 메서드 | 역할 | 반환 |
+|--------|------|------|
+| `is_running()` | Container 존재/실행 여부 | bool |
+| `volume_exists()` | Volume 존재 여부 | bool |
 
-    Note: has_archive 여부는 DB archive_key로 판단 (별도 축)
-    """
-    if actual.container_running and actual.volume_exists:
-        return RUNNING
-    elif actual.volume_exists:
-        return STANDBY
-    else:
-        return PENDING
+> **Note**: Archive 존재 여부는 DB의 `archive_key` 컬럼으로 판단 (관측 메서드 호출 불필요)
+
+### 관측 기반 완료 판단
+
+Operation 완료는 **동작 메서드 반환이 아닌 관측 조건**으로 판단합니다.
+
+```
+동작 메서드 성공 반환 ≠ Operation 완료
+관측 조건 충족 = Operation 완료
 ```
 
-### 상태 결정 테이블
+---
 
-| container | volume | → Active status | Display (if archive_key) |
-|-----------|--------|-----------------|-------------------------|
+## 상태 결정 (COMPUTE)
+
+관측 결과를 Active status로 변환합니다.
+
+| container | volume | → status | Display (archive_key 있으면) |
+|-----------|--------|----------|------------------------------|
 | ✓ | ✓ | RUNNING | RUNNING |
 | ✗ | ✓ | STANDBY | STANDBY |
-| ✗ | ✗ | PENDING | ARCHIVED (if has_archive) |
+| ✗ | ✗ | PENDING | ARCHIVED |
 
 > **참고**: container=✓, volume=✗는 불가능 (컨테이너가 volume을 마운트)
 
-### choose_next_operation()
+---
 
-현재 상태와 목표 상태로 다음 operation을 결정합니다.
+## Operation 선택 (COMPARE → ACT)
 
-```python
-def choose_next_operation(observed: str, desired: str, ws: Workspace) -> str:
-    """현재 상태와 목표 상태로 다음 operation 결정.
+현재 status와 desired_state를 비교하여 다음 operation을 결정합니다.
 
-    Args:
-        observed: compute_status()로 계산된 현재 Active 상태
-        desired: 목표 상태 (desired_state)
-        ws: 워크스페이스 (archive_key, deleted_at 참조용)
+### 우선순위
 
-    Returns:
-        다음 operation (NONE이면 전환 불필요)
-    """
+| 순위 | 조건 | Operation |
+|------|------|-----------|
+| 1 | `deleted_at ≠ NULL` | DELETING |
+| 2 | `status ≠ desired_state` | 아래 테이블 참조 |
+| 3 | `status = desired_state` | NONE (수렴됨) |
 
-    # DELETING은 최우선
-    if ws.deleted_at is not None:
-        return "DELETING"
+### Operation 선택 테이블
 
-    # step_up 방향
-    if observed == "PENDING":
-        if desired in ("STANDBY", "RUNNING"):
-            if ws.archive_key is not None:
-                return "RESTORING"      # Archive → Volume
-            else:
-                return "PROVISIONING"   # 빈 Volume 생성
-
-    elif observed == "STANDBY":
-        if desired == "RUNNING":
-            return "STARTING"
-        elif desired == "PENDING":
-            return "ARCHIVING"
-
-    # step_down 방향
-    elif observed == "RUNNING":
-        if desired in ("STANDBY", "PENDING"):
-            return "STOPPING"
-
-    return "NONE"  # 전환 불필요
-```
-
-### choose_next_operation 테이블
-
-| observed | desired | archive_key | → operation |
-|----------|---------|-------------|-------------|
-| PENDING | STANDBY/RUNNING | NULL | PROVISIONING |
-| PENDING | STANDBY/RUNNING | 있음 | RESTORING |
+| status | desired_state | archive_key | → Operation |
+|--------|---------------|-------------|-------------|
+| PENDING | STANDBY | NULL | PROVISIONING |
+| PENDING | STANDBY | 있음 | RESTORING |
+| PENDING | RUNNING | NULL | PROVISIONING |
+| PENDING | RUNNING | 있음 | RESTORING |
 | STANDBY | RUNNING | - | STARTING |
 | STANDBY | PENDING | - | ARCHIVING |
-| RUNNING | STANDBY/PENDING | - | STOPPING |
+| RUNNING | STANDBY | - | STOPPING |
+| RUNNING | PENDING | - | STOPPING |
 | * | (동일) | - | NONE |
 
----
-
-## 메인 루프 (Plan/Execute)
-
-### reconcile_one() 상세
-
-```python
-async def reconcile_one(workspace: Workspace):
-    """단일 워크스페이스 reconcile (Plan/Execute).
-
-    Execute Phase: operation이 있으면 실행
-    Plan Phase: operation이 없으면 관찰 + 선점
-    """
-
-    # ===== Execute Phase: operation 실행 =====
-    if workspace.operation != "NONE":
-        await execute_operation(workspace)
-        return
-
-    # ===== Plan Phase: 관찰 + 선점 =====
-
-    # 1. OBSERVE: 실제 상태 확인
-    actual = await observe_actual_state(workspace.id)
-
-    # 2. COMPUTE: status 계산
-    observed_status = compute_status(actual)
-
-    # 3. DB 갱신 (캐시 업데이트)
-    if workspace.status != observed_status:
-        await db.update_status(workspace.id, observed_status)
-        workspace.status = observed_status
-        logger.info(f"Status updated: {workspace.id} → {observed_status}")
-
-    # 4. 수렴 확인
-    if observed_status == workspace.desired_state:
-        return  # 수렴됨, 할 일 없음
-
-    # 5. 다음 operation 결정
-    next_op = choose_next_operation(observed_status, workspace.desired_state, workspace)
-    if next_op == "NONE":
-        return
-
-    # 6. operation 선점 (CAS - Optimistic Locking)
-    claimed = await db.try_claim_operation(workspace.id, next_op)
-    if not claimed:
-        return  # 다른 Reconciler가 선점
-
-    # 7. 선점 성공 → 실행
-    workspace.operation = next_op
-    await execute_operation(workspace)
-```
-
-### execute_operation()
-
-operation을 멱등하게 실행하고 완료 시 NONE으로 전환합니다.
-
-```python
-async def execute_operation(ws: Workspace):
-    """operation을 멱등하게 실행."""
-    try:
-        if ws.operation == "PROVISIONING":
-            await storage.provision(ws.id)
-            actual = await observe_actual_state(ws.id)
-            if actual.volume_exists:
-                await db.finish_operation(ws.id, status="STANDBY", operation="NONE")
-
-        elif ws.operation == "RESTORING":
-            await storage.provision(ws.id)  # Volume 먼저 생성
-            await storage.restore(ws.id, ws.archive_key)
-            actual = await observe_actual_state(ws.id)
-            if actual.volume_exists:
-                await db.finish_operation(ws.id, status="STANDBY", operation="NONE")
-
-        elif ws.operation == "STARTING":
-            await instance.start(ws.id, ws.image_ref)
-            actual = await observe_actual_state(ws.id)
-            if actual.container_running and actual.volume_exists:
-                await db.finish_operation(ws.id, status="RUNNING", operation="NONE")
-
-        elif ws.operation == "STOPPING":
-            await instance.delete(ws.id)
-            actual = await observe_actual_state(ws.id)
-            if not actual.container_running and actual.volume_exists:
-                await db.finish_operation(ws.id, status="STANDBY", operation="NONE")
-
-        elif ws.operation == "ARCHIVING":
-            # op_id 확보 (멱등성)
-            if ws.op_id is None:
-                ws.op_id = uuid()
-                await db.update_op_id(ws.id, ws.op_id)
-
-            # Archive 업로드 (expected_key와 비교하여 skip 판단)
-            # Note: archive_key is None 조건 대신 expected_key 비교 사용
-            #       → RESTORING 후에도 새 아카이브 생성 보장
-            expected_key = f"archives/{ws.id}/{ws.op_id}/home.tar.gz"
-            if ws.archive_key != expected_key:
-                archive_key = await storage.archive(ws.id, ws.op_id)
-                await db.update_archive_key(ws.id, archive_key)
-
-            # Volume 삭제
-            await storage.delete_volume(ws.id)
-
-            actual = await observe_actual_state(ws.id)
-            if not actual.volume_exists:
-                await db.finish_operation(
-                    ws.id, status="PENDING", operation="NONE", op_id=None
-                )
-
-        elif ws.operation == "DELETING":
-            await instance.delete(ws.id)
-            await storage.delete_volume(ws.id)
-            actual = await observe_actual_state(ws.id)
-            if not actual.container_running and not actual.volume_exists:
-                await db.mark_deleted(ws.id)
-
-    except Exception as e:
-        # ErrorInfo 생성 및 에러 처리
-        error_info = create_error_info(e, ws.operation)
-        await handle_error(ws, error_info)
-        logger.error(f"Operation failed: {ws.id} {ws.operation} - {e}")
-        # error_count < max_retries면 operation 유지 → 다음 루프에서 재시도
-        # 상세: error.md 참조
-```
+> **단계적 전환**: RUNNING → PENDING 요청 시, STOPPING → ARCHIVING 순서로 진행 (한 번에 한 단계)
 
 ---
 
-## 케이스별 시나리오
+## Operation별 동작
 
-### 시나리오 1: 새 워크스페이스 시작 (PENDING → RUNNING)
+각 Operation이 수행하는 동작과 완료 조건입니다.
 
-```
-초기 상태:
-  DB: status=PENDING, operation=NONE, desired_state=RUNNING, archive_key=NULL
-  실제: container=✗, volume=✗
+| Operation | 호출 메서드 | 완료 조건 | 결과 status | DB 변경 |
+|-----------|------------|----------|-------------|---------|
+| PROVISIONING | `provision()` | `volume_exists()` | STANDBY | status, operation=NONE |
+| RESTORING | `provision()` + `restore()` | `volume_exists()` | STANDBY | status, operation=NONE |
+| STARTING | `start()` | `is_running()` | RUNNING | status, operation=NONE |
+| STOPPING | `delete()` | `!is_running()` | STANDBY | status, operation=NONE |
+| ARCHIVING | `archive()` + `delete_volume()` | `!volume_exists()` | PENDING | status, operation=NONE, archive_key, op_id=NULL |
+| DELETING | `delete()` + `delete_volume()` | `!is_running() ∧ !volume_exists()` | DELETED | deleted_at=now() |
 
-Loop 1:
-  1. operation=NONE → Plan Phase 진입
-  2. OBSERVE: container=✗, volume=✗
-  3. COMPUTE: → PENDING
-  4. COMPARE: PENDING != RUNNING
-  5. choose_next_operation(PENDING, RUNNING, archive_key=NULL) → PROVISIONING
-  6. try_claim_operation(PROVISIONING) → 성공
-  7. execute_operation(PROVISIONING):
-     - provision() 호출 → Volume 생성
-     - observe: volume=✓
-     - finish_operation(status=STANDBY, operation=NONE)
+### ARCHIVING 특수 처리
 
-Loop 2:
-  1. operation=NONE → Plan Phase 진입
-  2. OBSERVE: container=✗, volume=✓
-  3. COMPUTE: → STANDBY
-  4. COMPARE: STANDBY != RUNNING
-  5. choose_next_operation(STANDBY, RUNNING) → STARTING
-  6. execute_operation(STARTING):
-     - start() 호출 → Container 시작
-     - finish_operation(status=RUNNING, operation=NONE)
+| 단계 | 동작 | 멱등성 보장 |
+|------|------|------------|
+| 1 | op_id 확보 (없으면 생성) | DB에 저장 후 진행 |
+| 2 | expected_key 계산 | `archives/{ws_id}/{op_id}/home.tar.gz` |
+| 3 | archive_key ≠ expected_key면 업로드 | HEAD 체크로 skip |
+| 4 | delete_volume() | 멱등 |
+| 5 | 완료 시 op_id = NULL | 재사용 방지 |
 
-Loop 3:
-  1. operation=NONE → Plan Phase 진입
-  2. OBSERVE: container=✓, volume=✓
-  3. COMPUTE: → RUNNING
-  4. COMPARE: RUNNING == RUNNING ✓
-  5. 수렴됨, 종료
+---
 
-결과: ✅ 성공 (PENDING → STANDBY → RUNNING)
-```
+## Reconcile 흐름
 
-### 시나리오 2: Archive에서 복원 (ARCHIVED → RUNNING)
+### Plan/Execute 구조
 
-```
-초기 상태:
-  DB: status=PENDING, archive_key="archives/ws-123/.../home.tar.gz", desired_state=RUNNING
-  실제: container=✗, volume=✗, archive=✓
-  Display: ARCHIVED
+| Phase | 조건 | 동작 |
+|-------|------|------|
+| **Execute** | `operation ≠ NONE` | operation 실행 → 완료 시 operation=NONE |
+| **Plan** | `operation = NONE` | 관측 → 선점 → 실행 |
 
-Loop 1:
-  1. Plan Phase 진입
-  2. OBSERVE: container=✗, volume=✗
-  3. COMPUTE: → PENDING
-  4. COMPARE: PENDING != RUNNING
-  5. choose_next_operation(PENDING, RUNNING, archive_key 있음) → RESTORING
-  6. execute_operation(RESTORING):
-     - provision() → Volume 생성
-     - restore() → Archive → Volume
-     - finish_operation(status=STANDBY)
+> **핵심**: operation이 있으면 스킵하지 않고 **실행**합니다.
 
-Loop 2:
-  1. COMPUTE: → STANDBY
-  2. choose_next_operation → STARTING
-  3. execute_operation(STARTING)
+### Plan Phase 단계
 
-Loop 3:
-  1. RUNNING == RUNNING ✓
-
-결과: ✅ 성공 (ARCHIVED → STANDBY → RUNNING)
-```
-
-### 시나리오 3: 컨테이너 Crash 복구
-
-```
-초기 상태:
-  DB: status=RUNNING, desired_state=RUNNING
-  실제: container=✓, volume=✓
-
-이벤트: Container OOM Kill (외부에서 삭제됨)
-
-Loop N (1분 후):
-  1. Plan Phase 진입 (operation=NONE)
-  2. OBSERVE: container=✗, volume=✓
-  3. COMPUTE: → STANDBY (container 없음!)
-  4. DB 갱신: status=STANDBY (RUNNING에서 변경)
-  5. COMPARE: STANDBY != RUNNING
-  6. choose_next_operation → STARTING
-  7. execute_operation(STARTING) → Container 재시작
-
-Loop N+1:
-  1. RUNNING == RUNNING ✓
-
-결과: ✅ 자동 복구 성공
-```
-
-### 시나리오 4: TTL 만료로 Archive (STANDBY → ARCHIVED)
-
-```
-초기 상태:
-  DB: status=STANDBY, desired_state=STANDBY
-  실제: container=✗, volume=✓
-
-트리거: archive_ttl 만료 (1일 경과)
-  → TTL 체커가 desired_state=PENDING으로 변경
-
-Loop 1:
-  1. Plan Phase 진입
-  2. OBSERVE: container=✗, volume=✓
-  3. COMPUTE: → STANDBY
-  4. COMPARE: STANDBY != PENDING
-  5. choose_next_operation(STANDBY, PENDING) → ARCHIVING
-  6. execute_operation(ARCHIVING):
-     - op_id 생성
-     - archive() → Volume → Archive
-     - delete_volume()
-     - finish_operation(status=PENDING)
-
-Loop 2:
-  1. COMPUTE: → PENDING
-  2. PENDING == PENDING ✓
-  3. Display: ARCHIVED (archive_key 있으므로)
-
-결과: ✅ 성공 (STANDBY → ARCHIVED)
-```
-
-### 시나리오 5: Crash 중 재시도
-
-```
-초기 상태:
-  DB: status=STANDBY, operation=STARTING, desired_state=RUNNING
-  실제: container=✗, volume=✓
-  (이전 루프에서 STARTING 중 Reconciler 크래시)
-
-Loop N (재시작 후):
-  1. operation=STARTING → Execute Phase 진입 (스킵 아님!)
-  2. execute_operation(STARTING):
-     - start() 호출 → Container 시작 (멱등)
-     - observe: container=✓, volume=✓
-     - finish_operation(status=RUNNING, operation=NONE)
-
-Loop N+1:
-  1. Plan Phase 진입
-  2. RUNNING == RUNNING ✓
-
-결과: ✅ 크래시 복구 성공
-```
+| 단계 | 입력 | 출력 | 동작 |
+|------|------|------|------|
+| 1. OBSERVE | workspace_id | ActualState | `is_running()`, `volume_exists()` 호출 |
+| 2. COMPUTE | ActualState | status | 상태 결정 테이블 적용 |
+| 3. DB 갱신 | status | - | status 변경 시 DB 업데이트 |
+| 4. COMPARE | status, desired | bool | `status ≠ desired`면 전환 필요 |
+| 5. CHOOSE | status, desired, ws | operation | Operation 선택 테이블 적용 |
+| 6. CLAIM | operation | bool | CAS로 선점 시도 (실패 시 skip) |
+| 7. EXECUTE | operation | - | Operation별 동작 실행 |
 
 ---
 
@@ -482,7 +226,7 @@ Loop N+1:
 
 ```mermaid
 flowchart TD
-    START[reconcile_one 시작] --> CHECK_OP{operation != NONE?}
+    START[reconcile_one 시작] --> CHECK_OP{operation ≠ NONE?}
 
     CHECK_OP -->|Yes| EXEC_PHASE[Execute Phase]
     CHECK_OP -->|No| PLAN_PHASE[Plan Phase]
@@ -496,20 +240,100 @@ flowchart TD
 
     OBS_C & OBS_V --> COMPUTE[COMPUTE: status 계산]
 
-    COMPUTE --> UPDATE_DB{DB.status != computed?}
+    COMPUTE --> UPDATE_DB{DB.status ≠ computed?}
     UPDATE_DB -->|Yes| SAVE["DB.status = computed<br/>(캐시 갱신)"]
     UPDATE_DB -->|No| COMPARE
     SAVE --> COMPARE
 
-    COMPARE{status == desired?}
+    COMPARE{status = desired?}
     COMPARE -->|Yes| DONE2[수렴됨 ✓]
-    COMPARE -->|No| CHOOSE[choose_next_operation]
+    COMPARE -->|No| CHOOSE[Operation 선택]
 
-    CHOOSE --> CLAIM{try_claim_operation}
-    CLAIM -->|성공| EXEC2[execute_operation]
+    CHOOSE --> CLAIM{CAS 선점}
+    CLAIM -->|성공| EXEC2[operation 실행]
     CLAIM -->|실패| SKIP[다른 Reconciler 선점]
 
     EXEC2 --> DONE3[완료]
+```
+
+---
+
+## 케이스별 시나리오
+
+### 시나리오 1: 새 워크스페이스 시작 (API: desired=RUNNING)
+
+```
+초기: status=PENDING, desired=RUNNING, archive_key=NULL
+
+Loop 1: PENDING → STANDBY
+  - OBSERVE: container=✗, volume=✗ → PENDING
+  - COMPARE: PENDING ≠ RUNNING
+  - CHOOSE: PROVISIONING (archive_key=NULL)
+  - 실행: provision() → volume 생성
+  - 결과: status=STANDBY
+
+Loop 2: STANDBY → RUNNING
+  - OBSERVE: container=✗, volume=✓ → STANDBY
+  - COMPARE: STANDBY ≠ RUNNING
+  - CHOOSE: STARTING
+  - 실행: start() → container 시작
+  - 결과: status=RUNNING
+
+Loop 3: 수렴 확인
+  - COMPARE: RUNNING = RUNNING ✓
+```
+
+### 시나리오 2: Archive 복원 (API: desired=RUNNING)
+
+```
+초기: status=PENDING, desired=RUNNING, archive_key=있음 (Display: ARCHIVED)
+
+Loop 1: PENDING → STANDBY
+  - CHOOSE: RESTORING (archive_key 있음)
+  - 실행: provision() + restore()
+  - 결과: status=STANDBY
+
+Loop 2: STANDBY → RUNNING
+  - CHOOSE: STARTING
+  - 결과: status=RUNNING ✓
+```
+
+### 시나리오 3: 컨테이너 Crash 자동 복구
+
+```
+초기: status=RUNNING, desired=RUNNING
+이벤트: Container OOM Kill
+
+Loop N (1분 후):
+  - OBSERVE: container=✗, volume=✓ → STANDBY
+  - DB 갱신: status=STANDBY
+  - COMPARE: STANDBY ≠ RUNNING
+  - CHOOSE: STARTING
+  - 결과: status=RUNNING (자동 복구 ✓)
+```
+
+### 시나리오 4: TTL 만료 Archive (시스템: desired=PENDING)
+
+```
+초기: status=STANDBY, desired=STANDBY
+트리거: archive_ttl 만료 → desired=PENDING 변경
+
+Loop 1: STANDBY → PENDING
+  - COMPARE: STANDBY ≠ PENDING
+  - CHOOSE: ARCHIVING
+  - 실행: op_id 생성 → archive() → delete_volume()
+  - 결과: status=PENDING, archive_key=생성됨 (Display: ARCHIVED)
+```
+
+### 시나리오 5: Reconciler Crash 복구
+
+```
+초기: status=STANDBY, operation=STARTING (Crash 중 stuck)
+
+Loop N (재시작 후):
+  - operation=STARTING → Execute Phase 진입
+  - 실행: start() (멱등)
+  - 결과: status=RUNNING, operation=NONE ✓
 ```
 
 ---
@@ -520,59 +344,27 @@ flowchart TD
 
 | 항목 | 값 | 설명 |
 |------|-----|------|
-| **폴링 주기** | 1분 (60초) | 기본 폴링 간격 |
-| **힌트** | Redis Pub/Sub | 변경 즉시 처리 |
-| **동시성** | Semaphore max 10 | 동시 execute 제한 |
+| 폴링 주기 | 1분 | 기본 폴링 간격 |
+| 힌트 | Redis Pub/Sub | 변경 즉시 처리 |
+| 동시성 | max 10 | 동시 execute 제한 |
 
-### 변수 정의
+### 관측 시간
 
-| 변수 | 의미 | 예상값 |
-|------|------|--------|
-| N | 총 워크스페이스 수 | 100~1000 |
-| M | reconcile 필요한 ws 수 | N × 0.1 (10%) |
-| T_sensor | 센서 호출 시간 | Docker: 15ms, K8s: 100ms |
-| T_execute | 실제 작업 시간 | 1~60초 |
-
-### 센서 호출 시간 (예상)
-
-| 센서 | Docker | K8s |
-|------|--------|-----|
+| 관측 메서드 | Docker | K8s |
+|------------|--------|-----|
 | is_running() | 10ms | 50ms |
 | volume_exists() | 5ms | 50ms |
 | **합계** | **15ms** | **100ms** |
-
-### 현재 구조 (reconcile_one 내 Plan+Execute 혼합)
-
-```
-매 주기 (1분):
-  workspaces = get_to_reconcile()     # O(1) - DB 인덱스 쿼리
-
-  for ws in workspaces:               # M개 (병렬, max 10)
-    if ws.operation != NONE:
-      execute_operation(ws)           # T_execute
-    else:
-      observe()                       # 2 × T_sensor
-      compute_status()                # O(1)
-      choose_next_operation()         # O(1)
-      try_claim()                     # O(1) DB CAS
-      execute_operation()             # T_execute
-```
 
 ### 시간 복잡도
 
 | Phase | 시간 | M=10, Docker | M=100, K8s |
 |-------|------|--------------|------------|
-| Plan (observe) | M × 2 × T_sensor | 10 × 30ms = 300ms | 100 × 200ms = 20s |
-| Execute | ceil(M/10) × T_execute | 1 × 30s = 30s | 10 × 30s = 300s |
-| **총 주기 시간** | - | **~30s ✓** | **~320s (5분!)** |
+| Plan (observe) | M × 2 × T_observe | 300ms | 20s |
+| Execute | ceil(M/10) × T_execute | 30s | 300s |
+| **총 주기** | - | **~30s ✓** | **~320s (5분)** |
 
-### M2 적용: 현재 구조 유지
-
-Docker 환경 (M=10~50)에서는 현재 구조로 충분:
-- Plan Phase: 300ms~1.5s
-- 1분 폴링 주기 내 처리 가능
-
-> **Note**: K8s 대규모 환경(M=100+)에서는 Plan Phase 병렬화 또는 센서 캐싱 검토 필요 (M3 범위)
+> **Note**: K8s 대규모 환경(M=100+)은 M3 범위에서 최적화
 
 ---
 
@@ -582,127 +374,43 @@ Docker 환경 (M=10~50)에서는 현재 구조로 충분:
 
 | 조건 | 설명 |
 |------|------|
-| **멱등성** | 같은 상태에서 같은 action |
-| **단방향 진행** | 한 단계씩 이동 (ordered state) |
-| **무한 재시도** | 실패해도 다음 루프에서 다시 시도 |
-| **관찰 기반** | 이벤트 놓쳐도 상태로 복구 |
-| **Plan/Execute** | operation이 stuck되지 않음 |
+| 멱등성 | 같은 상태에서 같은 action |
+| 단방향 진행 | 한 단계씩 이동 (ordered state) |
+| 무한 재시도 | 실패해도 다음 루프에서 재시도 |
+| 관찰 기반 | 이벤트 놓쳐도 상태로 복구 |
+| Plan/Execute | operation이 stuck되지 않음 |
 
 ### 에러 처리
-
-> **상세 스펙**: [error.md](./error.md) - ErrorInfo 구조, 재시도 정책, 복구 시나리오
 
 | 상황 | 동작 |
 |------|------|
 | action 실패 (재시도 가능) | operation 유지, 다음 루프에서 재시도 |
 | action 실패 (max_retries 초과) | ERROR 상태 전환, 관리자 개입 |
-| 센서 실패 | 이전 status 유지, 재시도 |
+| 관측 실패 | 이전 status 유지, 재시도 |
 | DataLost | 즉시 ERROR 전환, 관리자 개입 |
 
-```python
-# 에러 처리 흐름 (상세: error.md)
-async def handle_error(ws: Workspace, error_info: ErrorInfo):
-    max_retries = get_max_retries(error_info.reason)
-    if ws.error_count < max_retries:
-        await db.bump_error_count(ws.id, error_info)
-    else:
-        await transition_to_error(ws, error_info)
-        await notify_admin(ws, error_info)
-```
+> **상세**: [error.md](./error.md) - ErrorInfo 구조, 재시도 정책
 
 ---
 
-## GC 통합
+## 관련 컴포넌트
 
-### 왜 Reconciler에서 GC를 실행하는가?
+Reconciler와 함께 Control Plane을 구성하는 컴포넌트입니다.
 
-| 프로세스 | Leader Election 필요 | 이유 |
-|---------|---------------------|------|
-| Reconciler | ✅ | 동시에 같은 ws 처리 방지 |
-| GC | ✅ | 동시 삭제 판단 일관성 |
+| 컴포넌트 | 역할 | 실행 모델 | 문서 |
+|----------|------|----------|------|
+| **TTL Manager** | TTL 만료 → desired_state 변경 | 주기적 (1분), DB Lock | [activity.md](./activity.md) |
+| **Archive GC** | orphan archive 정리 | 주기적 (2시간), DB Lock | [storage-gc.md](./storage-gc.md) |
 
-둘 다 싱글 인스턴스로 실행되어야 하므로, **동일 프로세스에서 실행**하는 것이 합리적입니다.
-
-### main_loop 구조
-
-```python
-class Reconciler:
-    def __init__(self):
-        self.gc_interval = 7200  # 2시간
-        self.last_gc_time = 0
-
-    async def main_loop(self):
-        while True:
-            # 1. Workspace reconciliation (매 루프, ~1분)
-            workspaces = await db.get_to_reconcile()
-            for ws in workspaces:
-                await self.reconcile_one(ws)
-
-            # 2. Archive GC (2시간마다)
-            if self._should_run_gc():
-                await self._run_gc()
-
-            await asyncio.sleep(60)
-
-    def _should_run_gc(self) -> bool:
-        return time.time() - self.last_gc_time >= self.gc_interval
-
-    async def _run_gc(self):
-        """Archive GC 실행. 상세: storage-gc.md 참조"""
-        self.last_gc_time = time.time()
-        await gc.cleanup_orphan_archives()
-```
-
-### 타임라인
-
-```
-0:00 - reconcile workspaces
-0:01 - reconcile workspaces
-...
-2:00 - reconcile workspaces + GC 실행
-2:01 - reconcile workspaces
-...
-4:00 - reconcile workspaces + GC 실행
-```
-
-> **상세**: [storage-gc.md](./storage-gc.md#gc와-reconciler-통합) 참조
+> **분리 이유**: Reconciler는 `desired_state`를 READ만, TTL Manager가 WRITE 담당
 
 ---
 
 ## Timeout 처리
 
-### operation stuck 방지
+operation이 예상보다 오래 걸리면 ERROR 전환합니다.
 
-operation이 예상보다 오래 걸리는 경우 (예: K8s PVC Terminating stuck):
-
-```python
-async def check_operation_timeout(ws: Workspace):
-    """operation timeout 체크.
-
-    operation_started_at + timeout 경과 시 ERROR 전환.
-    """
-    if ws.operation == "NONE":
-        return
-
-    timeout_seconds = get_operation_timeout(ws.operation)
-    elapsed = (now() - ws.operation_started_at).total_seconds()
-
-    if elapsed > timeout_seconds:
-        await transition_to_error(ws, ErrorInfo(
-            reason="Timeout",
-            message=f"Operation {ws.operation} timed out after {timeout_seconds}s",
-            context={
-                "operation": ws.operation,
-                "elapsed_seconds": int(elapsed),
-                "limit_seconds": timeout_seconds
-            },
-            occurred_at=datetime.utcnow()
-        ))
-```
-
-### operation별 timeout
-
-| operation | timeout | 이유 |
+| Operation | Timeout | 이유 |
 |-----------|---------|------|
 | PROVISIONING | 5분 | PVC 생성 대기 |
 | RESTORING | 30분 | Archive 다운로드 + 복원 |
@@ -718,7 +426,7 @@ async def check_operation_timeout(ws: Workspace):
 - [states.md](./states.md) - 상태 정의, 전환 규칙
 - [error.md](./error.md) - ERROR 상태, ErrorInfo, 재시도 정책
 - [instance.md](./instance.md) - InstanceController 인터페이스 (is_running)
-- [storage.md](./storage.md) - StorageProvider 인터페이스 (volume_exists)
-- [storage-operations.md](./storage-operations.md) - operation별 상세 플로우
-- [storage-gc.md](./storage-gc.md) - Archive GC, Reconciler 통합
-- [ADR-007: Reconciler 구현 전략](../adr/007-reconciler-implementation.md) - 인프라 결정 (Leader Election, Hints)
+- [storage.md](./storage.md) - StorageProvider 인터페이스, Operation 플로우
+- [activity.md](./activity.md) - TTL Manager (desired_state 변경)
+- [storage-gc.md](./storage-gc.md) - Archive GC
+- [ADR-007: Reconciler 구현 전략](../adr/007-reconciler-implementation.md) - Leader Election, Hints

@@ -329,6 +329,5 @@ StorageProvider는 Job exit code만 확인하고, `exit_code ≠ 0`이면 `Stora
 
 ## 참조
 
-- [storage.md](./storage.md) - 핵심 원칙, StorageProvider 인터페이스
-- [storage-operations.md](./storage-operations.md) - Reconciler 플로우
+- [storage.md](./storage.md) - 핵심 원칙, StorageProvider 인터페이스, Operation 플로우
 - [storage-gc.md](./storage-gc.md) - 경로 규칙, GC 시스템
