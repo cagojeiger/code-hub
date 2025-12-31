@@ -72,9 +72,14 @@ Job은 Volume과 Object Storage 간 데이터 이동을 담당하는 **격리된
 | 1 | HEAD 체크: tar.gz + meta 둘 다 있으면 skip (exit 0) |
 | 2 | /data를 tar.gz 압축 |
 | 3 | sha256 checksum 생성 → .meta |
-| 4 | tar.gz, .meta 업로드 |
+| 4 | tar.gz 업로드 → .meta 업로드 (순서 고정) |
 
 > **멱등성**: 같은 op_id = 같은 경로 → HEAD 체크로 완료 여부 판단
+>
+> **커밋 마커**: meta 파일 존재를 완료 마커로 간주한다.
+> - tar.gz만 있고 meta 없음 → 미완료 → 덮어쓰기/재업로드
+> - tar.gz + meta 둘 다 있음 → 완료 → skip
+> - **업로드 순서**: tar.gz 먼저, meta 마지막 (원자성 보장)
 
 ---
 

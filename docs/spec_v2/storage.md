@@ -38,14 +38,19 @@
 
 ## 완료 조건 (관측 기반)
 
-| Operation | Actuator | 완료 조건 |
-|-----------|----------|----------|
+| Operation | Actuator | 완료 조건 (HM 관측) |
+|-----------|----------|-------------------|
 | PROVISIONING | provision() | volume_exists() |
 | RESTORING | provision() + restore() | volume_exists() |
 | ARCHIVING | archive() + delete_volume() | !volume_exists() AND archive_key != NULL |
 | DELETING | delete() + delete_volume() | !is_running() AND !volume_exists() |
 
 > **원칙**: Actuator 성공 반환 ≠ 완료. 관측 조건 충족 = 완료.
+>
+> **역할 분리**:
+> - 위 조건은 HealthMonitor가 관측하는 실제 리소스 상태
+> - StateReconciler는 DB(observed_status)만 읽어서 완료 판정
+> - 예: `!volume_exists()` → HM이 관측 → `observed_status=PENDING` → SR이 확인
 
 ---
 
@@ -98,9 +103,13 @@
 | 에러 코드 | ErrorReason | 복구 |
 |----------|-------------|------|
 | ARCHIVE_NOT_FOUND | DataLost | 관리자 개입 |
+| META_NOT_FOUND | DataLost | 관리자 개입 |
 | S3_ACCESS_ERROR | Unreachable | 자동 재시도 (3회) |
 | CHECKSUM_MISMATCH | DataLost | 관리자 개입 |
 | TAR_EXTRACT_FAILED | ActionFailed | 자동 재시도 (3회) |
+| DISK_FULL | ActionFailed | 관리자 개입 |
+
+> 재시도 책임 분리: [error.md](./error.md#재시도-책임-분리) 참조
 
 ---
 
@@ -108,7 +117,7 @@
 
 | 크래시 시점 | DB 상태 | 재시도 동작 |
 |------------|---------|------------|
-| 업로드 중 | op_id 있음, archive_key 불일치 | 같은 op_id로 재시도 (HEAD 체크) |
+| 업로드 중 | op_id != NULL, archive_key = NULL | 같은 op_id로 재시도 (HEAD 체크) |
 | archive_key 저장 후 | archive_key 일치 | 업로드 skip → delete_volume만 |
 | Volume 삭제 후 | archive_key 일치, !volume_exists | 최종 커밋만 |
 

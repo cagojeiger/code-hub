@@ -78,17 +78,19 @@ StateReconciler는 desired_state와 observed_status를 비교하여 상태를 �
 
 ## 완료 조건
 
-| Operation | Target Status | 추가 조건 |
+| Operation | Target Status | 완료 조건 |
 |-----------|---------------|----------|
-| PROVISIONING | STANDBY | - |
-| RESTORING | STANDBY | - |
-| STARTING | RUNNING | - |
-| STOPPING | STANDBY | - |
-| ARCHIVING | PENDING | archive_key != NULL AND !volume_exists() |
+| PROVISIONING | STANDBY | observed_status == STANDBY |
+| RESTORING | STANDBY | observed_status == STANDBY |
+| STARTING | RUNNING | observed_status == RUNNING |
+| STOPPING | STANDBY | observed_status == STANDBY |
+| ARCHIVING | PENDING | observed_status == PENDING AND archive_key != NULL |
 
 > 완료 시: `operation = NONE`, `error_count = 0`, `error_info = NULL`
 >
-> **storage.md와 동일 조건**: ARCHIVING은 archive 업로드 완료 + volume 삭제 완료 모두 확인해야 완료 판정
+> **완료 판정 원칙**: StateReconciler는 DB(observed_status, archive_key)만 읽어서 판정.
+> HealthMonitor가 실제 리소스(Container, Volume)를 관측하여 observed_status를 갱신한다.
+> 예: ARCHIVING에서 `observed_status == PENDING`이면 HM이 이미 Volume 없음을 관측한 것.
 
 ---
 
