@@ -168,17 +168,18 @@ async def get_protected_archives() -> Set[str]:
     """)
 
     for ws in workspaces:
-        # soft-deleted workspace는 보호하지 않음
+        # op_id가 있으면 deleted_at 상관없이 보호 (진행 중 작업)
+        # soft-delete 중에도 ARCHIVING이 완료될 수 있으므로 보호 필요
+        if ws.op_id:
+            protected.add(f"archives/{ws.id}/{ws.op_id}/")
+
+        # soft-deleted workspace의 archive_key는 보호하지 않음
         if ws.deleted_at:
             continue
 
         # 현재 archive_key 보호
         if ws.archive_key:
             protected.add(ws.archive_key)
-
-        # op_id 기반 경로 보호 (진행 중/ERROR 상태)
-        if ws.op_id:
-            protected.add(f"archives/{ws.id}/{ws.op_id}/")
 
     return protected
 

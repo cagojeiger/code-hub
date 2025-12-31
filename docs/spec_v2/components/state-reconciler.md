@@ -77,15 +77,17 @@ StateReconciler는 desired_state와 observed_status를 비교하여 상태를 �
 
 ### Operation 결정 테이블
 
-| observed_status | desired_state | operation |
-|-----------------|---------------|-----------|
-| PENDING | RUNNING | RESTORING |
-| PENDING | STANDBY | RESTORING |
-| STANDBY | RUNNING | STARTING |
-| STANDBY | PENDING | ARCHIVING |
-| RUNNING | STANDBY | STOPPING |
-| RUNNING | PENDING | STOPPING |
-| ERROR | * | (skip) |
+| observed_status | desired_state | archive_key | operation |
+|-----------------|---------------|-------------|-----------|
+| PENDING | RUNNING | 있음 | RESTORING |
+| PENDING | RUNNING | NULL | PROVISIONING |
+| PENDING | STANDBY | 있음 | RESTORING |
+| PENDING | STANDBY | NULL | PROVISIONING |
+| STANDBY | RUNNING | - | STARTING |
+| STANDBY | PENDING | - | ARCHIVING |
+| RUNNING | STANDBY | - | STOPPING |
+| RUNNING | PENDING | - | STOPPING |
+| ERROR | * | - | (skip) |
 
 > **참고**: RUNNING → PENDING은 먼저 STOPPING으로 STANDBY까지 간 후 ARCHIVING
 
@@ -93,10 +95,11 @@ StateReconciler는 desired_state와 observed_status를 비교하여 상태를 �
 
 | Operation | Target Status | 추가 조건 |
 |-----------|---------------|----------|
+| PROVISIONING | STANDBY | - |
+| RESTORING | STANDBY | - |
 | STARTING | RUNNING | - |
 | STOPPING | STANDBY | - |
 | ARCHIVING | PENDING | archive_key != NULL |
-| RESTORING | STANDBY | - |
 
 ### 메인 로직
 
@@ -118,7 +121,7 @@ async def reconcile(ws: Workspace):
         return
 
     # 4. Plan: operation 결정
-    operation = plan_operation(ws.observed_status, ws.desired_state)
+    operation = plan_operation(ws)
     if not operation:
         return
 
@@ -129,8 +132,10 @@ async def reconcile(ws: Workspace):
 ### Plan Phase
 
 ```python
-def plan_operation(observed: Status, desired: Status) -> Optional[Operation]:
+def plan_operation(ws: Workspace) -> Optional[Operation]:
     """observed → desired로 가기 위한 operation 결정"""
+    observed = ws.observed_status
+    desired = ws.desired_state
 
     # 순서: PENDING(0) < STANDBY(10) < RUNNING(20)
     current_level = STATUS_LEVEL[observed]
@@ -139,7 +144,8 @@ def plan_operation(observed: Status, desired: Status) -> Optional[Operation]:
     if current_level < target_level:
         # Step Up
         if observed == PENDING:
-            return RESTORING
+            # archive_key 유무에 따라 RESTORING/PROVISIONING 결정
+            return RESTORING if ws.archive_key else PROVISIONING
         elif observed == STANDBY:
             return STARTING
     else:
@@ -173,12 +179,14 @@ async def execute_operation(ws: Workspace, operation: Operation):
 
     # 2. 실제 작업 실행
     try:
-        if operation == STARTING:
+        if operation == PROVISIONING:
+            await storage_provider.create_volume(ws.id)
+        elif operation == RESTORING:
+            await storage_provider.restore(ws.id, ws.archive_key)
+        elif operation == STARTING:
             await container_provider.start(ws.id)
         elif operation == STOPPING:
             await container_provider.stop(ws.id)
-        elif operation == RESTORING:
-            await storage_provider.restore(ws.id, ws.archive_key)
         elif operation == ARCHIVING:
             archive_key = await storage_provider.archive(ws.id, op_id)
             await db.execute("""
@@ -195,6 +203,13 @@ async def execute_operation(ws: Workspace, operation: Operation):
 
 ### 완료 판정
 
+> **중요**: HealthMonitor 주기(30s)가 StateReconciler 주기(10s)보다 길기 때문에,
+> operation 실행 후 완료 판정까지 최대 30초 지연될 수 있습니다.
+>
+> 이 지연 중 StateReconciler tick이 여러 번 발생하지만,
+> `observed_status != target`인 상태에서는 **재시도하지 않습니다**.
+> 재시도는 오직 Timeout 또는 Execute 실패 시에만 발생합니다.
+
 ```python
 async def check_operation_status(ws: Workspace):
     """operation 완료/timeout 체크"""
@@ -202,7 +217,7 @@ async def check_operation_status(ws: Workspace):
     operation = ws.operation
     target = OPERATION_TARGET[operation]
 
-    # 1. 완료 체크
+    # 1. 완료 체크: observed_status가 target에 도달했는지 확인
     if ws.observed_status == target:
         # 추가 조건 체크 (ARCHIVING의 경우 archive_key 필요)
         if operation == ARCHIVING and not ws.archive_key:
@@ -217,25 +232,25 @@ async def check_operation_status(ws: Workspace):
         logger.info(f"Workspace {ws.id}: {operation} completed")
         return
 
-    # 2. Timeout 체크
+    # 2. Timeout 체크 (지연 중에는 대기)
     timeout = OPERATION_TIMEOUT[operation]
     elapsed = datetime.now() - ws.op_started_at
     if elapsed > timeout:
         await handle_timeout(ws)
         return
 
-    # 3. 재시도 필요 여부 체크
-    if should_retry(ws):
-        await retry_operation(ws)
+    # 3. 중간 tick: target 미도달 + timeout 아님 → 대기
+    # (재시도는 Execute 실패 시에만 발생)
 ```
 
 ### Timeout 처리
 
 ```python
 OPERATION_TIMEOUT = {
+    PROVISIONING: timedelta(minutes=5),
+    RESTORING: timedelta(minutes=30),
     STARTING: timedelta(minutes=5),
     STOPPING: timedelta(minutes=5),
-    RESTORING: timedelta(minutes=30),
     ARCHIVING: timedelta(minutes=30),
 }
 

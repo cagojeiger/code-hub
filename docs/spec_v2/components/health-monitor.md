@@ -75,21 +75,22 @@ HealthMonitor는 실제 리소스 상태를 관측하고 DB에 반영하는 **�
 ### 상태 계산
 
 ```python
-def compute_observed_status(
+async def compute_observed_status(
+    ws: Workspace,
     container: ContainerState,
-    volume: VolumeState,
-    error_info: Optional[ErrorInfo],
-    archive_key: Optional[str]
+    volume: VolumeState
 ) -> Status:
     """실제 상태로부터 observed_status 계산"""
 
     # 1. ERROR 판정 (terminal error가 있으면 ERROR)
-    if error_info and error_info.get('is_terminal'):
+    if ws.error_info and ws.error_info.get('is_terminal'):
         return ERROR
 
     # 2. 불변식 위반 체크
     if container.exists and not volume.exists:
         # 컨테이너는 있는데 볼륨이 없음 = 불가능한 상태
+        # HealthMonitor가 직접 error_info 설정 (예외적 케이스)
+        await set_invariant_violation_error(ws, "ContainerWithoutVolume")
         return ERROR
 
     # 3. 정상 상태 계산
@@ -100,11 +101,40 @@ def compute_observed_status(
         return STANDBY  # 볼륨만 있음
 
     # 4. 둘 다 없음
-    if archive_key:
+    if ws.archive_key:
         return PENDING  # 아카이브에서 복원 가능
     else:
-        return ERROR    # DataLost (복구 불가)
+        # DataLost (복구 불가)
+        await set_invariant_violation_error(ws, "DataLost")
+        return ERROR
+
+async def set_invariant_violation_error(ws: Workspace, reason: str):
+    """불변식 위반 시 error_info 설정 (HealthMonitor 예외 케이스)
+
+    Note: 일반적으로 error_info는 StateReconciler가 설정하지만,
+          불변식 위반은 HealthMonitor가 직접 감지하므로 예외적으로 설정
+    """
+    # 이미 error_info가 있으면 덮어쓰지 않음
+    if ws.error_info:
+        return
+
+    await db.execute("""
+        UPDATE workspaces
+        SET error_info = $1
+        WHERE id = $2 AND error_info IS NULL
+    """, {
+        "reason": reason,
+        "message": f"Invariant violation: {reason}",
+        "is_terminal": True,
+        "operation": ws.operation or "NONE",
+        "error_count": 0,
+        "context": {},
+        "occurred_at": datetime.utcnow().isoformat()
+    }, ws.id)
 ```
+
+> **예외적 error_info 설정**: 불변식 위반(ContainerWithoutVolume, DataLost)은 HealthMonitor가 직접 감지하므로,
+> 예외적으로 error_info를 설정합니다. 이미 error_info가 있으면 덮어쓰지 않습니다.
 
 ### 관측 및 업데이트
 
@@ -116,13 +146,8 @@ async def observe_and_update(ws: Workspace):
     container = await container_provider.get_state(ws.id)
     volume = await volume_provider.get_state(ws.id)
 
-    # 2. observed_status 계산
-    new_status = compute_observed_status(
-        container=container,
-        volume=volume,
-        error_info=ws.error_info,
-        archive_key=ws.archive_key
-    )
+    # 2. observed_status 계산 (불변식 위반 시 error_info 설정 포함)
+    new_status = await compute_observed_status(ws, container, volume)
 
     # 3. 변경된 경우만 업데이트
     if new_status != ws.observed_status:

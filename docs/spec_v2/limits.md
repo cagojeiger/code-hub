@@ -182,7 +182,7 @@ sequenceDiagram
     Note over DB: 결과: 3개 RUNNING (제한 초과!)
 ```
 
-#### 해결: RUNNING + STARTING 모두 카운트
+#### 해결: RUNNING + STARTING 모두 카운트 + 트랜잭션
 
 ```mermaid
 sequenceDiagram
@@ -205,6 +205,30 @@ sequenceDiagram
     Note over API,B: 제한 도달 → 요청 거부
     API-->>B: 429 Too Many Requests
 ```
+
+> **중요: 트랜잭션 요구사항**
+>
+> `can_start_workspace()` 체크와 `operation = 'STARTING'` 설정은
+> **반드시 같은 트랜잭션 내에서** 수행되어야 합니다.
+>
+> ```python
+> async with db.transaction():
+>     # 1. 제한 체크
+>     allowed, msg, details = await can_start_workspace(user_id)
+>     if not allowed:
+>         raise LimitExceeded(msg, details)
+>
+>     # 2. operation 설정 (체크와 같은 트랜잭션)
+>     await db.execute("""
+>         UPDATE workspaces
+>         SET operation = 'STARTING', op_started_at = NOW(), ...
+>         WHERE id = $1 AND operation = 'NONE'
+>     """, workspace_id)
+> ```
+>
+> 트랜잭션 없이 분리 실행 시:
+> - SELECT와 UPDATE 사이에 다른 요청이 끼어들 수 있음
+> - STARTING 카운트 체크 후 UPDATE 전에 다른 workspace가 STARTING으로 전환 가능
 
 ### API 엔드포인트
 

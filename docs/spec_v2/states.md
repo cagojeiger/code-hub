@@ -127,7 +127,7 @@ def get_display_status(workspace):
 | STANDBY | ARCHIVING | - | 아카이브 진행 중 | STANDBY |
 | RUNNING | NONE | - | 실행 중 | RUNNING |
 | RUNNING | STOPPING | - | 정지 진행 중 | RUNNING |
-| ERROR | NONE | - | 오류 발생 (복구 필요) | ERROR |
+| ERROR | (유지) | - | 오류 발생, op_id 보호 위해 operation 유지 | ERROR |
 
 ---
 
@@ -280,9 +280,14 @@ ERROR는 operation 실패 시 전환되는 상태입니다.
 | 컬럼 | 타입 | 설명 |
 |------|------|------|
 | previous_status | str | ERROR 전 상태 (복구 시 사용) |
-| error_info | JSON | ErrorInfo (reason, message, context, occurred_at) |
+| error_info | JSON | ErrorInfo (reason, message, context, occurred_at, is_terminal) |
 | error_count | int | 연속 실패 횟수 (3회 초과 시 관리자 개입) |
-| op_id | str | ERROR에서도 유지 (GC 보호, 재시도 시 재사용) |
+| operation | str | **ERROR에서도 유지** (op_id 기반 GC 보호) |
+| op_id | str | ERROR에서도 유지 (Archive GC가 보호, 재시도 시 재사용) |
+
+> **중요**: ERROR 상태에서 `operation`은 NONE으로 리셋되지 않습니다.
+> - `op_id` 기반 Archive 보호를 위해 operation을 유지합니다.
+> - 복구 시 `operation = NONE`으로 리셋하여 정상 수렴을 재개합니다.
 
 > **상세 스펙**: [error.md](./error.md#error-전환) - 전환 함수, 복구 프로세스
 

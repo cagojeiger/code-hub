@@ -286,6 +286,58 @@ async def coordinator_health():
 
 ---
 
+## 컴포넌트 동시 실행 주의사항
+
+4개 컴포넌트가 `asyncio.gather()`로 동시 실행됩니다.
+같은 workspace에 대해 HealthMonitor와 StateReconciler가 동시 접근할 수 있습니다.
+
+### 안전성 보장
+
+| 메커니즘 | 설명 |
+|---------|------|
+| **단일 Writer 원칙** | 각 컴포넌트가 쓰는 컬럼이 분리됨 |
+| **PostgreSQL 원자성** | UPDATE 문 내 `previous_status = observed_status`는 원자적 |
+
+```
+HealthMonitor: observed_status, observed_at
+StateReconciler: operation, op_started_at, op_id, archive_key, error_count, error_info
+TTL Manager: desired_state (API와 공유)
+```
+
+### 잠재적 충돌 시나리오
+
+```mermaid
+sequenceDiagram
+    participant HM as HealthMonitor
+    participant DB as Database
+    participant SR as StateReconciler
+
+    Note over HM,SR: 같은 workspace 동시 접근
+    HM->>DB: SELECT (observed_status = STANDBY)
+    SR->>DB: SELECT (observed_status = STANDBY)
+
+    Note over SR: operation=STARTING 결정
+    SR->>DB: UPDATE operation = 'STARTING'
+    SR->>DB: 컨테이너 시작 요청
+
+    Note over HM: 관측 계속 진행
+    HM->>DB: 컨테이너 상태 확인
+    Note over HM: 아직 시작 안 됨 (STANDBY)
+    HM->>DB: UPDATE observed_status = STANDBY
+
+    Note over HM,SR: ✅ 문제 없음: 단일 Writer로 충돌 방지
+```
+
+### 주의 필요 케이스
+
+| 케이스 | 위험 | 완화 |
+|--------|-----|------|
+| `previous_status = observed_status` | 동시 변경 | SQL 원자성으로 안전 |
+| error_info 읽기/쓰기 | 중간 상태 읽기 | 허용 (다음 tick에 정상화) |
+| operation 중간 tick | 재시도 위험 | timeout/execute 실패만 재시도 |
+
+---
+
 ## 참조
 
 - [health-monitor.md](./health-monitor.md) - HealthMonitor 컴포넌트

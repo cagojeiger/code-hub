@@ -34,16 +34,16 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 
 | 컬럼 | 변경 내용 |
 |------|----------|
-| status | ENUM 값 변경 (아래 참조) |
+| status → observed_status | 컬럼명 변경 + ENUM 값 변경 (아래 참조) |
 | storage_backend | `local-dir` → `docker-volume`, `minio` 추가 |
 
-### status ENUM 값
+### observed_status ENUM 값
 
 ```sql
--- M1
+-- M1 (status 컬럼)
 ENUM('CREATED', 'PROVISIONING', 'RUNNING', 'STOPPING', 'STOPPED', 'DELETING', 'ERROR', 'DELETED')
 
--- M2 (5개 - Active 상태만, ARCHIVED는 파생)
+-- M2 (observed_status 컬럼, 5개 - Active 상태만, ARCHIVED는 파생)
 ENUM(
   'PENDING',   -- Level 0: 활성 리소스 없음 (archive_key 있으면 Display: ARCHIVED)
   'STANDBY',   -- Level 10: Volume만 존재
@@ -101,10 +101,10 @@ ENUM('PENDING', 'STANDBY', 'RUNNING')
 
 | 컬럼 | 설명 |
 |-----|------|
-| `status` | 관측된 상태 (PENDING/STANDBY/RUNNING/ERROR) |
+| `observed_status` | 관측된 상태 (PENDING/STANDBY/RUNNING/ERROR) |
 | `observed_at` | 마지막 관측 시점 |
 
-> HealthMonitor는 실제 리소스를 관측하고 `status`를 업데이트합니다.
+> HealthMonitor는 실제 리소스를 관측하고 `observed_status`를 업데이트합니다.
 > ERROR 판정도 HealthMonitor가 담당 (error_info.is_terminal 체크).
 
 ### StateReconciler가 쓰는 컬럼
@@ -257,7 +257,7 @@ CREATE INDEX idx_system_locks_expires ON system_locks (expires_at);
 | storage_backend | ENUM | 'docker-volume' / 'minio' |
 | home_store_key | VARCHAR(512) | Volume 키 (`ws-{workspace_id}-home` 고정) |
 | home_ctx | JSONB | Storage Provider 컨텍스트 |
-| **status** | ENUM | 현재 상태 (5개: PENDING, STANDBY, RUNNING, ERROR, DELETED) |
+| **observed_status** | ENUM | 관측된 상태 (5개: PENDING, STANDBY, RUNNING, ERROR, DELETED) |
 | **operation** | ENUM | 진행 중인 작업 (신규) |
 | **op_started_at** | TIMESTAMP | operation 시작 시점 (신규) |
 | **desired_state** | ENUM | 목표 상태 (신규: PENDING, STANDBY, RUNNING) |
@@ -284,15 +284,15 @@ CREATE INDEX idx_system_locks_expires ON system_locks (expires_at);
 ```sql
 -- TTL 체크용 (TTL Manager 폴링)
 CREATE INDEX idx_workspaces_ttl_check
-ON workspaces (status, last_access_at)
-WHERE status IN ('RUNNING', 'STANDBY')
+ON workspaces (observed_status, last_access_at)
+WHERE observed_status IN ('RUNNING', 'STANDBY')
   AND operation = 'NONE'
   AND deleted_at IS NULL;
 
 -- Reconciler 처리 대상 (전환 필요)
 CREATE INDEX idx_workspaces_reconcile
-ON workspaces (status, desired_state, operation)
-WHERE (status != desired_state OR operation != 'NONE')
+ON workspaces (observed_status, desired_state, operation)
+WHERE (observed_status != desired_state OR operation != 'NONE')
   AND deleted_at IS NULL;
 
 -- 진행 중인 작업 조회
@@ -302,13 +302,13 @@ WHERE operation != 'NONE' AND deleted_at IS NULL;
 
 -- 사용자별 RUNNING 워크스페이스 (제한 체크용)
 CREATE INDEX idx_workspaces_user_running
-ON workspaces (owner_user_id, status)
-WHERE status = 'RUNNING' AND deleted_at IS NULL;
+ON workspaces (owner_user_id, observed_status)
+WHERE observed_status = 'RUNNING' AND deleted_at IS NULL;
 
 -- 전역 RUNNING 카운트 (제한 체크용)
 CREATE INDEX idx_workspaces_running
-ON workspaces (status)
-WHERE status = 'RUNNING' AND deleted_at IS NULL;
+ON workspaces (observed_status)
+WHERE observed_status = 'RUNNING' AND deleted_at IS NULL;
 ```
 
 ---
@@ -334,28 +334,31 @@ ADD COLUMN error_count INT DEFAULT 0,
 ADD COLUMN previous_status VARCHAR(20);
 ```
 
-### Phase 2: 기존 데이터 마이그레이션
+### Phase 2: 컬럼명 변경 및 데이터 마이그레이션
 
 ```sql
--- M1 상태 → M2 (status + operation) 매핑
+-- 컬럼명 변경: status → observed_status
+ALTER TABLE workspaces RENAME COLUMN status TO observed_status;
+
+-- M1 상태 → M2 (observed_status + operation) 매핑
 UPDATE workspaces SET
-  -- 전이 상태는 status + operation으로 분리
-  operation = CASE status
+  -- 전이 상태는 observed_status + operation으로 분리
+  operation = CASE observed_status
     WHEN 'PROVISIONING' THEN 'STARTING'
     WHEN 'STOPPING' THEN 'STOPPING'
     WHEN 'DELETING' THEN 'DELETING'
     ELSE 'NONE'
   END,
-  status = CASE status
+  observed_status = CASE observed_status
     WHEN 'CREATED' THEN 'PENDING'
     WHEN 'PROVISIONING' THEN 'STANDBY'  -- STANDBY + STARTING
     WHEN 'STOPPED' THEN 'STANDBY'
     WHEN 'STOPPING' THEN 'RUNNING'      -- RUNNING + STOPPING
-    ELSE status
+    ELSE observed_status
   END,
   desired_state = CASE
-    WHEN status IN ('RUNNING', 'PROVISIONING') THEN 'RUNNING'
-    WHEN status IN ('STOPPED', 'STOPPING') THEN 'STANDBY'
+    WHEN observed_status IN ('RUNNING', 'PROVISIONING') THEN 'RUNNING'
+    WHEN observed_status IN ('STOPPED', 'STOPPING') THEN 'STANDBY'
     ELSE 'RUNNING'
   END
 WHERE deleted_at IS NULL;
@@ -365,9 +368,10 @@ WHERE deleted_at IS NULL;
 
 ```sql
 -- PostgreSQL에서 ENUM 변경
--- status: 5개 값으로 단순화 (COLD 제거, WARM → STANDBY)
-ALTER TYPE workspace_status ADD VALUE 'PENDING';
-ALTER TYPE workspace_status ADD VALUE 'STANDBY';
+-- observed_status: 5개 값으로 단순화 (COLD 제거, WARM → STANDBY)
+ALTER TYPE workspace_status RENAME TO workspace_observed_status;
+ALTER TYPE workspace_observed_status ADD VALUE 'PENDING';
+ALTER TYPE workspace_observed_status ADD VALUE 'STANDBY';
 -- PROVISIONING, STOPPING 등 제거는 불가 → 사용하지 않도록 제약
 
 -- operation: 새 타입 생성 (INITIALIZING 제거, PROVISIONING 추가)
@@ -388,7 +392,7 @@ CREATE TYPE workspace_desired_state AS ENUM (
 
 - [spec/schema.md](../spec/schema.md) - M1 스키마
 - [states.md](./states.md) - 상태 정의
-- [components/health-monitor.md](./components/health-monitor.md) - HealthMonitor (status 컬럼 소유)
+- [components/health-monitor.md](./components/health-monitor.md) - HealthMonitor (observed_status 컬럼 소유)
 - [components/state-reconciler.md](./components/state-reconciler.md) - StateReconciler (operation 컬럼 소유)
 - [components/ttl-manager.md](./components/ttl-manager.md) - TTL Manager (desired_state 컬럼 소유)
 - [components/archive-gc.md](./components/archive-gc.md) - Archive GC

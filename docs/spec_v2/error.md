@@ -378,14 +378,16 @@ async def set_terminal_error(ws: Workspace, reason: str, error: Exception, error
 
     Note:
       - observed_status는 건드리지 않음 (HealthMonitor 역할)
-      - operation은 유지 (완료 판정용)
-      - op_id도 유지 (GC 보호)
+      - operation은 유지 (op_id 기반 GC 보호)
+      - previous_status = observed_status는 SQL에서 원자적으로 읽기/저장
     """
+    # PostgreSQL UPDATE는 원자적: observed_status 읽기와 previous_status 저장이 동시에 발생
+    # HealthMonitor가 동시에 observed_status를 변경해도 UPDATE 시점의 값이 저장됨
     await db.execute("""
         UPDATE workspaces
         SET error_count = $1,
             error_info = $2,
-            previous_status = observed_status
+            previous_status = observed_status  -- 원자적 읽기/저장
         WHERE id = $3
     """, error_count, {
         "reason": reason,
@@ -397,6 +399,9 @@ async def set_terminal_error(ws: Workspace, reason: str, error: Exception, error
         "occurred_at": datetime.utcnow().isoformat()
     }, ws.id)
 ```
+
+> **동시성 안전성**: PostgreSQL의 `previous_status = observed_status`는 UPDATE 실행 시점의 값을 원자적으로 읽어 저장합니다.
+> HealthMonitor가 동시에 observed_status를 변경해도 정확한 이전 상태가 보존됩니다.
 
 ### ERROR 관련 컬럼
 
@@ -479,7 +484,13 @@ async def recover_from_error(ws: Workspace):
 | RetryExceeded | 근본 원인 해결 후 수동 복구 |
 | DataLost | 백업 복원 또는 새 workspace 생성 권장 |
 
-> **참고**: ERROR 상태에서 자동 복구 없음. 관리자가 문제 해결 후 수동 복구 필요.
+> **중요: ERROR 상태에서의 operation**
+>
+> - ERROR 전환 시 `operation`은 NONE으로 리셋되지 **않습니다** (op_id 기반 GC 보호)
+> - 복구 시 `operation = 'NONE'`으로 명시적 리셋이 필요합니다
+> - 이 리셋이 없으면 StateReconciler가 정상 수렴을 재개할 수 없습니다
+>
+> **자동 복구 경로는 없습니다**: 관리자가 문제를 해결하고 `recover_from_error()` API를 호출해야 합니다.
 
 ---
 

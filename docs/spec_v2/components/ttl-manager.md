@@ -197,6 +197,34 @@ sequenceDiagram
     T->>DB: UPDATE desired_state = 'PENDING'
 ```
 
+### last_access_at 업데이트 시점
+
+| 상황 | 업데이트 주체 | 시점 |
+|-----|-------------|------|
+| STOPPING 완료 | StateReconciler | observed_status = STANDBY 직후 |
+| WebSocket 연결 | (미구현) | - |
+
+```python
+# StateReconciler에서 STOPPING 완료 시
+async def complete_stopping(ws: Workspace):
+    """STOPPING 완료 처리"""
+    await db.execute("""
+        UPDATE workspaces
+        SET operation = 'NONE',
+            error_count = 0,
+            error_info = NULL,
+            last_access_at = NOW()  -- Archive TTL 기준점
+        WHERE id = $1
+    """, ws.id)
+```
+
+> **기본**: StateReconciler가 STOPPING 완료 시 `last_access_at = NOW()` 설정.
+> 이 시점이 Archive TTL 계산의 기준점이 됩니다.
+>
+> **한계**: WebSocket 연결 중에는 last_access_at이 업데이트되지 않습니다.
+> RUNNING 상태에서 오래 사용 후 STOPPING하면, 마지막 접근이 아닌
+> STOPPING 완료 시점이 기준이 됩니다.
+
 ---
 
 ## 에러 처리
