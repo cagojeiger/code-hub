@@ -21,11 +21,11 @@
 
 ## 불변식
 
-1. **카운트 기준**: `observed_status = RUNNING` 또는 `operation = STARTING` 모두 카운트
-2. **Atomic 체크**: 제한 체크와 operation 설정은 **동일 트랜잭션** 내에서 수행
+1. **카운트 기준**: `observed_status = RUNNING` 카운트
+2. **Soft Limit**: 정확한 enforcement 아님, 근사치 허용
 3. **우선순위**: per_user 제한을 먼저 체크, 통과 시 global 체크
 
-> STARTING 포함 이유: 동시 요청 시 race condition 방지
+> Race condition으로 인해 제한보다 약간 초과될 수 있음 (허용)
 
 ---
 
@@ -63,43 +63,6 @@ sequenceDiagram
 
 ---
 
-## Race Condition 방지
-
-### 문제: RUNNING만 체크 시
-
-```mermaid
-sequenceDiagram
-    participant A as User A
-    participant B as User B
-    participant DB
-
-    Note over DB: RUNNING = 1, max = 2
-
-    par 동시 요청
-        A->>DB: count 조회 → 1 (통과)
-        B->>DB: count 조회 → 1 (통과)
-    end
-
-    A->>DB: operation = STARTING
-    B->>DB: operation = STARTING
-
-    Note over DB: 결과: 3개 RUNNING (초과!)
-```
-
-### 해결: Atomic Transaction
-
-| 단계 | 동작 |
-|------|------|
-| 1 | 트랜잭션 시작 |
-| 2 | (RUNNING + STARTING) 카운트 조회 |
-| 3 | 제한 체크 |
-| 4 | operation = STARTING 설정 |
-| 5 | 트랜잭션 커밋 |
-
-> 트랜잭션 격리 수준: Read Committed (PostgreSQL 기본값)
-
----
-
 ## 에러 응답
 
 | 필드 | 값 |
@@ -114,5 +77,5 @@ sequenceDiagram
 
 ## 참조
 
-- [schema.md](./schema.md) - 설정 값
+- [schema.md](./schema.md) - 컬럼 소유권
 - [states.md](./states.md) - 상태 정의
