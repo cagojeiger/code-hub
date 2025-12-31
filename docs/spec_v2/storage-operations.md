@@ -25,6 +25,30 @@
 
 ---
 
+## 완료 판단 원칙
+
+**센서 기반 완료 판단**을 사용합니다.
+
+```
+Actuator 성공 반환 ≠ Operation 완료
+센서 조건 충족 = Operation 완료
+```
+
+### Operation별 완료 조건
+
+| Operation | Actuator | 완료 조건 (센서 기반) |
+|-----------|----------|---------------------|
+| PROVISIONING | `provision()` | `volume_exists() == True` |
+| RESTORING | `provision()` + `restore()` | `volume_exists() == True` |
+| STARTING | `start()` | `is_running() AND volume_exists()` |
+| STOPPING | `delete()` | `!is_running() AND volume_exists()` |
+| ARCHIVING | `archive()` + `delete_volume()` | `!volume_exists()` |
+| DELETING | `delete()` + `delete_volume()` | `!is_running() AND !volume_exists()` |
+
+> **이유**: Level-Triggered 철학 일관성. 크래시 복구 시 센서로 현재 상태 확인.
+
+---
+
 ## PROVISIONING (PENDING → STANDBY)
 
 새 워크스페이스의 빈 Volume 생성.
@@ -54,19 +78,17 @@ sequenceDiagram
 
 ```python
 def reconcile_provisioning(ws):
-    """PROVISIONING Reconciler - 멱등"""
+    """PROVISIONING Reconciler - 멱등, 센서 기반 완료"""
 
-    # 이미 완료 체크
-    if ws.status == STANDBY and ws.operation == NONE:
-        return
-
-    # Volume 생성 (멱등)
+    # Actuator 호출 (멱등)
     storage.provision(ws.id)
 
-    # 완료
-    ws.status = STANDBY
-    ws.operation = NONE
-    db.update(ws)
+    # 센서 기반 완료 판단
+    actual = observe_actual_state(ws.id)
+    if actual.volume_exists:
+        ws.status = STANDBY
+        ws.operation = NONE
+        db.update(ws)
 ```
 
 ---
@@ -124,11 +146,7 @@ sequenceDiagram
 
 ```python
 def reconcile_restoring(ws):
-    """RESTORING Reconciler - 멱등 (Crash-Only)"""
-
-    # 이미 완료 체크
-    if ws.status == STANDBY and ws.operation == NONE:
-        return
+    """RESTORING Reconciler - 멱등, 센서 기반 완료 (Crash-Only)"""
 
     # 단계 1: Volume 생성 (멱등)
     storage.provision(ws.id)
@@ -136,20 +154,24 @@ def reconcile_restoring(ws):
     # 단계 2: restore (Crash-Only: 항상 재실행)
     storage.restore(ws.id, ws.archive_key)
 
-    # 단계 3: 완료
-    ws.status = STANDBY
-    ws.operation = NONE
-    db.update(ws)
+    # 센서 기반 완료 판단
+    actual = observe_actual_state(ws.id)
+    if actual.volume_exists:
+        ws.status = STANDBY
+        ws.operation = NONE
+        db.update(ws)
 ```
 
 ### 실패 처리
 
-| 에러 코드 | 상황 | 복구 방법 |
-|----------|------|----------|
-| `ARCHIVE_NOT_FOUND` | archive_key 있으나 Object Storage에 파일 없음 | 관리자 개입: archive_key NULL 처리 또는 백업 복원 |
-| `S3_ACCESS_ERROR` | Object Storage 접근 실패 | 자동 재시도 |
-| `CHECKSUM_MISMATCH` | sha256 불일치 | 관리자 개입 |
-| `TAR_EXTRACT_FAILED` | tar.gz 해제 실패 | 관리자 개입 |
+> **상세 스펙**: [error.md](./error.md) - ErrorInfo 구조, 재시도 정책
+
+| 에러 코드 | ErrorReason | 상황 | 복구 방법 |
+|----------|-------------|------|----------|
+| `ARCHIVE_NOT_FOUND` | DataLost | archive_key 있으나 Object Storage에 파일 없음 | 관리자 개입: archive_key NULL 처리 또는 백업 복원 |
+| `S3_ACCESS_ERROR` | Unreachable | Object Storage 접근 실패 | 자동 재시도 (3회) |
+| `CHECKSUM_MISMATCH` | DataLost | sha256 불일치 | 관리자 개입 (즉시) |
+| `TAR_EXTRACT_FAILED` | ActionFailed | tar.gz 해제 실패 | 자동 재시도 (3회) |
 
 ---
 
@@ -184,12 +206,13 @@ sequenceDiagram
         R->>DB: op_id = uuid()
     end
 
-    alt archive_key 없음 (업로드 필요)
+    Note over R: expected_key = archives/{id}/{op_id}/...
+    alt archive_key != expected_key (업로드 필요)
         R->>S: archive(workspace_id, op_id)
         Note over S: Job 실행 (HEAD 체크 → 있으면 skip)
         S-->>R: archive_key
-        R->>DB: archive_key = ...
-    else archive_key 있음 (이미 업로드됨)
+        R->>DB: archive_key = expected_key (덮어쓰기)
+    else archive_key == expected_key (이미 업로드됨)
         Note over R: 업로드 skip
     end
 
@@ -206,9 +229,9 @@ sequenceDiagram
 
 | 크래시 시점 | DB 상태 | 재시도 동작 |
 |------------|---------|------------|
-| 업로드 중 | archive_key=NULL, op_id 있음 | 같은 op_id로 재시도 (Job이 HEAD 체크 후 skip 또는 재업로드) |
-| archive_key 저장 후 | archive_key 있음 | 업로드 skip → delete_volume만 수행 |
-| Volume 삭제 후 | archive_key 있음 | 최종 커밋만 수행 |
+| 업로드 중 | archive_key != expected_key, op_id 있음 | 같은 op_id로 재시도 (Job이 HEAD 체크 후 skip 또는 재업로드) |
+| archive_key 저장 후 | archive_key == expected_key | 업로드 skip → delete_volume만 수행 |
+| Volume 삭제 후 | archive_key == expected_key | 최종 커밋만 수행 |
 
 ### 멱등성
 - **op_id 기반 불변 경로**: 같은 op_id → 같은 archive_key
@@ -219,31 +242,32 @@ sequenceDiagram
 
 ```python
 def reconcile_archiving(ws):
-    """ARCHIVING Reconciler - 멱등"""
-
-    # 이미 완료 체크
-    if ws.status == PENDING and ws.operation == NONE and ws.archive_key:
-        return
+    """ARCHIVING Reconciler - 멱등, 센서 기반 완료"""
 
     # 단계 1: op_id 확보
     if ws.op_id is None:
         ws.op_id = uuid()
         db.update(ws)  # 커밋 포인트 1
 
-    # 단계 2-3: archive (archive_key로 skip 판단)
-    if ws.archive_key is None:
+    # 단계 2-3: archive (expected_key와 비교하여 skip 판단)
+    # Note: archive_key is None 조건 대신 expected_key 비교 사용
+    #       → RESTORING 후에도 새 아카이브 생성 보장
+    expected_key = f"archives/{ws.id}/{ws.op_id}/home.tar.gz"
+    if ws.archive_key != expected_key:
         archive_key = storage.archive(ws.id, ws.op_id)
         ws.archive_key = archive_key
-        db.update(ws)  # 커밋 포인트 2
+        db.update(ws)  # 커밋 포인트 2 (덮어쓰기)
 
     # 단계 4: Volume 삭제 (멱등)
     storage.delete_volume(ws.id)
 
-    # 단계 5: 완료
-    ws.status = PENDING  # Display: ARCHIVED (archive_key 있으므로)
-    ws.operation = NONE
-    ws.op_id = None
-    db.update(ws)  # 커밋 포인트 3
+    # 센서 기반 완료 판단
+    actual = observe_actual_state(ws.id)
+    if not actual.volume_exists:
+        ws.status = PENDING  # Display: ARCHIVED (archive_key 있으므로)
+        ws.operation = NONE
+        ws.op_id = None
+        db.update(ws)  # 커밋 포인트 3
 ```
 
 ---
@@ -282,7 +306,7 @@ flowchart TD
 |--------|----------|--------|
 | Container | InstanceController | 즉시 |
 | Volume | StorageProvider | Container 삭제 후 |
-| Archives | GC | 1시간 후 (soft-delete 감지) |
+| Archives | GC | 2시간 후 (soft-delete 감지) |
 
 > **왜 분리?**: Container/Volume은 즉시 해제 (컴퓨팅 비용), Archive는 GC가 일괄 정리 (저장 비용, 배치 효율)
 
@@ -301,11 +325,7 @@ DELETING 완료 시:
 
 ```python
 def reconcile_deleting(ws):
-    """DELETING Reconciler - Instance + Storage"""
-
-    # 이미 완료 체크
-    if ws.status == DELETED:
-        return
+    """DELETING Reconciler - 센서 기반 완료, Instance + Storage"""
 
     # 단계 1: Container 삭제 (멱등) - 먼저
     instance.delete(ws.id)
@@ -313,15 +333,24 @@ def reconcile_deleting(ws):
     # 단계 2: Volume 삭제 (멱등) - 나중
     storage.delete_volume(ws.id)
 
-    # 단계 3: soft-delete
-    ws.status = DELETED
-    ws.deleted_at = now()
-    ws.operation = NONE
-    db.update(ws)
+    # 센서 기반 완료 판단
+    actual = observe_actual_state(ws.id)
+    if not actual.container_running and not actual.volume_exists:
+        ws.status = DELETED
+        ws.deleted_at = now()
+        ws.operation = NONE
+        db.update(ws)
 ```
 
 ### 실패 처리
-- Volume 삭제 실패 시 재시도
+
+> **상세 스펙**: [error.md](./error.md) - ErrorInfo 구조, 재시도 정책
+
+| 에러 코드 | ErrorReason | 상황 | 복구 방법 |
+|----------|-------------|------|----------|
+| `VOLUME_DELETE_FAILED` | ActionFailed | Volume 삭제 실패 | 자동 재시도 (3회) |
+| `CONTAINER_DELETE_FAILED` | ActionFailed | Container 삭제 실패 | 자동 재시도 (3회) |
+
 - Archive는 GC 주기에 정리됨 (별도 처리 불필요)
 
 ---
@@ -331,5 +360,6 @@ def reconcile_deleting(ws):
 - [storage.md](./storage.md) - 핵심 원칙, 인터페이스
 - [storage-job.md](./storage-job.md) - Job 스펙 (Crash-Only 설계)
 - [storage-gc.md](./storage-gc.md) - Archive GC
+- [error.md](./error.md) - ERROR 상태, ErrorInfo, 재시도 정책
 - [instance.md](./instance.md) - InstanceController 인터페이스
 - [states.md](./states.md) - 상태 전환 규칙

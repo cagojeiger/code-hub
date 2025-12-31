@@ -235,8 +235,14 @@ class StorageProvider(ABC):
 
         Returns:
             archive_key: 경로 (archives/{workspace_id}/{op_id}/home.tar.gz)
+                        skip 여부와 무관하게 항상 동일한 값 반환
 
-        멱등성: HEAD 체크로 이미 존재하면 skip
+        멱등성: HEAD 체크로 이미 존재하면 skip (업로드 생략)
+
+        Note:
+            archive_key = f"archives/{workspace_id}/{op_id}/home.tar.gz"
+            → op_id로부터 결정론적 계산 가능
+            → skip이든 업로드든 같은 값 반환
         """
 
     @abstractmethod
@@ -259,10 +265,19 @@ class StorageProvider(ABC):
             workspace_id: 워크스페이스 ID
 
         Returns:
-            True: Volume 존재
-            False: Volume 없음
+            True: Volume 존재 (K8s: Terminating 포함)
+            False: Volume 없음 (K8s: 완전 삭제됨)
+
+        백엔드별 동작:
+            - Docker: Volume 존재 여부
+            - K8s: PVC 존재 여부 (Terminating도 True)
 
         용도: Reconciler의 observe_actual_state()에서 호출
+
+        Note:
+            K8s에서 Terminating 상태 PVC는 아직 존재하는 것으로 취급.
+            delete_volume() 호출 후 실제 삭제 완료까지 대기해야 False 반환.
+            Terminating 상태에서 stuck되면 timeout(5분) 후 ERROR 전환 권장.
         """
 
     # archive_exists() 제거됨 - DB archive_key 컬럼으로 has_archive 판단
@@ -277,6 +292,7 @@ class StorageProvider(ABC):
 - [storage-job.md](./storage-job.md) - Job 스펙 (Crash-Only 설계)
 - [storage-operations.md](./storage-operations.md) - RESTORING, ARCHIVING, DELETING 플로우
 - [storage-gc.md](./storage-gc.md) - Archive GC
+- [error.md](./error.md) - ERROR 상태, 에러 처리
 - [reconciler.md](./reconciler.md) - Reconciler 알고리즘 (센서 사용)
 - [states.md](./states.md) - 상태 전환 규칙
 - [instance.md](./instance.md) - 인스턴스 동작

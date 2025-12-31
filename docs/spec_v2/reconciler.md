@@ -294,8 +294,11 @@ async def execute_operation(ws: Workspace):
                 ws.op_id = uuid()
                 await db.update_op_id(ws.id, ws.op_id)
 
-            # Archive 업로드
-            if ws.archive_key is None:
+            # Archive 업로드 (expected_key와 비교하여 skip 판단)
+            # Note: archive_key is None 조건 대신 expected_key 비교 사용
+            #       → RESTORING 후에도 새 아카이브 생성 보장
+            expected_key = f"archives/{ws.id}/{ws.op_id}/home.tar.gz"
+            if ws.archive_key != expected_key:
                 archive_key = await storage.archive(ws.id, ws.op_id)
                 await db.update_archive_key(ws.id, archive_key)
 
@@ -316,9 +319,12 @@ async def execute_operation(ws: Workspace):
                 await db.mark_deleted(ws.id)
 
     except Exception as e:
-        await db.bump_error(ws.id, str(e))
+        # ErrorInfo 생성 및 에러 처리
+        error_info = create_error_info(e, ws.operation)
+        await handle_error(ws, error_info)
         logger.error(f"Operation failed: {ws.id} {ws.operation} - {e}")
-        # error_count < 3이면 operation 유지 → 다음 루프에서 재시도
+        # error_count < max_retries면 operation 유지 → 다음 루프에서 재시도
+        # 상세: error.md 참조
 ```
 
 ---
@@ -584,18 +590,135 @@ Docker 환경 (M=10~50)에서는 현재 구조로 충분:
 
 ### 에러 처리
 
+> **상세 스펙**: [error.md](./error.md) - ErrorInfo 구조, 재시도 정책, 복구 시나리오
+
 | 상황 | 동작 |
 |------|------|
-| action 실패 (1-2회) | operation 유지, 다음 루프에서 재시도 |
-| action 실패 (3회) | ERROR 상태 전환, 관리자 개입 |
+| action 실패 (재시도 가능) | operation 유지, 다음 루프에서 재시도 |
+| action 실패 (max_retries 초과) | ERROR 상태 전환, 관리자 개입 |
 | 센서 실패 | 이전 status 유지, 재시도 |
+| DataLost | 즉시 ERROR 전환, 관리자 개입 |
+
+```python
+# 에러 처리 흐름 (상세: error.md)
+async def handle_error(ws: Workspace, error_info: ErrorInfo):
+    max_retries = get_max_retries(error_info.reason)
+    if ws.error_count < max_retries:
+        await db.bump_error_count(ws.id, error_info)
+    else:
+        await transition_to_error(ws, error_info)
+        await notify_admin(ws, error_info)
+```
+
+---
+
+## GC 통합
+
+### 왜 Reconciler에서 GC를 실행하는가?
+
+| 프로세스 | Leader Election 필요 | 이유 |
+|---------|---------------------|------|
+| Reconciler | ✅ | 동시에 같은 ws 처리 방지 |
+| GC | ✅ | 동시 삭제 판단 일관성 |
+
+둘 다 싱글 인스턴스로 실행되어야 하므로, **동일 프로세스에서 실행**하는 것이 합리적입니다.
+
+### main_loop 구조
+
+```python
+class Reconciler:
+    def __init__(self):
+        self.gc_interval = 7200  # 2시간
+        self.last_gc_time = 0
+
+    async def main_loop(self):
+        while True:
+            # 1. Workspace reconciliation (매 루프, ~1분)
+            workspaces = await db.get_to_reconcile()
+            for ws in workspaces:
+                await self.reconcile_one(ws)
+
+            # 2. Archive GC (2시간마다)
+            if self._should_run_gc():
+                await self._run_gc()
+
+            await asyncio.sleep(60)
+
+    def _should_run_gc(self) -> bool:
+        return time.time() - self.last_gc_time >= self.gc_interval
+
+    async def _run_gc(self):
+        """Archive GC 실행. 상세: storage-gc.md 참조"""
+        self.last_gc_time = time.time()
+        await gc.cleanup_orphan_archives()
+```
+
+### 타임라인
+
+```
+0:00 - reconcile workspaces
+0:01 - reconcile workspaces
+...
+2:00 - reconcile workspaces + GC 실행
+2:01 - reconcile workspaces
+...
+4:00 - reconcile workspaces + GC 실행
+```
+
+> **상세**: [storage-gc.md](./storage-gc.md#gc와-reconciler-통합) 참조
+
+---
+
+## Timeout 처리
+
+### operation stuck 방지
+
+operation이 예상보다 오래 걸리는 경우 (예: K8s PVC Terminating stuck):
+
+```python
+async def check_operation_timeout(ws: Workspace):
+    """operation timeout 체크.
+
+    operation_started_at + timeout 경과 시 ERROR 전환.
+    """
+    if ws.operation == "NONE":
+        return
+
+    timeout_seconds = get_operation_timeout(ws.operation)
+    elapsed = (now() - ws.operation_started_at).total_seconds()
+
+    if elapsed > timeout_seconds:
+        await transition_to_error(ws, ErrorInfo(
+            reason="Timeout",
+            message=f"Operation {ws.operation} timed out after {timeout_seconds}s",
+            context={
+                "operation": ws.operation,
+                "elapsed_seconds": int(elapsed),
+                "limit_seconds": timeout_seconds
+            },
+            occurred_at=datetime.utcnow()
+        ))
+```
+
+### operation별 timeout
+
+| operation | timeout | 이유 |
+|-----------|---------|------|
+| PROVISIONING | 5분 | PVC 생성 대기 |
+| RESTORING | 30분 | Archive 다운로드 + 복원 |
+| ARCHIVING | 30분 | 압축 + 업로드 |
+| STARTING | 5분 | Container 시작 |
+| STOPPING | 5분 | Container 정지 |
+| DELETING | 10분 | Container + Volume 삭제 |
 
 ---
 
 ## 참조
 
 - [states.md](./states.md) - 상태 정의, 전환 규칙
+- [error.md](./error.md) - ERROR 상태, ErrorInfo, 재시도 정책
 - [instance.md](./instance.md) - InstanceController 인터페이스 (is_running)
 - [storage.md](./storage.md) - StorageProvider 인터페이스 (volume_exists)
 - [storage-operations.md](./storage-operations.md) - operation별 상세 플로우
+- [storage-gc.md](./storage-gc.md) - Archive GC, Reconciler 통합
 - [ADR-007: Reconciler 구현 전략](../adr/007-reconciler-implementation.md) - 인프라 결정 (Leader Election, Hints)

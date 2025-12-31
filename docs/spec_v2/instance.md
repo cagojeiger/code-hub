@@ -454,7 +454,7 @@ def reconcile_deleting(ws):
 |--------|----------|--------|
 | Container | InstanceController | 즉시 |
 | Volume | StorageProvider | Container 삭제 후 |
-| Archive | GC | 1시간 후 (soft-delete 감지) |
+| Archive | GC | 2시간 후 (soft-delete 감지) |
 
 ---
 

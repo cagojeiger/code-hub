@@ -301,47 +301,43 @@ ARCHIVED → 프록시 접속 → 수동 복원 필요 (Auto-wake 없음)
 
 ## ERROR 상태
 
-### ERROR 전환
+> **상세 스펙**: [error.md](./error.md) - ErrorInfo 구조, 복구 시나리오, 재시도 정책
 
-```python
-async def transition_to_error(workspace: Workspace, error_msg: str):
-    """operation 실패 시 ERROR로 전환"""
-    await update_workspace(
-        workspace.id,
-        previous_status=workspace.status,  # 현재 상태 저장
-        status="ERROR",
-        operation="NONE",
-        error_message=error_msg,
-        error_count=workspace.error_count + 1
-    )
-```
+### 개요
 
-### ERROR 복구
+ERROR는 operation 실패 시 전환되는 상태입니다.
 
-```python
-async def recover_from_error(workspace: Workspace):
-    """ERROR 상태에서 복구 (관리자 또는 자동)"""
-    if workspace.status != "ERROR":
-        return
-
-    await update_workspace(
-        workspace.id,
-        status=workspace.previous_status,  # STANDBY, PENDING 등
-        previous_status=None,
-        operation="NONE",
-        error_message=None,
-        error_count=0
-    )
-    # Reconciler가 다음 루프에서 다시 시도
-```
+| 항목 | 설명 |
+|------|------|
+| 전환 조건 | operation 실패 (재시도 횟수 초과) |
+| 복구 방법 | 자동 재시도 또는 관리자 개입 |
+| GC 동작 | 보호 (archive 삭제 안 함) |
 
 ### ERROR 관련 컬럼
 
-| 컬럼 | 설명 |
-|------|------|
-| previous_status | ERROR 전 상태 (복구 시 사용) |
-| error_message | 에러 상세 메시지 |
-| error_count | 연속 실패 횟수 (3회 시 관리자 개입) |
+| 컬럼 | 타입 | 설명 |
+|------|------|------|
+| previous_status | str | ERROR 전 상태 (복구 시 사용) |
+| error_info | JSON | ErrorInfo (reason, message, context, occurred_at) |
+| error_count | int | 연속 실패 횟수 (3회 초과 시 관리자 개입) |
+| op_id | str | ERROR에서도 유지 (GC 보호, 재시도 시 재사용) |
+
+### 간단 예시
+
+```python
+# ERROR 전환
+await transition_to_error(ws, ErrorInfo(
+    reason="ActionFailed",
+    message="Archive job failed",
+    context={"action": "archive", "exit_code": 1},
+    occurred_at=datetime.utcnow()
+))
+
+# ERROR 복구
+await recover_from_error(ws)
+```
+
+> **함수 상세**: [error.md](./error.md#error-전환) 참조
 
 ---
 
@@ -404,6 +400,7 @@ def get_level(status: str) -> int:
 ## 참조
 
 - [reconciler.md](./reconciler.md) - Reconciler 알고리즘 (Plan/Execute, Level-Triggered)
+- [error.md](./error.md) - ERROR 상태 상세 (ErrorInfo, 복구, 재시도 정책)
 - [ADR-008: Ordered State Machine](../adr/008-ordered-state-machine.md)
 - [ADR-009: Status와 Operation 분리](../adr/009-status-operation-separation.md)
 - [schema.md](./schema.md) - TTL 관련 컬럼

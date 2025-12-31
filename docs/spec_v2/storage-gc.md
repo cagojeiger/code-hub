@@ -17,9 +17,9 @@ GC는 **Archive 정리**만 담당합니다.
 
 | 구분 | DELETING | GC |
 |------|----------|-----|
-| 트리거 | 사용자 삭제 요청 | 주기적 배치 |
+| 트리거 | 사용자 삭제 요청 | 주기적 (Reconciler 내) |
 | 대상 | **Volume만** | orphan Archive |
-| 타이밍 | 즉시 | 1시간 지연 |
+| 타이밍 | 즉시 | 2시간 지연 |
 | 목적 | 컴퓨팅 리소스 해제 | 저장공간 회수 |
 
 > **책임 분리**: DELETING은 Volume만 즉시 삭제. Archive는 GC가 soft-delete된 workspace를 감지하여 정리.
@@ -55,8 +55,9 @@ def is_orphan_archive(archive_path, workspaces):
         if archive_path == ws.archive_key:
             return False
 
-        # ARCHIVING 진행 중인 op_id 경로 보호
-        if ws.operation == "ARCHIVING" and ws.op_id:
+        # op_id가 있으면 보호 (operation/status 무관)
+        # ERROR 상태에서도 유효한 archive 보호
+        if ws.op_id:
             expected_prefix = f"archives/{ws.id}/{ws.op_id}/"
             if archive_path.startswith(expected_prefix):
                 return False
@@ -65,6 +66,10 @@ def is_orphan_archive(archive_path, workspaces):
 ```
 
 > **Soft-Delete 처리**: `deleted_at != NULL`인 workspace의 archive는 보호하지 않음 → orphan으로 판단 → GC 대상
+
+> **op_id 보호 이유**: ARCHIVING 중 archive 업로드 후 archive_key 저장 전에 ERROR 전환되면, operation=NONE이지만 유효한 archive가 존재. op_id만 있으면 보호하여 복구 시 재사용 가능.
+
+> **ERROR 상태 보호**: ERROR 상태 workspace의 archive는 GC에서 보호됨. 상세: [error.md](./error.md#gc-동작)
 
 ### GC 프로세스
 
@@ -76,23 +81,23 @@ flowchart TD
     D -->|DB archive_key 일치| E[보호]
     D -->|ARCHIVING 중 op_id| E
     D -->|그 외| F[orphan 마킹]
-    F --> G{1시간 경과?}
+    F --> G{2시간 경과?}
     G -->|No| H[다음 GC까지 대기]
     G -->|Yes| I[삭제]
 ```
 
 ### 안전 지연
 
-orphan 판단 후 **즉시 삭제하지 않고 1시간 대기** 후 삭제합니다.
+orphan 판단 후 **즉시 삭제하지 않고 2시간 대기** 후 삭제합니다.
 
 | 항목 | 값 |
 |------|---|
-| 지연 시간 | 1시간 |
+| 지연 시간 | 2시간 |
 | 목적 | 진행 중인 작업 완료 대기 |
 | 구현 | `first_orphan_detected` 타임스탬프 기록 |
-| 조건 | 1시간 연속 orphan이면 삭제 |
+| 조건 | 2시간 연속 orphan이면 삭제 |
 
-> **왜 1시간?**: Archive Job timeout(30분) + 여유. 크래시 후 재시도가 완료되기 전에 삭제 방지.
+> **왜 2시간?**: Archive Job timeout(30분) × 3회 재시도 + 여유. 크래시 후 재시도가 완료되기 전에 삭제 방지.
 
 ---
 
@@ -124,12 +129,58 @@ T4: 다음 GC 사이클
 
 | 메커니즘 | 역할 |
 |---------|------|
-| ARCHIVING op_id 보호 | 진행 중인 업로드 경로 보호 |
-| 1시간 지연 삭제 | 작업 완료 대기 |
+| op_id 보호 | 진행 중/ERROR 상태 archive 보호 |
+| 2시간 지연 삭제 | 작업 완료 대기 |
 | DB 스냅샷 | 일관된 보호 목록 |
 
 > **결론**: GC와 Operation이 동시에 실행되어도 데이터 손실 없음.
 > 최악의 경우 orphan 삭제가 다음 GC 사이클로 지연될 뿐.
+
+---
+
+## GC와 Reconciler 통합
+
+GC는 **Reconciler 프로세스 내에서 실행**됩니다.
+
+### 통합 이유
+
+| 항목 | 분리 운영 | 통합 운영 |
+|------|----------|----------|
+| Leader Election | 2개 필요 | 1개 |
+| 프로세스 관리 | 2개 | 1개 |
+| 배포 복잡도 | 높음 | 낮음 |
+
+> **핵심**: Reconciler도 GC도 싱글 인스턴스로 실행되어야 함 (동시성 이슈 방지). 어차피 둘 다 싱글이면 통합이 합리적.
+
+### 실행 구조
+
+```python
+class Reconciler:
+    def __init__(self):
+        self.gc_interval = 7200  # 2시간
+        self.last_gc_time = 0
+
+    async def main_loop(self):
+        while True:
+            # 1. Workspace reconciliation (매 루프)
+            for ws in await get_workspaces_to_reconcile():
+                await self.reconcile_one(ws)
+
+            # 2. GC (2시간마다, 같은 Leader)
+            if self._should_run_gc():
+                await self._run_gc()
+
+            await asyncio.sleep(60)
+
+    def _should_run_gc(self) -> bool:
+        return time.time() - self.last_gc_time >= self.gc_interval
+```
+
+### 코드 구조
+
+- **프로세스**: 통합 (운영 단순화)
+- **코드**: 모듈 분리 (관심사 분리 유지)
+- **파일**: `reconciler.py` + `gc.py` → 같은 main_loop에서 호출
 
 ---
 
@@ -138,3 +189,4 @@ T4: 다음 GC 사이클
 - [storage.md](./storage.md) - 네이밍 규칙, 인터페이스
 - [storage-job.md](./storage-job.md) - Job 스펙
 - [storage-operations.md](./storage-operations.md) - 플로우 상세
+- [error.md](./error.md) - ERROR 상태 GC 보호
