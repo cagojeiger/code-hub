@@ -66,6 +66,7 @@ flowchart TB
 |------|------|
 | [states.md](./states.md) | 상태 정의 + 주요 시나리오 |
 | [schema.md](./schema.md) | DB 스키마 + 컬럼 소유권 |
+| [glossary.md](./glossary.md) | 용어집 (업계 표준 용어 정의) |
 
 ### 컴포넌트 문서
 
