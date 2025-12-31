@@ -103,7 +103,8 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 #### DELETING
 
 **삭제 조건** (계약 #5):
-- `observed_status IN (PENDING, ERROR)` AND `operation = NONE`
+- `observed_status = PENDING` OR `health_status = ERROR`
+- `operation = NONE` (필수)
 - RUNNING/STANDBY에서 삭제 요청 시: step_down 완료 후 삭제
 
 | 순서 | 동작 | 주체 |
@@ -167,7 +168,7 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 |------|------|------|
 | container_name | `ws-{workspace_id}` | `ws-abc123` |
 | volume_key | `ws-{workspace_id}-home` | `ws-abc123-home` |
-| archive_key | `archives/{workspace_id}/{op_id}/home.tar.gz` | `archives/abc123/550e8400.../home.tar.gz` |
+| archive_key | `{workspace_id}/{op_id}/home.tar.zst` | `abc123/550e8400.../home.tar.zst` |
 | mount_path | `/home/coder` | - |
 
 > K8s DNS-1123 호환: 하이픈(`-`) 사용, 언더스코어(`_`) 금지
@@ -252,13 +253,13 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 | Job | emptyDir | /tmp (임시, 종료 시 삭제) |
 | Workspace | Volume | /home/coder |
 
-> /tmp에 tar.gz, meta, staging 저장. Job 종료 시 자동 삭제.
+> /tmp에 tar.zst, meta, staging 저장. Job 종료 시 자동 삭제.
 
 ### 입력 환경변수
 
 | 환경변수 | 설명 |
 |---------|------|
-| ARCHIVE_URL | 전체 경로 (`s3://bucket/archives/{ws_id}/{op_id}/home.tar.gz`) |
+| ARCHIVE_URL | 전체 경로 (`s3://bucket/{ws_id}/{op_id}/home.tar.zst`) |
 | S3_ENDPOINT | Object Storage 엔드포인트 |
 | S3_ACCESS_KEY | 인증 정보 |
 | S3_SECRET_KEY | 인증 정보 |
@@ -278,23 +279,23 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 
 | 단계 | 동작 |
 |------|------|
-| 1 | HEAD 체크: tar.gz + meta 둘 다 있으면 skip (exit 0) |
-| 2 | /data를 tar.gz 압축 |
+| 1 | HEAD 체크: tar.zst + meta 둘 다 있으면 skip (exit 0) |
+| 2 | /data를 tar.zst 압축 (zstd) |
 | 3 | sha256 checksum 생성 → .meta |
-| 4 | tar.gz 업로드 → .meta 업로드 (순서 고정) |
+| 4 | tar.zst 업로드 → .meta 업로드 (순서 고정) |
 
 > **멱등성**: 같은 op_id = 같은 경로 → HEAD 체크로 완료 여부 판단
 >
 > **커밋 마커**: meta 파일 존재를 완료 마커로 간주
-> - tar.gz만 있고 meta 없음 → 미완료 → 덮어쓰기/재업로드
-> - tar.gz + meta 둘 다 있음 → 완료 → skip
-> - **업로드 순서**: tar.gz 먼저, meta 마지막 (원자성 보장)
+> - tar.zst만 있고 meta 없음 → 미완료 → 덮어쓰기/재업로드
+> - tar.zst + meta 둘 다 있음 → 완료 → skip
+> - **업로드 순서**: tar.zst 먼저, meta 마지막 (원자성 보장)
 
 ### 무결성 검증
 
 | 단계 | 방식 |
 |------|------|
-| Archive | tar.gz sha256 → .meta 파일 저장 |
+| Archive | tar.zst sha256 → .meta 파일 저장 |
 | Restore | 다운로드 후 .meta와 비교 |
 
 **meta 파일 형식**:
@@ -316,8 +317,8 @@ sha256:{hex_string}
 
 | 작업 | 필요 공간 | 계산 |
 |------|----------|------|
-| Restore | 3.0x | /tmp(tar.gz + staging) + /data |
-| Archive | 2.0x | /tmp(tar.gz) + /data |
+| Restore | 3.0x | /tmp(tar.zst + staging) + /data |
+| Archive | 2.0x | /tmp(tar.zst) + /data |
 
 > 보수적 추정 (압축률 0% 가정)
 
@@ -368,11 +369,11 @@ sha256:{hex_string}
 
 ```
 1차 Archive (op_id = aaa):
-  → archives/ws123/aaa/home.tar.gz  ← DB에 저장됨
+  → ws123/aaa/home.tar.zst  ← DB에 저장됨
 
 2차 Archive (op_id = bbb):
-  → archives/ws123/bbb/home.tar.gz  ← DB 업데이트
-  → archives/ws123/aaa/...          ← orphan (GC 대상)
+  → ws123/bbb/home.tar.zst  ← DB 업데이트
+  → ws123/aaa/...          ← orphan (GC 대상)
 ```
 
 ### 보호 규칙
@@ -382,11 +383,11 @@ Archive가 **보호 대상이 아니면** orphan입니다.
 | 조건 | 결과 | 이유 |
 |------|------|------|
 | archive_path == ws.archive_key | 보호 | 현재 사용 중 |
-| ws.op_id 있고 경로가 `archives/{id}/{op_id}/`로 시작 | 보호 | 진행 중/ERROR 상태 |
+| ws.op_id 있고 경로가 `{id}/{op_id}/`로 시작 | 보호 | 진행 중/health_status=ERROR 상태 |
 | ws.deleted_at != NULL | 보호 안 함 | soft-deleted workspace |
 | 그 외 | orphan | 어떤 workspace도 참조하지 않음 |
 
-> **op_id 보호 이유**: ARCHIVING 중 ERROR 전환되면 op_id만 있고 archive_key 없는 상태. op_id로 보호하여 복구 시 재사용 가능.
+> **op_id 보호 이유**: ARCHIVING 중 health_status=ERROR 전환되면 op_id만 있고 archive_key 없는 상태. op_id로 보호하여 복구 시 재사용 가능.
 
 ### 안전 지연 (TTL)
 
@@ -404,7 +405,7 @@ Archive 삭제 시 다음 파일을 모두 삭제합니다:
 
 | 파일 | 설명 |
 |------|------|
-| `{archive_key}` | tar.gz 아카이브 파일 |
+| `{archive_key}` | tar.zst 아카이브 파일 |
 | `{archive_key}.meta` | sha256 체크섬 파일 |
 
 ### GC 흐름

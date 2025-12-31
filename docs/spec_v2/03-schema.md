@@ -26,7 +26,8 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 | storage_backend | ENUM | NO | - | 'docker-volume' / 'minio' |
 | home_store_key | VARCHAR(512) | NO | - | Volume 키 (고정: `ws-{id}-home`) |
 | home_ctx | JSONB | YES | NULL | Storage Provider 컨텍스트 |
-| **observed_status** | ENUM | NO | 'PENDING' | 관측된 상태 |
+| **observed_status** | ENUM | NO | 'PENDING' | 관측된 리소스 상태 |
+| **health_status** | ENUM | NO | 'OK' | 정책 판정 상태 (신규) |
 | **operation** | ENUM | NO | 'NONE' | 진행 중인 작업 |
 | **op_started_at** | TIMESTAMP | YES | NULL | operation 시작 시점 |
 | **op_id** | UUID | YES | NULL | 작업 ID (Idempotency Key) |
@@ -39,7 +40,7 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 | **error_message** | TEXT | YES | NULL | 에러 요약 |
 | **error_info** | JSONB | YES | NULL | 구조화된 에러 정보 |
 | **error_count** | INT | NO | 0 | 연속 실패 횟수 |
-| **previous_status** | ENUM | YES | NULL | ERROR 전 상태 |
+| **previous_status** | ENUM | YES | NULL | health_status=ERROR 전환 전 observed_status (복구용) |
 | created_at | TIMESTAMP | NO | NOW() | 생성 시각 |
 | updated_at | TIMESTAMP | NO | NOW() | 수정 시각 |
 | deleted_at | TIMESTAMP | YES | NULL | Soft Delete 시각 |
@@ -50,17 +51,26 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 
 ## ENUM 정의
 
-### observed_status
+### observed_status (리소스 관측)
 
 | 값 | Level | 설명 |
 |----|-------|------|
 | PENDING | 0 | 활성 리소스 없음 |
 | STANDBY | 10 | Volume만 존재 |
 | RUNNING | 20 | Container + Volume |
-| ERROR | - | 오류 상태 |
-| DELETED | - | Soft Delete |
+| DELETED | - | Soft Delete 완료 |
 
+> **ERROR 없음**: observed_status는 순수 리소스 관측 결과만 반영
 > ARCHIVED는 파생 상태: `PENDING + archive_key != NULL`
+
+### health_status (정책 판정)
+
+| 값 | 설명 |
+|----|------|
+| OK | 정상 상태 |
+| ERROR | 불변식 위반, timeout, 재시도 초과 등 |
+
+> **계약 #1 준수**: health_status는 observed_status와 독립적인 축
 
 ### operation
 
@@ -72,7 +82,7 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 | STARTING | STANDBY → RUNNING | Container 시작 |
 | STOPPING | RUNNING → STANDBY | Container 정지 |
 | ARCHIVING | STANDBY → PENDING | Volume → Archive |
-| DELETING | PENDING/ERROR → DELETED | 전체 삭제 (operation=NONE 필수) |
+| DELETING | → DELETED | 전체 삭제 (조건: operation=NONE, observed_status=PENDING OR health_status=ERROR) |
 
 ### desired_state
 
@@ -94,7 +104,8 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 
 | 컬럼 | 설명 |
 |------|------|
-| observed_status | 관측된 상태 |
+| observed_status | 관측된 리소스 상태 (PENDING/STANDBY/RUNNING/DELETED) |
+| health_status | 정책 판정 상태 (OK/ERROR) |
 | observed_at | 마지막 관측 시점 |
 
 ### StateReconciler
@@ -107,7 +118,7 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 | archive_key | Archive 경로 (ARCHIVING 완료 시) |
 | error_count | 재시도 횟수 |
 | error_info | 에러 정보 (주 소유자) |
-| previous_status | ERROR 전환 전 상태 |
+| previous_status | health_status=ERROR 전환 전 observed_status (복구용) |
 | home_ctx | Storage Provider 컨텍스트 (restore_marker 포함) |
 
 > **예외 규칙 (error_info)**: 원칙적으로 error_info는 StateReconciler가 쓰지만,
@@ -136,7 +147,7 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 |------|------|------|
 | reason | string | 에러 유형 (Timeout, RetryExceeded, ActionFailed, DataLost, Unreachable) |
 | message | string | 사람이 읽는 메시지 |
-| is_terminal | boolean | true면 ERROR 상태로 전환 |
+| is_terminal | boolean | true면 HM이 health_status=ERROR로 설정 |
 | operation | string | 실패한 operation |
 | error_count | int | 재시도 횟수 |
 | context | dict | reason별 상세 정보 |
@@ -170,11 +181,12 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 
 | 인덱스 | 용도 | 조건 |
 |--------|------|------|
-| idx_workspaces_ttl_check | TTL Manager 폴링 | `observed_status IN (RUNNING, STANDBY) AND operation = NONE` |
-| idx_workspaces_reconcile | Reconciler 대상 조회 | `observed_status != desired_state OR operation != NONE` |
+| idx_workspaces_ttl_check | TTL Manager 폴링 | `observed_status IN (RUNNING, STANDBY) AND health_status = OK AND operation = NONE` |
+| idx_workspaces_reconcile | Reconciler 대상 조회 | `observed_status != desired_state OR operation != NONE OR health_status = ERROR` |
 | idx_workspaces_operation | 진행 중 작업 조회 | `operation != NONE` |
-| idx_workspaces_user_running | 사용자별 RUNNING 제한 | `owner_user_id, observed_status = RUNNING` |
-| idx_workspaces_running | 전역 RUNNING 카운트 | `observed_status = RUNNING` |
+| idx_workspaces_user_running | 사용자별 RUNNING 제한 | `owner_user_id, observed_status = RUNNING, health_status = OK` |
+| idx_workspaces_running | 전역 RUNNING 카운트 | `observed_status = RUNNING AND health_status = OK` |
+| idx_workspaces_error | ERROR 상태 조회 | `health_status = ERROR` |
 
 > 모든 인덱스는 `deleted_at IS NULL` 조건 포함
 
@@ -187,6 +199,9 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 
 2. **ENUM 변경 제약**: PostgreSQL에서 ENUM 값 제거 불가
    - 완화: 애플리케이션 레벨에서 deprecated 값 차단
+
+3. ~~**observed_status에 ERROR 포함**: 리소스 관측과 정책 판정 혼재~~
+   - **해결됨**: health_status를 별도 컬럼으로 분리 (계약 #1 준수)
 
 ---
 
