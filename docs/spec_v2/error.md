@@ -17,10 +17,12 @@
 
 | 컴포넌트 | 역할 |
 |---------|------|
-| StateReconciler | error_info, error_count 설정, is_terminal 판정 |
-| HealthMonitor | is_terminal 읽고 observed_status = ERROR 설정 |
+| StateReconciler | error_info, error_count 설정, is_terminal 판정 (주 소유자) |
+| HealthMonitor | is_terminal 읽고 observed_status = ERROR 설정 (Single Writer) |
 
-> StateReconciler는 error_info만, observed_status는 HealthMonitor만 변경
+> **원칙**: StateReconciler는 error_info, HealthMonitor는 observed_status만 변경
+>
+> **예외**: 불변식 위반(ContainerWithoutVolume 등)에서 error_info가 NULL일 때만 HealthMonitor가 error_info를 1회 설정할 수 있다.
 
 ---
 

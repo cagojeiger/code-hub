@@ -122,4 +122,4 @@ sequenceDiagram
 - [state-reconciler.md](./state-reconciler.md) - StateReconciler
 - [ttl-manager.md](./ttl-manager.md) - TTL Manager
 - [archive-gc.md](./archive-gc.md) - Archive GC
-- [../schema.md](../schema.md) - system_locks 테이블
+- [../schema.md](../schema.md) - DB 스키마

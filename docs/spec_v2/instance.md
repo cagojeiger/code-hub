@@ -96,11 +96,14 @@
 
 | 순서 | 동작 | 주체 |
 |------|------|------|
-| 1 | Container 삭제 | InstanceController |
-| 2 | Volume 삭제 | StorageProvider |
-| 3 | observed_status=DELETED | Reconciler |
+| 1 | deleted_at 설정 (Soft Delete) | API |
+| 2 | Container 삭제 | InstanceController (via Reconciler) |
+| 3 | Volume 삭제 | StorageProvider (via Reconciler) |
+| 4 | 리소스 없음 관측 → observed_status=DELETED | HealthMonitor |
 
 > Archive는 GC가 2시간 후 정리
+>
+> **Single Writer 원칙**: observed_status는 HealthMonitor만 변경. Reconciler는 리소스 정리만 담당.
 
 ---
 

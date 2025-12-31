@@ -42,7 +42,7 @@
 |-----------|----------|----------|
 | PROVISIONING | provision() | volume_exists() |
 | RESTORING | provision() + restore() | volume_exists() |
-| ARCHIVING | archive() + delete_volume() | !volume_exists() |
+| ARCHIVING | archive() + delete_volume() | !volume_exists() AND archive_key != NULL |
 | DELETING | delete() + delete_volume() | !is_running() AND !volume_exists() |
 
 > **원칙**: Actuator 성공 반환 ≠ 완료. 관측 조건 충족 = 완료.

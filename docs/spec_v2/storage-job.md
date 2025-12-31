@@ -95,14 +95,16 @@ sha256:{hex_string}
 
 ## 에러 코드 (CODEHUB_ERROR)
 
-| 코드 | 설명 | 복구 |
-|------|------|------|
-| S3_ACCESS_ERROR | Object Storage 접근 실패 | 자동 재시도 |
-| ARCHIVE_NOT_FOUND | 아카이브 없음 | 관리자 개입 |
-| META_NOT_FOUND | meta 없음 (불완전) | 관리자 개입 |
-| CHECKSUM_MISMATCH | sha256 불일치 | 관리자 개입 |
-| TAR_EXTRACT_FAILED | 압축 해제 실패 | 관리자 개입 |
-| DISK_FULL | 디스크 공간 부족 | 관리자 개입 |
+| 코드 | 설명 | ErrorReason | 복구 |
+|------|------|-------------|------|
+| S3_ACCESS_ERROR | Object Storage 접근 실패 | Unreachable | 자동 재시도 (3회), 초과 시 관리자 개입 |
+| ARCHIVE_NOT_FOUND | 아카이브 없음 | DataLost | 관리자 개입 (즉시 terminal) |
+| META_NOT_FOUND | meta 없음 (불완전) | DataLost | 관리자 개입 (즉시 terminal) |
+| CHECKSUM_MISMATCH | sha256 불일치 | DataLost | 관리자 개입 (즉시 terminal) |
+| TAR_EXTRACT_FAILED | 압축 해제 실패 | ActionFailed | 자동 재시도 (3회), 초과 시 관리자 개입 |
+| DISK_FULL | 디스크 공간 부족 | ActionFailed | 관리자 개입 |
+
+> 재시도 정책은 [error.md](./error.md) 참조
 
 ---
 

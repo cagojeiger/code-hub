@@ -32,7 +32,7 @@ HealthMonitor는 실제 리소스 상태를 관측하고 DB에 반영하는 **�
 
 | 소스 | 항목 |
 |------|------|
-| DB | id, error_info, archive_key, operation |
+| DB | id, deleted_at, error_info, archive_key, operation |
 | Container Provider | exists, running |
 | Volume Provider | exists |
 
@@ -49,17 +49,17 @@ HealthMonitor는 실제 리소스 상태를 관측하고 DB에 반영하는 **�
 
 | 우선순위 | 조건 | → observed_status |
 |---------|------|-------------------|
+| 0 | `deleted_at != NULL` AND Container 없음 AND Volume 없음 | DELETED |
 | 1 | `error_info.is_terminal = true` | ERROR |
 | 2 | Container 있음 + Volume 없음 | ERROR (불변식 위반) |
 | 3 | Container 있음 + running | RUNNING |
 | 4 | Volume 있음 (Container 없음) | STANDBY |
-| 5 | Volume 없음 + archive_key 있음 | PENDING |
-| 6 | Volume 없음 + archive_key 없음 + **operation = NONE** | ERROR (DataLost) |
-| 7 | Volume 없음 + archive_key 없음 + **operation ≠ NONE** | PENDING (유지) |
+| 5 | Container 없음 + Volume 없음 | PENDING |
 
 > 우선순위 순서대로 평가, 첫 번째 매칭 조건 적용
 >
-> **우선순위 6,7 분리 이유**: 새 workspace는 operation=PROVISIONING 진행 중이므로 ERROR 판정 유보
+> **주의**: Container/Volume이 모두 없는 상태(PENDING)는 정상 상태일 수 있음 (신규 생성 직후, 아카이브 상태 등).
+> DataLost 판정은 Storage Job/Actuator 에러(ARCHIVE_NOT_FOUND, CHECKSUM_MISMATCH 등)로부터 StateReconciler가 담당.
 
 ---
 
@@ -68,11 +68,10 @@ HealthMonitor는 실제 리소스 상태를 관측하고 DB에 반영하는 **�
 | 위반 유형 | 조건 | 처리 |
 |----------|------|------|
 | ContainerWithoutVolume | Container 있음 + Volume 없음 | error_info 설정 → ERROR |
-| DataLost | Volume 없음 + archive_key 없음 + **operation = NONE** | error_info 설정 → ERROR |
 
-> 불변식 위반 시 HealthMonitor가 예외적으로 error_info 설정 (기존 error_info 없을 때만)
+> **Single Writer 예외**: 불변식 위반 시 HealthMonitor가 error_info를 설정할 수 있음 (기존 error_info가 NULL일 때만).
 >
-> **DataLost 조건**: operation이 진행 중이면 중간 상태이므로 DataLost 판정 유보
+> DataLost(archive 없음/손상 등)는 Storage Job/Actuator 에러로부터 StateReconciler가 error_info를 설정하는 경로로만 판정한다.
 
 ---
 
@@ -81,22 +80,22 @@ HealthMonitor는 실제 리소스 상태를 관측하고 DB에 반영하는 **�
 ```mermaid
 flowchart TB
     Start["관측 시작"]
+    Deleted{"deleted_at != NULL<br/>AND !Container AND !Volume?"}
     Terminal{"error_info.is_terminal?"}
     ContainerNoVol{"Container + !Volume?"}
     Running{"Container + running?"}
     Volume{"Volume exists?"}
-    Archive{"archive_key?"}
-    Operation{"operation = NONE?"}
 
+    DELETED["DELETED"]
     ERROR1["ERROR"]
     ERROR2["ERROR (불변식)"]
     RUNNING["RUNNING"]
     STANDBY["STANDBY"]
     PENDING["PENDING"]
-    ERROR3["ERROR (DataLost)"]
-    PENDING2["PENDING (유지)"]
 
-    Start --> Terminal
+    Start --> Deleted
+    Deleted -->|Yes| DELETED
+    Deleted -->|No| Terminal
     Terminal -->|Yes| ERROR1
     Terminal -->|No| ContainerNoVol
     ContainerNoVol -->|Yes| ERROR2
@@ -104,11 +103,7 @@ flowchart TB
     Running -->|Yes| RUNNING
     Running -->|No| Volume
     Volume -->|Yes| STANDBY
-    Volume -->|No| Archive
-    Archive -->|Yes| PENDING
-    Archive -->|No| Operation
-    Operation -->|Yes| ERROR3
-    Operation -->|No| PENDING2
+    Volume -->|No| PENDING
 ```
 
 ---

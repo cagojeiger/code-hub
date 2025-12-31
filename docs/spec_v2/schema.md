@@ -110,8 +110,11 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 | op_id | 작업 고유 ID |
 | archive_key | Archive 경로 (ARCHIVING 완료 시) |
 | error_count | 재시도 횟수 |
-| error_info | 에러 정보 |
+| error_info | 에러 정보 (주 소유자) |
 | previous_status | ERROR 전환 전 상태 |
+
+> **예외 규칙 (error_info)**: 원칙적으로 error_info는 StateReconciler가 쓰지만,
+> ContainerWithoutVolume 같은 불변식 위반에서 error_info가 NULL이면 HealthMonitor가 1회 설정할 수 있다.
 
 ### API / TTL Manager (공유)
 
@@ -138,35 +141,6 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 | occurred_at | string | ISO 8601 timestamp |
 
 > 상세: [error.md](./error.md)
-
----
-
-## system_locks 테이블
-
-Coordinator 배치 작업의 **Leader Election** 용도.
-
-| 컬럼 | 타입 | 설명 |
-|------|------|------|
-| lock_name | VARCHAR(64) | PK, lock 식별자 |
-| holder_id | VARCHAR(64) | lock 소유자 |
-| acquired_at | TIMESTAMP | 획득 시각 |
-| expires_at | TIMESTAMP | 만료 시각 |
-
-### Lock 종류
-
-| lock_name | 용도 | TTL |
-|-----------|------|-----|
-| ttl_manager | TTL Manager | 5분 |
-| archive_gc | Archive GC | 10분 |
-
-### 동작 방식
-
-| 작업 | 규칙 |
-|------|------|
-| 획득 | UPSERT with `expires_at < NOW()` 조건 |
-| 해제 | DELETE with `holder_id` 일치 확인 |
-| 갱신 | UPDATE `expires_at` |
-| Failover | expires_at 초과 시 다른 인스턴스가 획득 가능 |
 
 ---
 

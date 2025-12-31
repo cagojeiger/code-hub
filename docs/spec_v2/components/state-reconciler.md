@@ -84,9 +84,11 @@ StateReconciler는 desired_state와 observed_status를 비교하여 상태를 �
 | RESTORING | STANDBY | - |
 | STARTING | RUNNING | - |
 | STOPPING | STANDBY | - |
-| ARCHIVING | PENDING | archive_key != NULL |
+| ARCHIVING | PENDING | archive_key != NULL AND !volume_exists() |
 
 > 완료 시: `operation = NONE`, `error_count = 0`, `error_info = NULL`
+>
+> **storage.md와 동일 조건**: ARCHIVING은 archive 업로드 완료 + volume 삭제 완료 모두 확인해야 완료 판정
 
 ---
 

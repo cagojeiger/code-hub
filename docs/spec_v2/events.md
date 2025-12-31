@@ -57,7 +57,7 @@ sequenceDiagram
 | 연결 | PostgreSQL LISTEN 'workspace_changes' |
 | 역할 | NOTIFY 수신 → Redis PUBLISH |
 
-> Leader Election 불필요: LISTEN은 모든 인스턴스에서 수신해도 Redis PUBLISH는 멱등
+> EventListener는 멱등하게 동작하여 다중 실행도 가능하지만, M2에서는 운영 단순화를 위해 Coordinator 프로세스 내에서 단일 리더로 실행한다.
 
 ---
 
