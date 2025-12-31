@@ -106,7 +106,6 @@ CAS(메모리주소, 예상값, 새값):
 | 위치 | 패턴 |
 |------|------|
 | StateReconciler | `UPDATE ... SET operation='STARTING' WHERE operation='NONE'` |
-| limits.md | 제한 체크 + operation 설정을 동일 트랜잭션 |
 
 ### ABA 문제
 
