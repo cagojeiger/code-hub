@@ -11,14 +11,14 @@ StateReconciler는 desired_state와 observed_status를 비교하여 상태를 �
 | 항목 | 값 |
 |------|---|
 | 역할 | DB만 읽고 Plan/Execute로 상태 수렴 |
-| 실행 주기 | 10초 (기본) |
+| 실행 주기 | 10초 |
 | 단일 인스턴스 | Coordinator에서 실행 |
 
 ---
 
 ## 핵심 원칙
 
-> **Level-Triggered Control Loop**
+> **Level-Triggered Reconciliation**
 >
 > 1. DB만 읽는다 (직접 관측 안 함)
 > 2. desired ≠ observed → operation 결정 (Plan)
@@ -27,71 +27,56 @@ StateReconciler는 desired_state와 observed_status를 비교하여 상태를 �
 
 ---
 
-## 입력
+## 입출력
 
-### DB 읽기
+### 읽기
 
 | 컬럼 | 용도 |
-|-----|------|
-| `desired_state` | 목표 상태 |
-| `observed_status` | 현재 관측된 상태 |
-| `operation` | 진행 중인 작업 |
-| `op_started_at` | 작업 시작 시점 (timeout 계산) |
-| `error_count` | 재시도 횟수 |
-| `error_info` | 에러 정보 |
-| `archive_key` | 아카이브 경로 |
+|------|------|
+| desired_state | 목표 상태 |
+| observed_status | 현재 관측된 상태 |
+| operation | 진행 중인 작업 |
+| op_started_at | timeout 계산 |
+| error_count | 재시도 횟수 |
+| archive_key | RESTORING/ARCHIVING 판단 |
 
----
-
-## 출력
-
-### DB 쓰기 (단일 Writer 원칙)
+### 쓰기 (Single Writer)
 
 | 컬럼 | 설명 |
-|-----|------|
-| `operation` | 진행 중인 작업 |
-| `op_started_at` | 작업 시작 시점 |
-| `op_id` | 작업 고유 ID (멱등성) |
-| `archive_key` | 아카이브 경로 (ARCHIVING 완료 시) |
-| `error_count` | 재시도 횟수 |
-| `error_info` | 에러 정보 |
-| `previous_status` | ERROR 전환 전 상태 |
-
-### Redis 발행
-
-| 채널 | 용도 |
-|-----|------|
-| `monitor:trigger` | 즉시 관측 요청 |
-| `workspace:{id}` | SSE 상태 변경 알림 |
-
-### 외부 시스템 호출
-
-| 시스템 | 호출 |
-|-------|------|
-| Container Provider | start, stop |
-| Storage Provider | archive, restore |
+|------|------|
+| operation | 진행 중인 작업 |
+| op_started_at | 작업 시작 시점 |
+| op_id | 작업 고유 ID (Idempotency Key) |
+| archive_key | ARCHIVING 완료 시 설정 |
+| error_count, error_info | 에러 정보 |
+| previous_status | ERROR 전환 전 상태 |
 
 ---
 
-## 알고리즘
+## 불변식
 
-### Operation 결정 테이블
+1. **Non-preemptive**: `operation != NONE`이면 Plan skip
+2. **CAS 선점**: `WHERE operation = 'NONE'`으로 동시성 제어 (Optimistic Locking)
+3. **ERROR skip**: ERROR 상태는 reconcile 대상에서 제외
 
-| observed_status | desired_state | archive_key | operation |
-|-----------------|---------------|-------------|-----------|
-| PENDING | RUNNING | 있음 | RESTORING |
-| PENDING | RUNNING | NULL | PROVISIONING |
-| PENDING | STANDBY | 있음 | RESTORING |
-| PENDING | STANDBY | NULL | PROVISIONING |
+---
+
+## Operation 결정 규칙
+
+| observed | desired | archive_key | → operation |
+|----------|---------|-------------|-------------|
+| PENDING | STANDBY/RUNNING | NULL | PROVISIONING |
+| PENDING | STANDBY/RUNNING | 있음 | RESTORING |
 | STANDBY | RUNNING | - | STARTING |
 | STANDBY | PENDING | - | ARCHIVING |
-| RUNNING | STANDBY | - | STOPPING |
-| RUNNING | PENDING | - | STOPPING |
+| RUNNING | STANDBY/PENDING | - | STOPPING |
 | ERROR | * | - | (skip) |
 
-> **참고**: RUNNING → PENDING은 먼저 STOPPING으로 STANDBY까지 간 후 ARCHIVING
+> RUNNING → PENDING은 직접 불가. STOPPING → ARCHIVING 순차 진행.
 
-### Operation Target 정의
+---
+
+## 완료 조건
 
 | Operation | Target Status | 추가 조건 |
 |-----------|---------------|----------|
@@ -101,241 +86,36 @@ StateReconciler는 desired_state와 observed_status를 비교하여 상태를 �
 | STOPPING | STANDBY | - |
 | ARCHIVING | PENDING | archive_key != NULL |
 
-### 메인 로직
-
-```python
-async def reconcile(ws: Workspace):
-    """단일 워크스페이스 reconcile"""
-
-    # 1. ERROR면 skip
-    if ws.observed_status == ERROR:
-        return
-
-    # 2. operation 진행 중이면 완료/timeout 체크
-    if ws.operation != NONE:
-        await check_operation_status(ws)
-        return
-
-    # 3. 이미 수렴됨
-    if ws.observed_status == ws.desired_state:
-        return
-
-    # 4. Plan: operation 결정
-    operation = plan_operation(ws)
-    if not operation:
-        return
-
-    # 5. Execute: operation 실행
-    await execute_operation(ws, operation)
-```
-
-### Plan Phase
-
-```python
-def plan_operation(ws: Workspace) -> Optional[Operation]:
-    """observed → desired로 가기 위한 operation 결정"""
-    observed = ws.observed_status
-    desired = ws.desired_state
-
-    # 순서: PENDING(0) < STANDBY(10) < RUNNING(20)
-    current_level = STATUS_LEVEL[observed]
-    target_level = STATUS_LEVEL[desired]
-
-    if current_level < target_level:
-        # Step Up
-        if observed == PENDING:
-            # archive_key 유무에 따라 RESTORING/PROVISIONING 결정
-            return RESTORING if ws.archive_key else PROVISIONING
-        elif observed == STANDBY:
-            return STARTING
-    else:
-        # Step Down
-        if observed == RUNNING:
-            return STOPPING
-        elif observed == STANDBY:
-            return ARCHIVING
-
-    return None
-```
-
-### Execute Phase
-
-```python
-async def execute_operation(ws: Workspace, operation: Operation):
-    """operation 실행"""
-
-    # 1. operation 선점 (CAS)
-    op_id = str(uuid4())
-    updated = await db.execute("""
-        UPDATE workspaces
-        SET operation = $1, op_started_at = NOW(), op_id = $2
-        WHERE id = $3 AND operation = 'NONE'
-        RETURNING id
-    """, operation, op_id, ws.id)
-
-    if not updated:
-        # 다른 프로세스가 먼저 선점
-        return
-
-    # 2. 실제 작업 실행
-    try:
-        if operation == PROVISIONING:
-            await storage_provider.create_volume(ws.id)
-        elif operation == RESTORING:
-            await storage_provider.restore(ws.id, ws.archive_key)
-        elif operation == STARTING:
-            await container_provider.start(ws.id)
-        elif operation == STOPPING:
-            await container_provider.stop(ws.id)
-        elif operation == ARCHIVING:
-            archive_key = await storage_provider.archive(ws.id, op_id)
-            await db.execute("""
-                UPDATE workspaces SET archive_key = $1 WHERE id = $2
-            """, archive_key, ws.id)
-
-        # 3. HealthMonitor에 즉시 관측 요청
-        await redis.publish("monitor:trigger", ws.id)
-
-    except Exception as e:
-        logger.error(f"Execute failed for {ws.id}: {e}")
-        await handle_execute_error(ws, e)
-```
-
-### 완료 판정
-
-> **중요**: HealthMonitor 주기(30s)가 StateReconciler 주기(10s)보다 길기 때문에,
-> operation 실행 후 완료 판정까지 최대 30초 지연될 수 있습니다.
->
-> 이 지연 중 StateReconciler tick이 여러 번 발생하지만,
-> `observed_status != target`인 상태에서는 **재시도하지 않습니다**.
-> 재시도는 오직 Timeout 또는 Execute 실패 시에만 발생합니다.
-
-```python
-async def check_operation_status(ws: Workspace):
-    """operation 완료/timeout 체크"""
-
-    operation = ws.operation
-    target = OPERATION_TARGET[operation]
-
-    # 1. 완료 체크: observed_status가 target에 도달했는지 확인
-    if ws.observed_status == target:
-        # 추가 조건 체크 (ARCHIVING의 경우 archive_key 필요)
-        if operation == ARCHIVING and not ws.archive_key:
-            return  # 아직 완료 아님
-
-        # 완료!
-        await db.execute("""
-            UPDATE workspaces
-            SET operation = 'NONE', error_count = 0, error_info = NULL
-            WHERE id = $1
-        """, ws.id)
-        logger.info(f"Workspace {ws.id}: {operation} completed")
-        return
-
-    # 2. Timeout 체크 (지연 중에는 대기)
-    timeout = OPERATION_TIMEOUT[operation]
-    elapsed = datetime.now() - ws.op_started_at
-    if elapsed > timeout:
-        await handle_timeout(ws)
-        return
-
-    # 3. 중간 tick: target 미도달 + timeout 아님 → 대기
-    # (재시도는 Execute 실패 시에만 발생)
-```
-
-### Timeout 처리
-
-```python
-OPERATION_TIMEOUT = {
-    PROVISIONING: timedelta(minutes=5),
-    RESTORING: timedelta(minutes=30),
-    STARTING: timedelta(minutes=5),
-    STOPPING: timedelta(minutes=5),
-    ARCHIVING: timedelta(minutes=30),
-}
-
-async def handle_timeout(ws: Workspace):
-    """Timeout 발생 시 처리"""
-    await db.execute("""
-        UPDATE workspaces
-        SET error_info = $1
-        WHERE id = $2
-    """, {
-        "reason": "Timeout",
-        "operation": ws.operation,
-        "elapsed_seconds": (datetime.now() - ws.op_started_at).total_seconds(),
-        "is_terminal": True,
-        "occurred_at": datetime.now().isoformat()
-    }, ws.id)
-
-    # operation은 유지 (HealthMonitor가 ERROR로 전환하면 StateReconciler가 skip)
-    logger.error(f"Workspace {ws.id}: {ws.operation} timeout")
-```
-
-### 재시도 로직
-
-```python
-MAX_RETRIES = 3
-RETRY_BACKOFF = timedelta(seconds=30)
-
-def should_retry(ws: Workspace) -> bool:
-    """재시도 필요 여부 판단"""
-    if ws.error_count >= MAX_RETRIES:
-        return False
-
-    # Backoff 체크
-    if ws.last_retry_at:
-        elapsed = datetime.now() - ws.last_retry_at
-        if elapsed < RETRY_BACKOFF:
-            return False
-
-    return True
-
-async def retry_operation(ws: Workspace):
-    """operation 재시도"""
-    await db.execute("""
-        UPDATE workspaces
-        SET error_count = error_count + 1, last_retry_at = NOW()
-        WHERE id = $1
-    """, ws.id)
-
-    # 실제 재시도
-    try:
-        if ws.operation == STARTING:
-            await container_provider.start(ws.id)
-        elif ws.operation == STOPPING:
-            await container_provider.stop(ws.id)
-        # ... 기타 operation
-
-        # 즉시 관측 요청
-        await redis.publish("monitor:trigger", ws.id)
-
-    except Exception as e:
-        logger.error(f"Retry failed for {ws.id}: {e}")
-        await handle_retry_exceeded(ws, e)
-
-async def handle_retry_exceeded(ws: Workspace, error: Exception):
-    """재시도 한계 초과"""
-    if ws.error_count >= MAX_RETRIES:
-        await db.execute("""
-            UPDATE workspaces
-            SET error_info = $1, previous_status = observed_status
-            WHERE id = $2
-        """, {
-            "reason": "RetryExceeded",
-            "operation": ws.operation,
-            "error_count": ws.error_count,
-            "last_error": str(error),
-            "is_terminal": True,
-            "occurred_at": datetime.now().isoformat()
-        }, ws.id)
-
-        logger.error(f"Workspace {ws.id}: Retry exceeded ({ws.error_count})")
-```
+> 완료 시: `operation = NONE`, `error_count = 0`, `error_info = NULL`
 
 ---
 
-## 상태 전이 다이어그램
+## Timeout
+
+| Operation | Timeout | 초과 시 |
+|-----------|---------|--------|
+| PROVISIONING | 5분 | error_info.is_terminal = true |
+| RESTORING | 30분 | error_info.is_terminal = true |
+| STARTING | 5분 | error_info.is_terminal = true |
+| STOPPING | 5분 | error_info.is_terminal = true |
+| ARCHIVING | 30분 | error_info.is_terminal = true |
+
+---
+
+## 재시도 정책
+
+| 항목 | 값 |
+|------|---|
+| 최대 재시도 | 3회 |
+| 재시도 간격 | 30초 (고정) |
+| 트리거 | Execute 실패 또는 Timeout |
+| 한계 초과 | error_info.is_terminal = true |
+
+> 재시도 대기 중 tick에서는 대기만 함 (재실행 안 함)
+
+---
+
+## Reconcile 흐름
 
 ```mermaid
 flowchart TB
@@ -345,18 +125,18 @@ flowchart TB
     OP{"operation != NONE?"}
     CONV{"observed == desired?"}
 
-    RET1["return"]
-    RET2["return"]
-    CHECK["check_operation<br/>(완료/timeout)"]
-    PLAN["plan_operation"]
-    EXEC["execute_operation"]
+    SKIP1["skip"]
+    SKIP2["skip"]
+    CHECK["완료/timeout 체크"]
+    PLAN["Plan: operation 결정"]
+    EXEC["Execute: 작업 실행"]
 
     START --> ERROR
-    ERROR -->|Yes| RET1
+    ERROR -->|Yes| SKIP1
     ERROR -->|No| OP
     OP -->|Yes| CHECK
     OP -->|No| CONV
-    CONV -->|Yes| RET2
+    CONV -->|Yes| SKIP2
     CONV -->|No| PLAN
     PLAN --> EXEC
 ```
@@ -365,94 +145,30 @@ flowchart TB
 
 ## 에러 처리
 
-### Execute 실패
-
 | 상황 | 처리 |
-|-----|------|
-| Container API 실패 | error_count++, 다음 tick에 재시도 |
-| Storage API 실패 | error_count++, 다음 tick에 재시도 |
+|------|------|
+| Execute 실패 | error_count++, 다음 tick 재시도 |
 | 재시도 한계 초과 | error_info.is_terminal = true |
 | Timeout | error_info.is_terminal = true |
 
-### Error Info 구조
-
-```python
-ErrorInfo = {
-    "reason": str,          # Timeout, RetryExceeded, ActionFailed 등
-    "operation": str,       # 실패한 operation
-    "is_terminal": bool,    # true면 HealthMonitor가 ERROR로 전환
-    "error_count": int,     # 재시도 횟수
-    "last_error": str,      # 마지막 에러 메시지
-    "occurred_at": str      # ISO 8601 timestamp
-}
-```
+> is_terminal = true → HealthMonitor가 ERROR로 전환 → StateReconciler skip
 
 ---
 
-## 다른 컴포넌트와의 상호작용
+## Known Issues
 
-### 의존
+1. **Operation 중단 불가**: 시작 후 취소 불가, 완료까지 대기 필요
 
-| 컴포넌트 | 의존 내용 |
-|---------|---------|
-| HealthMonitor | observed_status 읽기 |
-| Container Provider | start, stop 호출 |
-| Storage Provider | archive, restore 호출 |
+2. **순차적 전이**: RUNNING → PENDING 직접 불가 (STOPPING → ARCHIVING)
 
-### 의존받음
-
-| 컴포넌트 | 의존 내용 |
-|---------|---------|
-| API Server | desired_state 변경 트리거 |
-| TTL Manager | desired_state 변경 트리거 |
-
-### 잠재적 충돌
-
-| 시나리오 | 영향 | 완화 |
-|---------|-----|------|
-| 여러 Reconciler 인스턴스 | 중복 실행 | CAS로 operation 선점 |
-| operation 중 desired 변경 | 현재 operation 완료 후 재계획 | 정상 동작 |
-| HealthMonitor 지연 | 완료 판정 지연 | Redis hint로 즉시 관측 요청 |
-
----
-
-## 설정
-
-| 환경변수 | 기본값 | 설명 |
-|---------|-------|------|
-| `RECONCILER_INTERVAL` | 10 | reconcile 주기 (초) |
-| `RECONCILER_MAX_RETRIES` | 3 | 최대 재시도 횟수 |
-| `RECONCILER_RETRY_BACKOFF` | 30 | 재시도 간격 (초) |
-| `RECONCILER_STARTING_TIMEOUT` | 300 | STARTING timeout (초) |
-| `RECONCILER_STOPPING_TIMEOUT` | 300 | STOPPING timeout (초) |
-| `RECONCILER_ARCHIVING_TIMEOUT` | 1800 | ARCHIVING timeout (초) |
-| `RECONCILER_RESTORING_TIMEOUT` | 1800 | RESTORING timeout (초) |
-
----
-
-## Known Issues / Limitations
-
-### 1. Operation 중단 불가
-
-- operation 시작 후 취소 불가
-- 완료되어야 새 desired_state 반영
-
-### 2. 순차적 상태 전이
-
-- RUNNING → PENDING은 직접 불가
-- RUNNING → STANDBY → PENDING 순차 진행
-
-### 3. 재시도 간격 고정
-
-- 지수 백오프 미적용 (M2)
-- 필요 시 추후 개선
+3. **재시도 간격 고정**: 지수 백오프 미적용 (M2)
 
 ---
 
 ## 참조
 
-- [coordinator.md](./coordinator.md) - Coordinator 프로세스
-- [health-monitor.md](./health-monitor.md) - HealthMonitor (observed_status 제공)
-- [../storage.md](../storage.md) - Storage Provider 인터페이스
-- [../instance.md](../instance.md) - Container Provider 인터페이스
+- [coordinator.md](./coordinator.md) - Coordinator
+- [health-monitor.md](./health-monitor.md) - HealthMonitor
+- [../storage.md](../storage.md) - Storage Provider
+- [../instance.md](../instance.md) - Container Provider
 - [../error.md](../error.md) - 에러 정책
