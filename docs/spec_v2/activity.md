@@ -254,5 +254,5 @@ T4: 사용자 의도(RUNNING)가 무시됨
 
 - [states.md](./states.md) - TTL 기반 상태 전환
 - [schema.md](./schema.md) - standby_ttl_seconds, archive_ttl_seconds, system_locks 테이블
-- [reconciler.md](./reconciler.md) - 관련 컴포넌트 (TTL Manager 참조)
-- [storage-gc.md](./storage-gc.md) - Archive GC (동일한 DB Lock 메커니즘)
+- [components/ttl-manager.md](./components/ttl-manager.md) - TTL Manager
+- [components/archive-gc.md](./components/archive-gc.md) - Archive GC (동일한 DB Lock 메커니즘)

@@ -454,8 +454,8 @@ class StorageProvider(ABC):
 ## 참조
 
 - [storage-job.md](./storage-job.md) - Job 스펙 (Crash-Only 설계)
-- [storage-gc.md](./storage-gc.md) - Archive GC
+- [components/archive-gc.md](./components/archive-gc.md) - Archive GC
 - [error.md](./error.md) - ERROR 상태, 에러 처리
-- [reconciler.md](./reconciler.md) - Reconciler 알고리즘 (관측 메서드 사용)
+- [components/state-reconciler.md](./components/state-reconciler.md) - StateReconciler (operation 실행)
 - [states.md](./states.md) - 상태 전환 규칙
 - [instance.md](./instance.md) - 인스턴스 동작

@@ -111,14 +111,18 @@ async def can_start_workspace(user_id: str) -> tuple[bool, str, dict]:
     """
     워크스페이스 시작 가능 여부 체크.
 
+    IMPORTANT: RUNNING 상태뿐 아니라 STARTING operation도 카운트에 포함.
+    이는 동시 요청 시 초과 할당을 방지합니다.
+
     Returns:
         (allowed, error_message, details)
     """
     # 사용자당 제한 체크
+    # Note: STARTING operation 포함으로 race condition 방지
     user_running = await db.fetch_val("""
         SELECT COUNT(*) FROM workspaces
         WHERE owner_user_id = :user_id
-          AND status = 'RUNNING'
+          AND (observed_status = 'RUNNING' OR operation = 'STARTING')
           AND deleted_at IS NULL
     """, {"user_id": user_id})
 
@@ -134,7 +138,7 @@ async def can_start_workspace(user_id: str) -> tuple[bool, str, dict]:
     # 전역 제한 체크
     global_running = await db.fetch_val("""
         SELECT COUNT(*) FROM workspaces
-        WHERE status = 'RUNNING'
+        WHERE (observed_status = 'RUNNING' OR operation = 'STARTING')
           AND deleted_at IS NULL
     """)
 
@@ -146,6 +150,28 @@ async def can_start_workspace(user_id: str) -> tuple[bool, str, dict]:
         }
 
     return True, "", {}
+```
+
+### Race Condition 방지
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  문제: RUNNING만 체크 시 동시 요청으로 초과 할당 가능                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  T0: User A, B가 동시에 workspace 시작 요청
+  T1: 둘 다 RUNNING 카운트 = 1 (max=2) → 통과
+  T2: 둘 다 operation = STARTING 설정
+  T3: 결과: 3개 RUNNING (제한 초과!)
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  해결: RUNNING + STARTING 모두 카운트                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  T0: User A 요청
+  T1: (RUNNING + STARTING) 카운트 = 1 → 통과, STARTING 설정
+  T2: User B 요청
+  T3: (RUNNING + STARTING) 카운트 = 2 (A의 STARTING 포함) → 제한 도달
 ```
 
 ### API 엔드포인트
@@ -194,16 +220,18 @@ async def handle_auto_wake(workspace_id: str, user_id: str):
 ## 인덱스
 
 ```sql
--- 사용자별 RUNNING 워크스페이스 조회 최적화
-CREATE INDEX idx_workspaces_user_running
-ON workspaces (owner_user_id, status)
-WHERE status = 'RUNNING' AND deleted_at IS NULL;
+-- 사용자별 RUNNING + STARTING 워크스페이스 조회 최적화
+CREATE INDEX idx_workspaces_user_active
+ON workspaces (owner_user_id, observed_status, operation)
+WHERE deleted_at IS NULL;
 
--- 전역 RUNNING 카운트 최적화
-CREATE INDEX idx_workspaces_running
-ON workspaces (status)
-WHERE status = 'RUNNING' AND deleted_at IS NULL;
+-- 전역 RUNNING + STARTING 카운트 최적화
+CREATE INDEX idx_workspaces_active
+ON workspaces (observed_status, operation)
+WHERE deleted_at IS NULL;
 ```
+
+> **참고**: `observed_status`와 `operation` 모두 인덱싱하여 복합 조건 최적화
 
 ---
 

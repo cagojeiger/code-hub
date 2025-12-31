@@ -469,6 +469,7 @@ resources:
 
 ## 참조
 
-- [reconciler.md](./reconciler.md) - Reconciler 알고리즘 (is_running 관측 메서드 사용)
+- [components/state-reconciler.md](./components/state-reconciler.md) - StateReconciler (container.start/stop 호출)
+- [components/health-monitor.md](./components/health-monitor.md) - HealthMonitor (is_running 관측)
 - [states.md](./states.md) - 상태 전환 규칙
 - [storage.md](./storage.md) - StorageProvider 인터페이스, Operation 플로우

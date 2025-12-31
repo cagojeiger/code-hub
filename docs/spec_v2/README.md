@@ -21,6 +21,66 @@ M2는 완성형 아키텍처를 구축합니다. M3에서는 Instance Controller
 
 ---
 
+## 아키텍처
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              Control Plane                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   ┌─────────────┐                                                           │
+│   │  API Server │─────────── desired_state 변경 ──────────────┐            │
+│   └─────────────┘                                              │            │
+│                                                                ▼            │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                        Coordinator Process                           │  │
+│   │                     (pg_advisory_lock 리더 선출)                     │  │
+│   │                                                                       │  │
+│   │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐ │  │
+│   │  │HealthMonitor│  │StateReconciler│ │ TTL Manager │  │ Archive GC │ │  │
+│   │  │  (30s)      │  │  (10s)       │  │  (1m)       │  │  (1h)      │ │  │
+│   │  │             │  │              │  │             │  │            │ │  │
+│   │  │ observe     │  │ DB만 읽고   │  │ idle체크   │  │ orphan     │ │  │
+│   │  │ → status    │  │ Plan/Execute│  │ →desired   │  │ 정리       │ │  │
+│   │  └──────┬──────┘  └──────┬───────┘  └──────┬──────┘  └─────┬──────┘ │  │
+│   │         │                │                 │               │        │  │
+│   └─────────┼────────────────┼─────────────────┼───────────────┼────────┘  │
+│             │                │                 │               │           │
+│             ▼                ▼                 ▼               ▼           │
+│   ┌─────────────────────────────────────────────────────────────────────┐  │
+│   │                          Database (PostgreSQL)                       │  │
+│   │  workspaces: status, desired_state, operation, archive_key, ...    │  │
+│   │  system_locks: 리더 선출용                                          │  │
+│   └─────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                               Data Plane                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│   Container Runtime                    Object Storage (S3)                  │
+│   ┌───────────────────┐               ┌───────────────────┐                │
+│   │ Workspace         │               │ archives/         │                │
+│   │ Containers        │               │   {ws_id}/        │                │
+│   │                   │               │     {op_id}/      │                │
+│   │ /home/coder ──────┼───────────────│       home.tar.gz │                │
+│   │      ↓            │               └───────────────────┘                │
+│   │   Volume          │                                                     │
+│   └───────────────────┘                                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 컬럼 소유권 (단일 Writer 원칙)
+
+| Writer | 컬럼 |
+|--------|------|
+| **HealthMonitor** | `status`, `observed_at` |
+| **StateReconciler** | `operation`, `op_started_at`, `op_id`, `archive_key`, `error_count`, `error_info` |
+| **API/TTL Manager** | `desired_state`, `deleted_at`, TTL 메타 |
+
+---
+
 ## 문서 목록
 
 ### 핵심 문서
@@ -28,8 +88,17 @@ M2는 완성형 아키텍처를 구축합니다. M3에서는 Instance Controller
 | 문서 | 설명 |
 |------|------|
 | [states.md](./states.md) | 상태 정의 + 주요 시나리오 (Ordered State Machine) |
-| [reconciler.md](./reconciler.md) | Reconciler 알고리즘 (Plan/Execute, Level-Triggered) |
-| [schema.md](./schema.md) | DB 스키마 변경 사항 |
+| [schema.md](./schema.md) | DB 스키마 + 컬럼 소유권 |
+
+### 컴포넌트 문서 (Coordinator 내 프로세스)
+
+| 문서 | 주기 | 설명 |
+|------|------|------|
+| [components/coordinator.md](./components/coordinator.md) | - | 리더 선출, 프로세스 관리 |
+| [components/health-monitor.md](./components/health-monitor.md) | 30s | 실제 리소스 관측 → status 갱신 |
+| [components/state-reconciler.md](./components/state-reconciler.md) | 10s | DB만 읽고 Plan/Execute |
+| [components/ttl-manager.md](./components/ttl-manager.md) | 1m | idle/archive TTL → desired_state 변경 |
+| [components/archive-gc.md](./components/archive-gc.md) | 1h | orphan archive 정리 |
 
 ### 레이어별 문서
 
@@ -40,19 +109,13 @@ M2는 완성형 아키텍처를 구축합니다. M3에서는 Instance Controller
 | [instance.md](./instance.md) | InstanceController (start/stop/delete) |
 | [events.md](./events.md) | SSE 이벤트 정의 |
 
-### 독립 프로세스
-
-| 문서 | 실행 단위 | 설명 |
-|------|----------|------|
-| [activity.md](./activity.md) | TTL Manager | 활동 감지 + TTL 기반 desired_state 변경 |
-| [storage-gc.md](./storage-gc.md) | Archive GC | orphan archive 정리 |
-
 ### 정책 문서
 
 | 문서 | 설명 |
 |------|------|
 | [error.md](./error.md) | ERROR 상태, ErrorInfo, 재시도 정책 |
 | [limits.md](./limits.md) | RUNNING 워크스페이스 제한 |
+| [activity.md](./activity.md) | 활동 감지 (WebSocket 기반) |
 
 ---
 

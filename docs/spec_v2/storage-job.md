@@ -224,7 +224,7 @@ T5: 완료
 | GC op_id 보호 | 부분 업로드 상태에서도 GC 삭제 방지 |
 
 > **GC와의 관계**: op_id가 DB에 있으면 해당 경로(`archives/{ws_id}/{op_id}/`)는 GC가 보호.
-> 부분 업로드 상태에서도 삭제되지 않음. 상세: [storage-gc.md](./storage-gc.md)
+> 부분 업로드 상태에서도 삭제되지 않음. 상세: [components/archive-gc.md](./components/archive-gc.md)
 
 ---
 
@@ -330,4 +330,4 @@ StorageProvider는 Job exit code만 확인하고, `exit_code ≠ 0`이면 `Stora
 ## 참조
 
 - [storage.md](./storage.md) - 핵심 원칙, StorageProvider 인터페이스, Operation 플로우
-- [storage-gc.md](./storage-gc.md) - 경로 규칙, GC 시스템
+- [components/archive-gc.md](./components/archive-gc.md) - 경로 규칙, GC 시스템

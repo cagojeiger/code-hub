@@ -290,7 +290,7 @@ ERROR는 operation 실패 시 전환되는 상태입니다.
 
 ## Reconciler 동작
 
-> **상세**: [reconciler.md](./reconciler.md) - Operation 선택, Plan/Execute 구조
+> **상세**: [components/state-reconciler.md](./components/state-reconciler.md) - Operation 선택, Plan/Execute 구조
 
 ### Operation 선택 (요약)
 
@@ -386,7 +386,8 @@ sequenceDiagram
 
 ## 참조
 
-- [reconciler.md](./reconciler.md) - Reconciler 알고리즘 (Plan/Execute, Level-Triggered)
+- [components/state-reconciler.md](./components/state-reconciler.md) - StateReconciler (Plan/Execute, Level-Triggered)
+- [components/health-monitor.md](./components/health-monitor.md) - HealthMonitor (상태 관측)
 - [error.md](./error.md) - ERROR 상태 상세 (ErrorInfo, 복구, 재시도 정책)
 - [activity.md](./activity.md) - TTL Manager (활동 감지, desired_state 변경)
 - [schema.md](./schema.md) - TTL 관련 컬럼

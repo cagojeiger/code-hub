@@ -17,13 +17,16 @@ M2에서 추가/변경되는 스키마를 정의합니다. M1 스키마는 [spec
 | 컬럼 | 타입 | Nullable | 기본값 | 설명 |
 |------|------|----------|--------|------|
 | **operation** | ENUM | NO | 'NONE' | 진행 중인 작업 (신규) |
+| **op_started_at** | TIMESTAMP | YES | NULL | operation 시작 시점 (timeout 추적) |
 | desired_state | ENUM | NO | 'RUNNING' | 목표 상태 (Reconciler용) |
 | archive_key | VARCHAR(512) | YES | NULL | Object Storage 키 (`archives/{workspace_id}/{op_id}/home.tar.gz`) |
 | op_id | UUID | YES | NULL | 현재 작업 ID (멱등성 보장) |
+| **observed_at** | TIMESTAMP | YES | NULL | 마지막 관측 시점 (HealthMonitor) |
 | last_access_at | TIMESTAMP | YES | NULL | 마지막 프록시 접속 시각 |
 | standby_ttl_seconds | INT | NO | 300 | RUNNING→STANDBY TTL (초) - WebSocket 기반 |
 | archive_ttl_seconds | INT | NO | 86400 | STANDBY→PENDING(ARCHIVED) TTL (초) - DB 기반 |
-| error_message | TEXT | YES | NULL | 에러 상세 메시지 |
+| error_message | TEXT | YES | NULL | 에러 상세 메시지 (요약) |
+| **error_info** | JSONB | YES | NULL | 구조화된 에러 정보 (상세) |
 | error_count | INT | NO | 0 | 연속 전환 실패 횟수 |
 | previous_status | ENUM | YES | NULL | ERROR 전 상태 (복구용) |
 
@@ -87,6 +90,67 @@ ENUM('PENDING', 'STANDBY', 'RUNNING')
 - `operation != 'NONE'`이면 다른 작업 시작 불가
 - 동일 workspace에 대한 동시 Archive/Restore 없음
 - 따라서 동시 덮어쓰기 이슈 없음
+
+---
+
+## 컬럼 소유권 (단일 Writer 원칙)
+
+각 컬럼은 하나의 컴포넌트만 쓸 수 있습니다. 이를 통해 stale write 레이스를 방지합니다.
+
+### HealthMonitor가 쓰는 컬럼
+
+| 컬럼 | 설명 |
+|-----|------|
+| `status` | 관측된 상태 (PENDING/STANDBY/RUNNING/ERROR) |
+| `observed_at` | 마지막 관측 시점 |
+
+> HealthMonitor는 실제 리소스를 관측하고 `status`를 업데이트합니다.
+> ERROR 판정도 HealthMonitor가 담당 (error_info.is_terminal 체크).
+
+### StateReconciler가 쓰는 컬럼
+
+| 컬럼 | 설명 |
+|-----|------|
+| `operation` | 진행 중인 작업 |
+| `op_started_at` | operation 시작 시점 |
+| `op_id` | 작업 고유 ID |
+| `archive_key` | 아카이브 경로 (ARCHIVING 완료 시) |
+| `error_count` | 재시도 횟수 |
+| `error_info` | 에러 정보 (Timeout, RetryExceeded 등) |
+| `previous_status` | ERROR 전환 전 상태 |
+
+### API / TTL Manager가 쓰는 컬럼
+
+| 컬럼 | 설명 |
+|-----|------|
+| `desired_state` | 목표 상태 |
+| `deleted_at` | 소프트 삭제 시각 |
+| `standby_ttl_seconds` | RUNNING→STANDBY TTL |
+| `archive_ttl_seconds` | STANDBY→PENDING TTL |
+
+> **주의**: desired_state는 API와 TTL Manager가 공유합니다. 경쟁 조건 가능 (Known Issue).
+
+### error_info 구조
+
+```json
+{
+  "reason": "Timeout",
+  "operation": "STARTING",
+  "is_terminal": true,
+  "error_count": 3,
+  "last_error": "Container failed to start",
+  "occurred_at": "2024-01-15T10:30:00Z"
+}
+```
+
+| 필드 | 타입 | 설명 |
+|-----|------|------|
+| `reason` | string | 에러 유형 (Timeout, RetryExceeded, ActionFailed 등) |
+| `operation` | string | 실패한 operation |
+| `is_terminal` | boolean | true면 HealthMonitor가 ERROR로 전환 |
+| `error_count` | int | 재시도 횟수 |
+| `last_error` | string | 마지막 에러 메시지 |
+| `occurred_at` | string | ISO 8601 timestamp |
 
 ---
 
@@ -195,13 +259,16 @@ CREATE INDEX idx_system_locks_expires ON system_locks (expires_at);
 | home_ctx | JSONB | Storage Provider 컨텍스트 |
 | **status** | ENUM | 현재 상태 (5개: PENDING, STANDBY, RUNNING, ERROR, DELETED) |
 | **operation** | ENUM | 진행 중인 작업 (신규) |
+| **op_started_at** | TIMESTAMP | operation 시작 시점 (신규) |
 | **desired_state** | ENUM | 목표 상태 (신규: PENDING, STANDBY, RUNNING) |
 | **archive_key** | VARCHAR(512) | Object Storage 키 (신규) |
 | **op_id** | UUID | 현재 작업 ID (신규) |
+| **observed_at** | TIMESTAMP | 마지막 관측 시점 (신규) |
 | **last_access_at** | TIMESTAMP | 마지막 접속 시각 (신규) |
 | **standby_ttl_seconds** | INT | RUNNING→STANDBY TTL (신규) |
 | **archive_ttl_seconds** | INT | STANDBY→PENDING(ARCHIVED) TTL (신규) |
-| **error_message** | TEXT | 에러 메시지 (신규) |
+| **error_message** | TEXT | 에러 메시지 요약 (신규) |
+| **error_info** | JSONB | 구조화된 에러 정보 (신규) |
 | **error_count** | INT | 에러 횟수 (신규) |
 | **previous_status** | ENUM | ERROR 전 상태 (신규) |
 | created_at | TIMESTAMP | 생성 시각 |
@@ -253,13 +320,16 @@ WHERE status = 'RUNNING' AND deleted_at IS NULL;
 ```sql
 ALTER TABLE workspaces
 ADD COLUMN operation VARCHAR(20) DEFAULT 'NONE',
+ADD COLUMN op_started_at TIMESTAMP,
 ADD COLUMN desired_state VARCHAR(20) DEFAULT 'RUNNING',
 ADD COLUMN archive_key VARCHAR(512),
 ADD COLUMN op_id UUID,
+ADD COLUMN observed_at TIMESTAMP,
 ADD COLUMN last_access_at TIMESTAMP,
 ADD COLUMN standby_ttl_seconds INT DEFAULT 300,
 ADD COLUMN archive_ttl_seconds INT DEFAULT 86400,
 ADD COLUMN error_message TEXT,
+ADD COLUMN error_info JSONB,
 ADD COLUMN error_count INT DEFAULT 0,
 ADD COLUMN previous_status VARCHAR(20);
 ```
@@ -318,6 +388,8 @@ CREATE TYPE workspace_desired_state AS ENUM (
 
 - [spec/schema.md](../spec/schema.md) - M1 스키마
 - [states.md](./states.md) - 상태 정의
-- [activity.md](./activity.md) - TTL Manager (system_locks 사용)
-- [storage-gc.md](./storage-gc.md) - Archive GC (system_locks 사용)
+- [components/health-monitor.md](./components/health-monitor.md) - HealthMonitor (status 컬럼 소유)
+- [components/state-reconciler.md](./components/state-reconciler.md) - StateReconciler (operation 컬럼 소유)
+- [components/ttl-manager.md](./components/ttl-manager.md) - TTL Manager (desired_state 컬럼 소유)
+- [components/archive-gc.md](./components/archive-gc.md) - Archive GC
 - [limits.md](./limits.md) - RUNNING 제한
