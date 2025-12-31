@@ -32,7 +32,7 @@ HealthMonitor는 실제 리소스 상태를 관측하고 DB에 반영하는 **�
 
 | 소스 | 항목 |
 |------|------|
-| DB | id, error_info, archive_key |
+| DB | id, error_info, archive_key, operation |
 | Container Provider | exists, running |
 | Volume Provider | exists |
 
@@ -54,9 +54,12 @@ HealthMonitor는 실제 리소스 상태를 관측하고 DB에 반영하는 **�
 | 3 | Container 있음 + running | RUNNING |
 | 4 | Volume 있음 (Container 없음) | STANDBY |
 | 5 | Volume 없음 + archive_key 있음 | PENDING |
-| 6 | Volume 없음 + archive_key 없음 | ERROR (DataLost) |
+| 6 | Volume 없음 + archive_key 없음 + **operation = NONE** | ERROR (DataLost) |
+| 7 | Volume 없음 + archive_key 없음 + **operation ≠ NONE** | PENDING (유지) |
 
 > 우선순위 순서대로 평가, 첫 번째 매칭 조건 적용
+>
+> **우선순위 6,7 분리 이유**: 새 workspace는 operation=PROVISIONING 진행 중이므로 ERROR 판정 유보
 
 ---
 
@@ -65,9 +68,11 @@ HealthMonitor는 실제 리소스 상태를 관측하고 DB에 반영하는 **�
 | 위반 유형 | 조건 | 처리 |
 |----------|------|------|
 | ContainerWithoutVolume | Container 있음 + Volume 없음 | error_info 설정 → ERROR |
-| DataLost | Volume 없음 + archive_key 없음 | error_info 설정 → ERROR |
+| DataLost | Volume 없음 + archive_key 없음 + **operation = NONE** | error_info 설정 → ERROR |
 
 > 불변식 위반 시 HealthMonitor가 예외적으로 error_info 설정 (기존 error_info 없을 때만)
+>
+> **DataLost 조건**: operation이 진행 중이면 중간 상태이므로 DataLost 판정 유보
 
 ---
 
@@ -81,6 +86,7 @@ flowchart TB
     Running{"Container + running?"}
     Volume{"Volume exists?"}
     Archive{"archive_key?"}
+    Operation{"operation = NONE?"}
 
     ERROR1["ERROR"]
     ERROR2["ERROR (불변식)"]
@@ -88,6 +94,7 @@ flowchart TB
     STANDBY["STANDBY"]
     PENDING["PENDING"]
     ERROR3["ERROR (DataLost)"]
+    PENDING2["PENDING (유지)"]
 
     Start --> Terminal
     Terminal -->|Yes| ERROR1
@@ -99,7 +106,9 @@ flowchart TB
     Volume -->|Yes| STANDBY
     Volume -->|No| Archive
     Archive -->|Yes| PENDING
-    Archive -->|No| ERROR3
+    Archive -->|No| Operation
+    Operation -->|Yes| ERROR3
+    Operation -->|No| PENDING2
 ```
 
 ---

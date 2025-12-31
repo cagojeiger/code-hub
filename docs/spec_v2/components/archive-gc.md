@@ -78,6 +78,19 @@ Archive가 **보호 대상이 아니면** orphan입니다.
 
 ---
 
+## 삭제 대상
+
+Archive 삭제 시 다음 파일을 모두 삭제합니다:
+
+| 파일 | 설명 |
+|------|------|
+| `{archive_key}` | tar.gz 아카이브 파일 |
+| `{archive_key}.meta` | sha256 체크섬 파일 |
+
+> storage-job.md의 meta 파일 형식 참조
+
+---
+
 ## GC 흐름
 
 ```mermaid

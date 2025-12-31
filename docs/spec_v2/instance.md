@@ -37,10 +37,10 @@
 
 ---
 
-## 상태별 리소스
+## observed_status별 리소스
 
-| status | Container | Volume |
-|--------|-----------|--------|
+| observed_status | Container | Volume |
+|-----------------|-----------|--------|
 | PENDING | - | - |
 | STANDBY | - | ✅ |
 | RUNNING | ✅ | ✅ |
@@ -78,7 +78,7 @@
 
 | 항목 | 값 |
 |------|---|
-| 전제 조건 | status=STANDBY, Volume 존재 |
+| 전제 조건 | observed_status=STANDBY, Volume 존재 |
 | Actuator | start(workspace_id, image_ref) |
 | 완료 조건 | is_running() == True |
 
@@ -86,7 +86,7 @@
 
 | 항목 | 값 |
 |------|---|
-| 전제 조건 | status=RUNNING |
+| 전제 조건 | observed_status=RUNNING |
 | Actuator | delete(workspace_id) |
 | 완료 조건 | is_running() == False, Volume 유지 |
 
@@ -98,7 +98,7 @@
 |------|------|------|
 | 1 | Container 삭제 | InstanceController |
 | 2 | Volume 삭제 | StorageProvider |
-| 3 | status=DELETED | Reconciler |
+| 3 | observed_status=DELETED | Reconciler |
 
 > Archive는 GC가 2시간 후 정리
 

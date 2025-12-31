@@ -90,6 +90,17 @@ sequenceDiagram
 
 ---
 
+## last_access_at 갱신
+
+| 시점 | 주체 | 값 |
+|------|------|---|
+| workspace 생성 | API | NOW() |
+| STOPPING 완료 | StateReconciler | NOW() |
+
+> WebSocket 연결 중에는 last_access_at 미업데이트 (STOPPING 완료 시점이 Archive TTL 기준점)
+
+---
+
 ## 엣지 케이스
 
 | 상황 | 동작 |
@@ -111,6 +122,14 @@ TTL Manager와 API/Proxy가 동시에 desired_state 변경 시 Last-Write-Wins.
 | CAS | `UPDATE ... WHERE desired_state = ?` |
 | 우선순위 | manual_change가 TTL_change보다 우선 |
 | Optimistic Locking | version 컬럼 사용 |
+
+### HTTP-only 시나리오
+
+WebSocket 연결 없이 HTTP API만 사용하는 경우 활동 감지 불가.
+
+| 영향 | 완화책 |
+|------|--------|
+| standby_ttl이 의도보다 빨리 트리거 | HTTP 요청 시 last_access_at 업데이트 고려 (M2 이후) |
 
 ---
 
