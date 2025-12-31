@@ -289,6 +289,51 @@ CAS의 알려진 한계점.
 
 ---
 
+## CDC (Change Data Capture)
+
+데이터 변경을 감지하여 **이벤트로 전파**하는 패턴.
+
+### 핵심 아이디어
+
+| 항목 | 설명 |
+|------|------|
+| 목적 | 데이터 변경을 다른 시스템에 실시간 전파 |
+| 장점 | Writer는 이벤트 발행 로직을 모름 (Single Responsibility) |
+| 패턴 | DB 변경 → 감지 → 이벤트 발행 |
+
+### PostgreSQL LISTEN/NOTIFY ✅ (본 시스템)
+
+| 구성 요소 | 역할 |
+|----------|------|
+| Trigger | UPDATE 시 pg_notify() 호출 |
+| LISTEN | 애플리케이션이 채널 구독 |
+| NOTIFY | 페이로드와 함께 알림 전송 |
+
+```
+Writer → UPDATE → Trigger → pg_notify() → Listener
+```
+
+### 다른 CDC 방식들
+
+| 방식 | 설명 |
+|------|------|
+| WAL (Write-Ahead Log) | 트랜잭션 로그 스트리밍 (Debezium, pg_logical) |
+| Polling | 주기적으로 변경 조회 (updated_at 비교) |
+| Outbox Pattern | 별도 이벤트 테이블에 기록 후 폴링 |
+| Application-level | 애플리케이션 코드에서 직접 발행 |
+
+### 본 시스템 사용처
+
+| 위치 | 용도 |
+|------|------|
+| workspaces 테이블 | 상태 변경 → SSE 이벤트 전달 |
+
+> 참조: [events.md](./events.md) - SSE 이벤트 상세
+
+> 참조: [Wikipedia - Change Data Capture](https://en.wikipedia.org/wiki/Change_data_capture)
+
+---
+
 ## Ordered State Machine ✅ (본 시스템)
 
 상태에 **순서(정수값)**를 부여하여 전이 방향을 제한하는 상태 머신.
@@ -316,6 +361,7 @@ PENDING(0) < STANDBY(10) < RUNNING(20)
 ## 참조
 
 - [states.md](./states.md) - 상태 정의
+- [events.md](./events.md) - SSE 이벤트 (CDC 적용)
 - [components/state-reconciler.md](./components/state-reconciler.md) - Reconciler 구현
-- [components/coordinator.md](./components/coordinator.md) - Leader Election
+- [components/coordinator.md](./components/coordinator.md) - Leader Election, EventListener
 - [components/archive-gc.md](./components/archive-gc.md) - GC with TTL

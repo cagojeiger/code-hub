@@ -18,6 +18,7 @@ flowchart TB
         API["API Server"]
 
         subgraph Coordinator["Coordinator Process<br/>(Leader Election)"]
+            EL["EventListener<br/>(실시간)"]
             HM["HealthMonitor<br/>(30s)"]
             SR["StateReconciler<br/>(10s)"]
             TTL["TTL Manager<br/>(1m)"]
@@ -25,12 +26,16 @@ flowchart TB
         end
 
         DB["Database (PostgreSQL)"]
+        Redis["Redis Pub/Sub"]
 
         API -->|"desired_state"| DB
         HM --> DB
         SR --> DB
         TTL --> DB
         GC --> DB
+        DB -.->|"NOTIFY"| EL
+        EL -->|"PUBLISH"| Redis
+        Redis -->|"SSE"| API
     end
 
     subgraph DataPlane["Data Plane"]
@@ -55,6 +60,7 @@ flowchart TB
 | Level-Triggered Reconciliation | desired ≠ observed → operation 실행 |
 | Single Writer Principle | 컬럼별 단일 소유자 |
 | Crash-Only Design | 어디서 실패해도 재시도로 복구 |
+| CDC (Change Data Capture) | DB 변경 → 트리거 → SSE 이벤트 |
 
 ---
 
@@ -85,7 +91,7 @@ flowchart TB
 | [storage.md](./storage.md) | Storage 원칙, 인터페이스 |
 | [storage-job.md](./storage-job.md) | Storage Job 스펙 |
 | [instance.md](./instance.md) | InstanceController |
-| [events.md](./events.md) | SSE 이벤트 정의 |
+| [events.md](./events.md) | CDC 기반 SSE 이벤트 |
 
 ### 정책 문서
 

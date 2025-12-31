@@ -21,6 +21,7 @@ Coordinator는 모든 백그라운드 프로세스를 관리하는 **단일 리�
 ```mermaid
 flowchart TB
     subgraph Coordinator["Coordinator Process<br/>(pg_advisory_lock 보유)"]
+        EL["EventListener<br/>(실시간)"]
         HM["HealthMonitor<br/>(30s 주기)"]
         SR["StateReconciler<br/>(10s 주기)"]
         TTL["TTL Manager<br/>(1m 주기)"]
@@ -34,6 +35,7 @@ flowchart TB
 
 | 컴포넌트 | 주기 | 역할 |
 |---------|------|------|
+| EventListener | 실시간 | PG NOTIFY → Redis PUBLISH (CDC) |
 | HealthMonitor | 30초 | 리소스 관측 → observed_status 업데이트 |
 | StateReconciler | 10초 | desired ≠ observed 수렴 |
 | TTL Manager | 1분 | TTL 만료 체크 → desired_state 변경 |
@@ -87,12 +89,13 @@ sequenceDiagram
 
 ## 컴포넌트 동시성
 
-4개 컴포넌트가 동시 실행됩니다. 같은 workspace에 대해 동시 접근 가능하나 **Single Writer Principle**로 안전합니다.
+5개 컴포넌트가 동시 실행됩니다. 같은 workspace에 대해 동시 접근 가능하나 **Single Writer Principle**로 안전합니다.
 
 ### 컬럼 소유권
 
 | 컴포넌트 | 쓰기 컬럼 |
 |---------|----------|
+| EventListener | (읽기 전용, DB 쓰기 없음) |
 | HealthMonitor | observed_status, observed_at |
 | StateReconciler | operation, op_started_at, op_id, archive_key, error_count, error_info |
 | TTL Manager | desired_state (API와 공유) |
@@ -114,6 +117,7 @@ sequenceDiagram
 
 ## 참조
 
+- [../events.md](../events.md) - EventListener (CDC 기반 SSE)
 - [health-monitor.md](./health-monitor.md) - HealthMonitor
 - [state-reconciler.md](./state-reconciler.md) - StateReconciler
 - [ttl-manager.md](./ttl-manager.md) - TTL Manager

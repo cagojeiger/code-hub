@@ -8,21 +8,56 @@
 
 상태 변경 시 UI(대시보드, 로딩 페이지)에 실시간 알림을 전달합니다.
 
+| 항목 | 값 |
+|------|---|
+| 패턴 | CDC (Change Data Capture) |
+| 트리거 | PostgreSQL NOTIFY |
+| 팬아웃 | Redis Pub/Sub |
+
 ---
 
 ## 이벤트 전달 흐름
 
 ```mermaid
 sequenceDiagram
-    participant R as Reconciler
+    participant W as Writer (API, Reconciler, ...)
+    participant DB as PostgreSQL
+    participant C as Coordinator (EventListener)
     participant Redis as Redis Pub/Sub
     participant API as Control Plane
     participant UI as Dashboard
 
-    R->>Redis: PUBLISH workspace:{id}
+    W->>DB: UPDATE workspaces SET ...
+    Note over DB: Trigger 실행
+    DB-->>C: NOTIFY workspace_changes
+    C->>Redis: PUBLISH workspace:{id}
     Redis-->>API: 메시지 수신
     API-->>UI: SSE event
 ```
+
+---
+
+## 이벤트 발행 구조
+
+### PostgreSQL Trigger
+
+| 항목 | 값 |
+|------|---|
+| 트리거 대상 | workspaces 테이블 UPDATE |
+| 감시 컬럼 | observed_status, operation, error_info |
+| 발행 | pg_notify('workspace_changes', payload) |
+
+> Writer는 이벤트 발행을 모름 (Single Responsibility)
+
+### Coordinator EventListener
+
+| 항목 | 값 |
+|------|---|
+| 위치 | Coordinator 프로세스 내 |
+| 연결 | PostgreSQL LISTEN 'workspace_changes' |
+| 역할 | NOTIFY 수신 → Redis PUBLISH |
+
+> Leader Election 불필요: LISTEN은 모든 인스턴스에서 수신해도 Redis PUBLISH는 멱등
 
 ---
 
@@ -108,3 +143,5 @@ Accept: text/event-stream
 ## 참조
 
 - [states.md](./states.md) - 상태 정의
+- [glossary.md](./glossary.md) - CDC 용어 정의
+- [components/coordinator.md](./components/coordinator.md) - Coordinator (EventListener 포함)
