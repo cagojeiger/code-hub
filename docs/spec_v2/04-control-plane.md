@@ -338,7 +338,9 @@ sequenceDiagram
 | 시점 | 주체 | 값 |
 |------|------|---|
 | workspace 생성 | API | NOW() |
-| STOPPING 완료 | WorkspaceController | NOW() |
+| 프록시 접속 | API (via Proxy) | NOW() |
+
+> **계약 #3 준수**: last_access_at은 API 소유 컬럼 (Single Writer)
 
 ---
 

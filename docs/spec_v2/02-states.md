@@ -305,6 +305,7 @@ stateDiagram-v2
 | RUNNING | STOPPING | 정지 중 |
 | ERROR | NONE | 에러 상태 |
 | DELETING | DELETING | 삭제 진행 중 |
+| DELETING | NONE | Archive GC 대기 중 |
 
 > **불변식 (C4)**: `Phase=ERROR → operation=NONE`
 
