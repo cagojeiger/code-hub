@@ -1,74 +1,159 @@
-# M2 Architecture
+# Architecture v2
 
-> M2 마일스톤을 위한 아키텍처 문서
+> M2 구현을 위한 아키텍처 설계 문서
 
 ---
 
 ## 개요
 
-M2는 완성형 아키텍처를 구축합니다. 핵심 변경사항:
-
-- **Reconciler 도입**: 선언적 상태 관리
-- **Ordered State Machine**: 순차적 상태 전환
-- **Object Storage 연동**: COLD 상태 지원
+이 폴더는 M2 마일스톤의 **구현 설계** 문서를 포함합니다.
+"What"은 `spec_v2/`에, "How"는 여기에 정의됩니다.
 
 ---
 
-## 구성요소
+## 시스템 구조
 
 ```mermaid
-flowchart TB
+graph TB
+    User[User]
+
     subgraph "Control Plane"
         API[API Server]
-        R[Reconciler]
-        P[Proxy]
+        Proxy[Reverse Proxy]
+        IC[InstanceController]
+        SP[StorageProvider]
+        subgraph Coordinator["Coordinator (Single Leader)"]
+            WC[WorkspaceController]
+            TTL[TTL Manager]
+            GC[Archive GC]
+            EL[EventListener]
+        end
     end
 
-    subgraph "Data Stores"
+    subgraph "Infrastructure"
         DB[(PostgreSQL)]
         Redis[(Redis)]
+        ObjectStorage[("MinIO|S3")]
     end
 
-    subgraph "Compute"
-        IC[Instance Controller]
-        C[Container]
+    subgraph ContainerRuntime["Docker|K8s"]
+        WS[Workspace<br/>code-server]
+        Job[Storage Job]
     end
 
-    subgraph "Storage"
-        SP[Storage Provider]
-        V[Docker Volume]
-        OS[Object Storage<br/>MinIO]
-    end
+    User --> Proxy
+    User --> API
+
+    Proxy --> WS
+    Proxy --> Redis
 
     API --> DB
     API --> Redis
-    R --> DB
-    R --> Redis
-    R --> IC
-    R --> SP
-    P --> API
-    P --> C
-    IC --> C
-    SP --> V
-    SP --> OS
+
+    Coordinator --> DB
+    Coordinator --> Redis
+    Coordinator --> IC
+    Coordinator --> SP
+
+    IC --> WS
+    SP --> ContainerRuntime
+    SP --> ObjectStorage
+    Job --> ObjectStorage
 ```
 
 ---
 
-## 문서 목록
+## 프로세스 구조
 
-| 문서 | 설명 |
-|------|------|
-| [states.md](./states.md) | 상태 다이어그램 및 전환 규칙 |
-| [package-design.md](./package-design.md) | 패키지 분리 설계 (Core/Control/Adapters) |
-| [data-flow.md](./data-flow.md) | 데이터 흐름 (Container ↔ Storage) |
-| [reconciler.md](./reconciler.md) | Reconciler 상세 설계 |
+| 프로세스 | 역할 | 특성 |
+|---------|------|------|
+| **API Server** | HTTP 요청 처리, CRUD, SSE | Stateless, 수평 확장 가능 |
+| **Reverse Proxy** | 트래픽 라우팅, 활동 추적 | Stateless, 수평 확장 가능 |
+| **Coordinator** | 백그라운드 작업 관리 | Single Leader (pg_advisory_lock) |
+
+### Coordinator 내부 컴포넌트
+
+| 컴포넌트 | 주기 | 역할 |
+|---------|------|------|
+| WorkspaceController | 10s (진행 중 2s) | 리소스 관측 → 상태 수렴 |
+| TTL Manager | 1m | 비활성 워크스페이스 강등 |
+| Archive GC | 1h | orphan archive 정리 |
+| EventListener | 실시간 | PG NOTIFY → Redis PUBLISH |
+
+> **Note**: InstanceController, StorageProvider는 Coordinator가 호출하는 내부 모듈 (별도 프로세스 아님)
 
 ---
 
-## 참조
+## 인프라 스택 (M2)
 
-- [spec_v2/](../spec_v2/) - M2 스펙
-- [ADR-006: Reconciler 패턴](../adr/006-reconciler-pattern.md)
-- [ADR-007: Reconciler 구현](../adr/007-reconciler-implementation.md)
-- [ADR-008: Ordered State Machine](../adr/008-ordered-state-machine.md)
+| 구성요소 | 선택 | 비고 |
+|---------|------|------|
+| **Container Runtime** | Docker\|K8s | M2: local-docker |
+| **Object Storage** | MinIO\|S3 | M2: MinIO (S3 호환) |
+| **Database** | PostgreSQL | 상태 저장, Leader Election |
+| **Cache/Pub-Sub** | Redis | TTL hints, SSE 이벤트 |
+
+---
+
+## 상태 모델
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: 생성
+
+    PENDING --> STANDBY: CREATE (볼륨 생성)
+    PENDING --> ARCHIVED: CREATE_EMPTY_ARCHIVE (빈 아카이브)
+
+    STANDBY --> RUNNING: START (컨테이너 시작)
+    RUNNING --> STANDBY: STOP (컨테이너 정지)
+
+    STANDBY --> ARCHIVED: ARCHIVE (아카이빙)
+    ARCHIVED --> STANDBY: RESTORE (복원)
+
+    STANDBY --> DELETED: DELETE
+    ARCHIVED --> DELETED: DELETE
+
+    RUNNING --> ERROR: 장애
+    STANDBY --> ERROR: 장애
+    ARCHIVED --> ERROR: 장애
+
+    ERROR --> STANDBY: RECOVER (수동)
+    ERROR --> DELETED: DELETE
+```
+
+**Phase 순서 (Ordered State Machine):**
+```
+PENDING(0) < ARCHIVED(5) < STANDBY(10) < RUNNING(20)
+```
+
+> **Note**: ERROR는 Ordered SM 외부. 수동 개입(error_reason, error_count 리셋) 후 복구.
+
+---
+
+## 핵심 컴포넌트
+
+### Control Plane
+
+| 컴포넌트 | 역할 | 상세 문서 |
+|---------|------|----------|
+| **API Server** | REST API, SSE 스트리밍 | [spec_v2/04-control-plane.md](../spec_v2/04-control-plane.md) |
+| **Reverse Proxy** | 워크스페이스 라우팅, 활동 추적 | [spec_v2/05-data-plane.md](../spec_v2/05-data-plane.md) |
+| **InstanceController** | 컨테이너 생명주기 관리 | [spec_v2/05-data-plane.md](../spec_v2/05-data-plane.md) |
+| **StorageProvider** | 볼륨/아카이브 관리 | [spec_v2/05-data-plane.md](../spec_v2/05-data-plane.md) |
+
+### Coordinator 내부
+
+| 컴포넌트 | 역할 | 상세 문서 |
+|---------|------|----------|
+| **WorkspaceController** | Reconcile 루프, 상태 수렴 | [reconciler.md](./reconciler.md) |
+| **TTL Manager** | desired_state 자동 강등 | [spec_v2/04-control-plane.md](../spec_v2/04-control-plane.md) |
+| **Archive GC** | orphan archive 정리 | [spec_v2/05-data-plane.md](../spec_v2/05-data-plane.md) |
+| **EventListener** | CDC (PG → Redis) | [spec_v2/04-control-plane.md](../spec_v2/04-control-plane.md) |
+
+### Container Runtime (Docker|K8s)
+
+| 컴포넌트 | 역할 | 상세 문서 |
+|---------|------|----------|
+| **Workspace** | 사용자 개발 환경 (code-server) | - |
+| **Storage Job** | Volume↔Archive 데이터 이동 | [spec_v2/05-data-plane.md](../spec_v2/05-data-plane.md) |
+
