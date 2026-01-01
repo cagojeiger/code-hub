@@ -233,6 +233,8 @@ desired_state와 현재 Phase의 불일치를 해소하기 위한 Operation 선�
 | ERROR | operation=NONE | DELETING |
 
 > **RUNNING/STANDBY에서 삭제**: step_down으로 ARCHIVED 도달 후 DELETING
+>
+> **PENDING 예외**: PENDING은 리소스가 없으므로 deleted_at 설정 시 DELETED로 직접 전이 (DELETING 미거침)
 
 ---
 
