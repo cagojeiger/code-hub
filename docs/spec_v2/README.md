@@ -64,47 +64,66 @@ flowchart TB
 
 ---
 
-## 문서 목록
+## 문서 구조
 
-### 핵심 문서
+> **읽기 순서**: 번호가 낮은 문서를 먼저 읽어야 이해 가능
 
-| 문서 | 설명 |
-|------|------|
-| [states.md](./states.md) | 상태 정의 + 주요 시나리오 |
-| [schema.md](./schema.md) | DB 스키마 + 컬럼 소유권 |
-| [glossary.md](./glossary.md) | 용어집 (업계 표준 용어 정의) |
-
-### 컴포넌트 문서
-
-| 문서 | 주기 | 설명 |
+| 순서 | 문서 | 역할 |
 |------|------|------|
-| [components/coordinator.md](./components/coordinator.md) | - | 리더 선출, 프로세스 관리 |
-| [components/health-monitor.md](./components/health-monitor.md) | 30s | 실제 리소스 관측 → status 갱신 |
-| [components/state-reconciler.md](./components/state-reconciler.md) | 10s | Plan/Execute로 상태 수렴 |
-| [components/ttl-manager.md](./components/ttl-manager.md) | 1m | TTL → desired_state 변경 |
-| [components/archive-gc.md](./components/archive-gc.md) | 1h | orphan archive 정리 |
+| 0 | [00-contracts.md](./00-contracts.md) | 핵심 계약 9개 (SSOT, 충돌 시 우선) |
+| 1 | [01-glossary.md](./01-glossary.md) | 용어집 |
+| 2 | [02-states.md](./02-states.md) | 상태 모델 + 전이 규칙 |
+| 3 | [03-schema.md](./03-schema.md) | DB 스키마 + 컬럼 소유권 |
+| 4 | [04-control-plane.md](./04-control-plane.md) | Coordinator, HM, SR, TTL, Events, Error, Limits |
+| 5 | [05-data-plane.md](./05-data-plane.md) | Instance, Storage, Storage Job, Archive GC |
 
-### 레이어별 문서
+---
 
-| 문서 | 설명 |
+## 문서별 내용
+
+### 00-contracts.md (핵심 계약)
+
+9개 핵심 계약의 SSOT. 다른 문서와 충돌 시 이 문서가 우선.
+
+| # | 계약 |
+|---|------|
+| 1 | Reality vs DB (진실의 원천) |
+| 2 | Level-Triggered Reconciliation |
+| 3 | Single Writer Principle |
+| 4 | Non-preemptive Operation |
+| 5 | Ordered State Machine |
+| 6 | Container↔Volume Invariant |
+| 7 | Archive/Restore Contract |
+| 8 | Ordering Guarantee |
+| 9 | GC Separation & Protection |
+
+### 04-control-plane.md
+
+| 섹션 | 주기 | 설명 |
+|------|------|------|
+| Coordinator | - | 리더 선출, 프로세스 관리 |
+| HealthMonitor | 30s | 실제 리소스 관측 → status 갱신 |
+| StateReconciler | 10s | Plan/Execute로 상태 수렴 |
+| TTL Manager | 1m | TTL → desired_state 변경 |
+| Events | 실시간 | CDC 기반 SSE 이벤트 |
+| Activity | - | WebSocket 기반 활동 감지 |
+| Error Policy | - | ERROR 상태, 재시도 정책 |
+| Limits | - | RUNNING 워크스페이스 제한 |
+
+### 05-data-plane.md
+
+| 섹션 | 설명 |
 |------|------|
-| [storage.md](./storage.md) | Storage 원칙, 인터페이스 |
-| [storage-job.md](./storage-job.md) | Storage Job 스펙 |
-| [instance.md](./instance.md) | InstanceController |
-| [events.md](./events.md) | CDC 기반 SSE 이벤트 |
-
-### 정책 문서
-
-| 문서 | 설명 |
-|------|------|
-| [error.md](./error.md) | ERROR 상태, 재시도 정책 |
-| [limits.md](./limits.md) | RUNNING 워크스페이스 제한 |
-| [activity.md](./activity.md) | 활동 감지 (WebSocket 기반) |
+| InstanceController | Container 생성/삭제 |
+| StorageProvider | Volume/Archive 관리 |
+| Storage Job | Volume↔Archive 데이터 이동 |
+| Archive GC | orphan archive 정리 |
 
 ---
 
 ## 참조
 
-- [ADR-008: Ordered State Machine](../adr/008-ordered-state-machine.md)
+- [ADR-011: Conditions 기반 상태 표현](../adr/011-declarative-conditions.md)
+- [ADR-008: Ordered State Machine](../adr/008-ordered-state-machine.md) (Partially Superseded by ADR-011)
 - [ADR-006: Reconciler 패턴](../adr/006-reconciler-pattern.md)
 - [ADR-007: Reconciler 구현](../adr/007-reconciler-implementation.md)

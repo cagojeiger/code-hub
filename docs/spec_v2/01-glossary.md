@@ -338,14 +338,17 @@ Writer → UPDATE → Trigger → pg_notify() → Listener
 상태에 **순서(정수값)**를 부여하여 전이 방향을 제한하는 상태 머신.
 
 ```
-PENDING(0) < STANDBY(10) < RUNNING(20)
+PENDING(0) < ARCHIVED(5) < STANDBY(10) < RUNNING(20)
 ```
 
 | 규칙 | 설명 |
 |------|------|
-| Step-up | 낮은 상태 → 높은 상태 (리소스 생성/시작) |
+| Step-up | 낮은 상태 → 높은 상태 (복원/생성/시작) |
 | Step-down | 높은 상태 → 낮은 상태 (정지/아카이브) |
 | 단일 단계 | 한 번에 한 단계만 전이 |
+
+> **ERROR/DELETING/DELETED**: Ordered SM 미적용 (별도 축)
+> **상세**: [02-states.md#state-machine](./02-states.md#state-machine)
 
 ### 일반 FSM과 비교
 

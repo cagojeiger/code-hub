@@ -6,7 +6,16 @@
 
 ## 개요
 
-M2에서 추가/변경되는 스키마를 정의합니다. **Conditions 패턴** 기반 (ADR-011).
+본 문서는 **Conditions SSOT** (Single Source of Truth)입니다.
+
+| 섹션 | 역할 |
+|------|------|
+| **workspaces 테이블** | 전체 컬럼 정의 |
+| **conditions JSONB** | Conditions 패턴 상세 (ADR-011) |
+| **컬럼 소유권** | Single Writer Principle |
+
+> **상태 정의**: [02-states.md](./02-states.md)
+> **계약/규칙**: [00-contracts.md](./00-contracts.md)
 
 ---
 
@@ -45,48 +54,23 @@ M2에서 추가/변경되는 스키마를 정의합니다. **Conditions 패턴**
 | deleted_at | TIMESTAMP | YES | NULL | Soft Delete 시각 |
 
 > **굵은 글씨**: M2 신규/변경 컬럼
-> **conditions JSONB**: observed_status, health_status 대체 (ADR-011)
 
 ---
 
 ## ENUM 정의
 
-### phase (파생 상태)
+### phase
 
-| 값 | Level | 조건 | 설명 |
-|----|-------|------|------|
-| DELETED | -1 | deleted_at != NULL | 삭제 완료 |
-| ERROR | - | !policy.healthy | 정책 위반 (Ordered 미적용) |
-| RUNNING | 20 | healthy ∧ container_ready ∧ volume_ready | Container + Volume |
-| STANDBY | 10 | healthy ∧ volume_ready ∧ !container_ready | Volume만 존재 |
-| ARCHIVED | 5 | healthy ∧ !volume_ready ∧ archive_ready | Archive만 존재 |
-| PENDING | 0 | healthy ∧ !volume_ready ∧ !archive_ready | 활성 리소스 없음 |
-
-> **Phase는 계산값**: conditions 변경 시 HM이 phase 컬럼도 함께 업데이트
+> **Phase는 계산값**: HM이 conditions 변경 시 함께 계산/저장
+> **정의**: [02-states.md#phase](./02-states.md#phase-요약)
 
 ### operation
 
-| 값 | Phase 전이 | 설명 |
-|----|-----------|------|
-| NONE | - | 안정 상태 |
-| PROVISIONING | PENDING → STANDBY | 빈 Volume 생성 |
-| RESTORING | ARCHIVED → STANDBY | Archive 복원 |
-| STARTING | STANDBY → RUNNING | Container 시작 |
-| STOPPING | RUNNING → STANDBY | Container 정지 |
-| ARCHIVING | STANDBY → ARCHIVED | Volume → Archive |
-| DELETING | → DELETED | 전체 삭제 |
+> **정의**: [02-states.md#operation](./02-states.md#operation-진행-상태)
 
 ### desired_state
 
-| 값 | Level | 설명 |
-|----|-------|------|
-| DELETED | -1 | 삭제 요청 |
-| PENDING | 0 | 리소스 없음 (Archive도 삭제) |
-| ARCHIVED | 5 | Archive만 유지 |
-| STANDBY | 10 | Volume만 유지 |
-| RUNNING | 20 | 실행 상태 |
-
-> **ARCHIVED 추가**: desired_state에 ARCHIVED가 없으면 step_down 시 Archive 삭제됨
+> **정의**: [02-states.md#desired_state](./02-states.md#desired_state-목표)
 
 ---
 
@@ -108,7 +92,7 @@ M2에서 추가/변경되는 스키마를 정의합니다. **Conditions 패턴**
     "message": "No archive exists",
     "last_transition_time": "2026-01-01T12:00:00Z"
   },
-  "infra.docker.container_ready": {
+  "infra.container_ready": {
     "status": true,
     "reason": "ContainerRunning",
     "message": "Container is running",
@@ -138,26 +122,39 @@ M2에서 추가/변경되는 스키마를 정의합니다. **Conditions 패턴**
 |-----------|-------|------|
 | `storage.volume_ready` | HealthMonitor | Volume 존재 여부 |
 | `storage.archive_ready` | HealthMonitor | Archive 접근 가능 여부 |
-| `infra.*.container_ready` | HealthMonitor | Container running 여부 |
+| `infra.container_ready` | HealthMonitor | Container running 여부 (Canonical 키) |
 | `policy.healthy` | HealthMonitor | 불변식 + 정책 준수 |
 
-### storage.archive_ready reason 값
+> **Canonical 키**: SR/API/UI는 백엔드 무관 `infra.container_ready` 사용. HM이 실제 백엔드(Docker/K8s) 관측 결과를 Canonical 키에 기록
 
-| reason | status | 설명 |
-|--------|--------|------|
-| ArchiveUploaded | true | Archive 정상 접근 가능 |
-| ArchiveCorrupted | false | checksum 불일치 |
-| ArchiveExpired | false | TTL 만료 |
-| ArchiveNotFound | false | archive_key 있지만 S3에 없음 |
-| NoArchive | false | archive_key = NULL |
+---
 
-### policy.healthy=false 조건
+## storage.archive_ready reason 값
+
+| reason | status | is_terminal | 설명 |
+|--------|--------|-------------|------|
+| ArchiveUploaded | true | - | Archive 정상 접근 가능 |
+| ArchiveCorrupted | false | true | checksum 불일치 |
+| ArchiveExpired | false | true | TTL 만료 |
+| ArchiveNotFound | false | true | archive_key 있지만 S3에 없음 |
+| ArchiveUnreachable | false | **false** | S3 일시 장애 (재시도 가능) |
+| ArchiveTimeout | false | **false** | S3 요청 타임아웃 (재시도 가능) |
+| NoArchive | false | - | archive_key = NULL |
+
+> **비단말 오류**: ArchiveUnreachable/Timeout은 healthy=false 유발하지 않음 (재시도)
+> **단말 오류**: Corrupted/Expired/NotFound → healthy=false → Phase=ERROR
+
+---
+
+## policy.healthy=false 조건
 
 | 우선순위 | 조건 | reason | 설명 |
 |---------|------|--------|------|
 | 1 | container_ready ∧ !volume_ready | ContainerWithoutVolume | 불변식 위반 |
-| 2 | archive_key != NULL ∧ !archive_ready | ArchiveAccessError | Archive 접근 불가 |
+| 2 | archive_ready.reason ∈ {Corrupted, Expired, NotFound} | ArchiveAccessError | Archive 단말 오류 |
 | 3 | error_info.is_terminal = true | (error_info.reason) | SR 작업 실패 |
+
+> **HM 판정**: HM이 위 조건을 확인하여 policy.healthy 설정
 
 ---
 
@@ -173,8 +170,6 @@ M2에서 추가/변경되는 스키마를 정의합니다. **Conditions 패턴**
 | phase | 파생 상태 (conditions에서 계산) |
 | observed_at | 마지막 관측 시점 |
 
-> **phase 동기화**: conditions 변경 시 HM이 phase도 함께 업데이트
-
 ### StateReconciler
 
 | 컬럼 | 설명 |
@@ -187,8 +182,6 @@ M2에서 추가/변경되는 스키마를 정의합니다. **Conditions 패턴**
 | error_info | 에러 정보 |
 | home_ctx | Storage Provider 컨텍스트 (restore_marker 포함) |
 
-> **Single Writer 준수**: error_info는 SR 소유, conditions는 HM 소유 (예외 규칙 제거)
-
 ### API
 
 | 컬럼 | 설명 |
@@ -199,9 +192,7 @@ M2에서 추가/변경되는 스키마를 정의합니다. **Conditions 패턴**
 | archive_ttl_seconds | STANDBY→ARCHIVED TTL |
 | last_access_at | 마지막 접속 시각 |
 
-> **desired_state 단일 소유자**: API만 desired_state를 변경할 수 있음
-> - TTL Manager → 내부 서비스 레이어를 통해 API 호출
-> - Proxy (Auto-wake) → 내부 서비스 레이어를 통해 API 호출
+> **desired_state 단일 소유자**: TTL Manager/Proxy(Auto-wake)는 내부 서비스 레이어를 통해 API 호출
 
 ---
 
@@ -217,8 +208,6 @@ M2에서 추가/변경되는 스키마를 정의합니다. **Conditions 패턴**
 | context | dict | reason별 상세 정보 |
 | occurred_at | string | ISO 8601 timestamp |
 
-> 상세: [04-control-plane.md#error-policy](./04-control-plane.md#error-policy)
-
 ---
 
 ## home_ctx 구조
@@ -230,14 +219,6 @@ M2에서 추가/변경되는 스키마를 정의합니다. **Conditions 패턴**
 **용도**:
 - RESTORING 완료 조건 판정에 사용
 - `restore_marker == archive_key` → 복원 완료
-
-**흐름**:
-1. SR이 `StorageProvider.restore()` 호출
-2. StorageProvider가 Storage Job 실행
-3. Job 성공 시 StorageProvider가 restore_marker 반환
-4. SR이 `home_ctx.restore_marker = archive_key` 저장
-
-> **계약 #7 준수**: RESTORING 완료 조건 = `volume_ready=true AND home_ctx.restore_marker=archive_key`
 
 ---
 
@@ -264,7 +245,7 @@ M2에서 추가/변경되는 스키마를 정의합니다. **Conditions 패턴**
 
 ```sql
 -- 1. 새 컬럼 추가
-ALTER TABLE workspaces ADD COLUMN conditions JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE workspaces ADD COLUMN conditions JSONB NOT NULL DEFAULT '{}'
 ALTER TABLE workspaces ADD COLUMN phase VARCHAR(20) NOT NULL DEFAULT 'PENDING';
 
 -- 2. 기존 데이터 마이그레이션
@@ -278,7 +259,7 @@ UPDATE workspaces SET
       END,
       'last_transition_time', observed_at
     ),
-    'infra.docker.container_ready', jsonb_build_object(
+    'infra.container_ready', jsonb_build_object(
       'status', observed_status = 'RUNNING',
       'reason', CASE
         WHEN observed_status = 'RUNNING' THEN 'ContainerRunning'
@@ -313,7 +294,6 @@ UPDATE workspaces SET
   END;
 
 -- 3. desired_state에 ARCHIVED, DELETED 추가
--- (PostgreSQL ENUM 확장)
 ALTER TYPE desired_state_enum ADD VALUE 'ARCHIVED';
 ALTER TYPE desired_state_enum ADD VALUE 'DELETED';
 
@@ -324,22 +304,9 @@ ALTER TYPE desired_state_enum ADD VALUE 'DELETED';
 
 ---
 
-## Known Issues
-
-1. ~~**desired_state 경쟁 조건**: API/TTL Manager 동시 변경 시 Last-Write-Wins~~
-   - **해결됨**: 계약 #3에 따라 API만 desired_state 변경 가능
-
-2. **ENUM 변경 제약**: PostgreSQL에서 ENUM 값 제거 불가
-   - 완화: 애플리케이션 레벨에서 deprecated 값 차단
-
-3. ~~**observed_status에 ERROR 포함**: 리소스 관측과 정책 판정 혼재~~
-   - **해결됨**: Conditions 패턴으로 분리 (ADR-011)
-
----
-
 ## 참조
 
 - [00-contracts.md](./00-contracts.md) - 핵심 계약
-- [02-states.md](./02-states.md) - 상태 정의
+- [02-states.md](./02-states.md) - 상태 정의 (Phase, Operation, SM)
 - [04-control-plane.md](./04-control-plane.md) - Control Plane
-- [ADR-011](../adr/011-declarative-conditions.md) - Conditions 기반 상태 표현
+- [ADR-011](../adr/011-declarative-conditions.md) - Conditions 패턴

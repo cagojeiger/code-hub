@@ -42,17 +42,17 @@ flowchart TB
     end
 ```
 
-### 컴포넌트 실행 주기 (적응형 Polling)
+### 컴포넌트 역할
 
-| 컴포넌트 | 기본 주기 | 가속 주기 | 역할 |
-|---------|----------|----------|------|
-| EventListener | 실시간 | - | PG NOTIFY → Redis PUBLISH (CDC) |
-| HealthMonitor | 30초 | 2초 (operation 진행 중) | 리소스 관측 → conditions/phase 갱신 |
-| StateReconciler | 30초 | 2초 (operation 진행 중), 5초 (수렴 필요) | desired ≠ phase 수렴 |
-| TTL Manager | 1분 | - | TTL 만료 → desired_state 변경 (STANDBY/ARCHIVED) |
-| Archive GC | 1시간 | - | orphan archive 정리 |
+| 컴포넌트 | 역할 |
+|---------|------|
+| EventListener | PG NOTIFY → Redis PUBLISH (CDC) |
+| HealthMonitor | 리소스 관측 → conditions/phase 갱신 |
+| StateReconciler | desired ≠ phase 수렴 |
+| TTL Manager | TTL 만료 → desired_state 변경 |
+| Archive GC | orphan archive 정리 |
 
-> **계약 #2 준수**: 적응형 Polling으로 operation 진행 중 UX 향상 ([Level-Triggered](./00-contracts.md#2-level-triggered-reconciliation))
+> **계약 #2 준수**: Level-Triggered Reconciliation ([00-contracts.md](./00-contracts.md#2-level-triggered-reconciliation))
 
 ### Leader Election (PostgreSQL Session Lock)
 
@@ -102,35 +102,12 @@ HM은 각 Condition을 개별적으로 갱신합니다:
 | `storage.volume_ready` | Volume Provider 호출 | Volume 존재 |
 | `storage.archive_ready` | S3 HEAD 요청 (archive_key 존재 시) | Archive 접근 가능 |
 | `infra.*.container_ready` | Container Provider 호출 | Container running |
-| `policy.healthy` | 아래 규칙 참조 | 불변식 + 정책 준수 |
-
-#### policy.healthy 결정 규칙
-
-| 우선순위 | 조건 | status | reason |
-|---------|------|--------|--------|
-| 1 | container_ready ∧ !volume_ready | false | ContainerWithoutVolume |
-| 2 | archive_key != NULL ∧ !archive_ready | false | ArchiveAccessError |
-| 3 | error_info.is_terminal = true | false | (error_info.reason) |
-| 4 | 그 외 | true | AllConditionsMet |
+| `policy.healthy` | [03-schema.md](./03-schema.md#policyhealthyfalse-조건) 참조 | 불변식 + 정책 준수 |
 
 ### Phase 계산
 
-Conditions 갱신 후 phase를 계산하여 함께 저장:
-
-```python
-def calculate_phase(conditions: dict, deleted_at: datetime | None) -> Phase:
-    if deleted_at:
-        return Phase.DELETED
-    if not conditions["policy.healthy"]["status"]:
-        return Phase.ERROR
-    if conditions["container_ready"]["status"] and conditions["volume_ready"]["status"]:
-        return Phase.RUNNING
-    if conditions["volume_ready"]["status"]:
-        return Phase.STANDBY
-    if conditions.get("storage.archive_ready", {}).get("status"):
-        return Phase.ARCHIVED
-    return Phase.PENDING
-```
+> **정의**: [02-states.md#calculate_phase](./02-states.md#calculate_phase)
+> **policy.healthy 규칙**: [03-schema.md#policy.healthy](./03-schema.md#policyhealthyfalse-조건)
 
 ### Conditions 갱신 흐름
 
@@ -197,24 +174,9 @@ StateReconciler는 desired_state와 phase를 비교하여 상태를 수렴시키
 
 ### Operation 결정 규칙
 
-| phase | desired | → operation |
-|-------|---------|-------------|
-| PENDING | STANDBY/RUNNING | PROVISIONING |
-| ARCHIVED | STANDBY/RUNNING | RESTORING |
-| ARCHIVED | PENDING | archive 삭제 |
-| STANDBY | RUNNING | STARTING |
-| STANDBY | ARCHIVED/PENDING | ARCHIVING |
-| RUNNING | STANDBY/ARCHIVED/PENDING | STOPPING |
-| PENDING/ARCHIVED/ERROR | DELETED | DELETING |
-| ERROR | * (except DELETED) | (skip) |
-
-> RUNNING → PENDING은 직접 불가. STOPPING → ARCHIVING 순차 진행.
+> **정의**: [02-states.md#operation-선택](./02-states.md#operation-선택)
 >
-> **계약 준수**: [#5 Ordered State Machine](./00-contracts.md#5-ordered-state-machine)
->
-> **계약 #4 준수**: `operation != NONE`이면 완료/timeout 체크만 진행, 새 operation 시작 금지 ([Non-preemptive](./00-contracts.md#4-non-preemptive-operation))
->
-> **phase=ERROR**: 새 operation 시작 안 함. 복구 후 reconcile 재개. (단, DELETED 요청은 허용)
+> **계약 준수**: [#4 Non-preemptive](./00-contracts.md#4-non-preemptive-operation), [#5 Ordered SM](./00-contracts.md#5-ordered-state-machine)
 
 ### 완료 조건
 
@@ -242,23 +204,10 @@ StateReconciler는 desired_state와 phase를 비교하여 상태를 수렴시키
 >
 > 이 순서를 반드시 준수하여 데이터 유실 방지. ([Ordering Guarantee](./00-contracts.md#8-ordering-guarantee-역순-금지))
 
-### Timeout
+### Timeout / 재시도
 
-| Operation | Timeout | 초과 시 |
-|-----------|---------|--------|
-| PROVISIONING | 5분 | is_terminal = true |
-| RESTORING | 30분 | is_terminal = true |
-| STARTING | 5분 | is_terminal = true |
-| STOPPING | 5분 | is_terminal = true |
-| ARCHIVING | 30분 | is_terminal = true |
-
-### 재시도 정책
-
-| 항목 | 값 |
-|------|---|
-| 최대 재시도 | 3회 |
-| 재시도 간격 | 30초 (고정) |
-| 한계 초과 | is_terminal = true |
+> **원칙**: Timeout 초과 또는 재시도 3회 초과 시 `is_terminal = true`
+> **구체적 값**: 코드에서 정의 (구현 세부)
 
 ### ERROR 전환 규칙 (계약 #4)
 
@@ -429,7 +378,7 @@ sequenceDiagram
 | 구분 | 값 |
 |------|---|
 | 트리거 대상 | workspaces 테이블 UPDATE |
-| 감시 컬럼 | observed_status, operation, error_info |
+| 감시 컬럼 | phase, operation, error_info |
 | 발행 | pg_notify('workspace_changes', payload) |
 
 ### SSE 엔드포인트
@@ -439,9 +388,9 @@ GET /api/v1/workspaces/{id}/events
 Accept: text/event-stream
 ```
 
-| 항목 | 값 |
-|------|---|
-| Heartbeat | 30초 주기 |
+| 항목 | 설명 |
+|------|------|
+| Heartbeat | 주기적 전송 (구체 값은 코드 정의) |
 | 재연결 | 클라이언트 자동 재연결 |
 
 ### 이벤트 타입
@@ -468,39 +417,14 @@ Accept: text/event-stream
 | context | dict | reason별 상세 정보 |
 | occurred_at | string | ISO 8601 timestamp |
 
-### ErrorReason
+### ErrorReason 분류
 
-| reason | 설명 | 재시도 | is_terminal |
-|--------|------|--------|-------------|
-| Mismatch | 상태 불일치 | 3회 | 초과 시 |
-| Unreachable | API/인프라 호출 실패 | 3회 | 초과 시 |
-| ActionFailed | 작업 실행 실패 | 3회 | 초과 시 |
-| Timeout | 작업 시간 초과 | 0회 | 즉시 |
-| RetryExceeded | 재시도 한계 초과 | - | 항상 |
-| DataLost | 데이터 손실/손상 | 0회 | 즉시 |
+| 분류 | is_terminal | 설명 |
+|------|-------------|------|
+| Transient | 재시도 3회 후 | Mismatch, Unreachable, ActionFailed |
+| Immediate | 즉시 | Timeout, DataLost |
 
-### context 필드 예시
-
-| reason | context 예시 |
-|--------|-------------|
-| Mismatch | `{"expected": "volume_exists=True", "actual": "False"}` |
-| Unreachable | `{"endpoint": "k8s-api", "status_code": 503}` |
-| ActionFailed | `{"action": "archive", "exit_code": 1}` |
-| Timeout | `{"operation": "ARCHIVING", "elapsed_seconds": 1800}` |
-| DataLost | `{"archive_key": "...", "detail": "checksum mismatch"}` |
-| RetryExceeded | `{"max_retries": 3, "last_error": "..."}` |
-
-### 에러 코드 매핑
-
-| 기존 코드 | ErrorReason |
-|----------|-------------|
-| ARCHIVE_NOT_FOUND | DataLost |
-| S3_ACCESS_ERROR | Unreachable |
-| CHECKSUM_MISMATCH | DataLost |
-| TAR_EXTRACT_FAILED | ActionFailed |
-| VOLUME_CREATE_FAILED | ActionFailed |
-| CONTAINER_START_FAILED | ActionFailed |
-| K8S_API_ERROR | Unreachable |
+> **상세 정의**: 코드에서 enum으로 정의 (error_types.py)
 
 ### 책임 분리 (Reporter vs Judge)
 
@@ -522,12 +446,12 @@ Accept: text/event-stream
 
 ### 재시도 책임 분리
 
-| 레벨 | 재시도 | 시간 |
-|------|--------|------|
-| Job 내부 | 3회 | 총 30~60초 |
-| StateReconciler | 3회 | 30초 간격 |
+| 레벨 | 역할 |
+|------|------|
+| Job 내부 | 일시적 오류 재시도 |
+| StateReconciler | Operation 레벨 재시도 |
 
-> **최악의 경우**: Job 내부 3회 × SR 3회 = 9회 (의도된 동작)
+> 각 레벨 3회씩, 최대 9회까지 가능 (의도된 동작)
 
 ### GC 보호
 

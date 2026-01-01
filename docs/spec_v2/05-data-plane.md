@@ -8,12 +8,12 @@
 
 Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 
-| 컴포넌트 | 역할 | 주기 |
-|---------|------|------|
-| InstanceController | Container 생성/삭제 | on-demand |
-| StorageProvider | Volume/Archive 관리 | on-demand |
-| Storage Job | Volume↔Archive 데이터 이동 | on-demand |
-| Archive GC | orphan archive 정리 | 1h |
+| 컴포넌트 | 역할 |
+|---------|------|
+| InstanceController | Container 생성/삭제 |
+| StorageProvider | Volume/Archive 관리 |
+| Storage Job | Volume↔Archive 데이터 이동 |
+| Archive GC | orphan archive 정리 |
 
 ---
 
@@ -40,14 +40,9 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 
 ### 네이밍 규칙
 
-| 항목 | 형식 | 예시 |
-|------|------|------|
-| container_name | `ws-{workspace_id}` | `ws-abc123` |
-| mount_path | `/home/coder` | - |
-
-> K8s DNS-1123 호환: 하이픈(`-`) 사용, 언더스코어(`_`) 금지
+> **정의**: [00-contracts.md#6](./00-contracts.md#6-containervolume-invariant)
 >
-> **Single Writer 원칙**: observed_status는 HealthMonitor만 변경. InstanceController/Reconciler는 리소스 정리만 담당.
+> **Single Writer 원칙**: phase는 HealthMonitor만 변경. InstanceController/Reconciler는 리소스 정리만 담당.
 
 ### 인터페이스
 
@@ -72,11 +67,12 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 | Docker | state.Running == true |
 | K8s | containerStatuses[*].ready == true |
 
-### observed_status별 리소스
+### Phase별 리소스
 
-| observed_status | Container | Volume |
-|-----------------|-----------|--------|
+| Phase | Container | Volume |
+|-------|-----------|--------|
 | PENDING | - | - |
+| ARCHIVED | - | - |
 | STANDBY | - | ✅ |
 | RUNNING | ✅ | ✅ |
 
@@ -86,7 +82,7 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 
 | 항목 | 값 |
 |------|---|
-| 전제 조건 | observed_status=STANDBY, Volume 존재 |
+| 전제 조건 | Phase=STANDBY, Volume 존재 |
 | Actuator | start(workspace_id, image_ref) |
 | 완료 조건 | is_running() == True |
 
@@ -94,7 +90,7 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 
 | 항목 | 값 |
 |------|---|
-| 전제 조건 | observed_status=RUNNING |
+| 전제 조건 | Phase=RUNNING |
 | Actuator | delete(workspace_id) |
 | 완료 조건 | is_running() == False, Volume 유지 |
 
@@ -103,7 +99,7 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 #### DELETING
 
 **삭제 조건** (계약 #5):
-- `observed_status = PENDING` OR `health_status = ERROR`
+- `Phase ∈ {PENDING, ARCHIVED, ERROR}`
 - `operation = NONE` (필수)
 - RUNNING/STANDBY에서 삭제 요청 시: step_down 완료 후 삭제
 
@@ -112,16 +108,9 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 | 1 | deleted_at 설정 (Soft Delete) | API |
 | 2 | Container 삭제 (있는 경우) | InstanceController (via Reconciler) |
 | 3 | Volume 삭제 (있는 경우) | StorageProvider (via Reconciler) |
-| 4 | 리소스 없음 관측 → observed_status=DELETED | HealthMonitor |
+| 4 | 리소스 없음 관측 → Phase=DELETED | HealthMonitor |
 
-> Archive는 GC가 2시간 후 정리
-
-### Timeout
-
-| 단계 | 값 | 설명 |
-|------|---|------|
-| startup_timeout | 300초 | 이미지 pull + 컨테이너 생성 |
-| health_check_timeout | 30초 | running 상태 확인 |
+> Archive는 GC가 지연 후 정리 (계약 #9)
 
 ### 백엔드별 구현
 
@@ -160,18 +149,12 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 **restore() 반환값**:
 - 성공 시: `restore_marker = archive_key` 반환
 - SR이 이 값을 `home_ctx.restore_marker`에 저장
-- 계약 #7 완료 조건: `observed_status=STANDBY AND home_ctx.restore_marker=archive_key`
+- 계약 #7 완료 조건: `Phase=STANDBY AND home_ctx.restore_marker=archive_key`
 
 ### 네이밍 규칙
 
-| 항목 | 형식 | 예시 |
-|------|------|------|
-| container_name | `ws-{workspace_id}` | `ws-abc123` |
-| volume_key | `ws-{workspace_id}-home` | `ws-abc123-home` |
-| archive_key | `{workspace_id}/{op_id}/home.tar.zst` | `abc123/550e8400.../home.tar.zst` |
-| mount_path | `/home/coder` | - |
-
-> K8s DNS-1123 호환: 하이픈(`-`) 사용, 언더스코어(`_`) 금지
+> **Container/Volume**: [00-contracts.md#6](./00-contracts.md#6-containervolume-invariant) 참조
+> **archive_key**: `{workspace_id}/{op_id}/home.tar.zst` (계약 #7)
 
 ### Operation별 Storage 동작
 
@@ -218,9 +201,9 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 |--------|----------|--------|
 | Container | InstanceController | 즉시 |
 | Volume | StorageProvider | Container 삭제 후 |
-| Archives | GC | 2시간 후 |
+| Archives | GC | 지연 삭제 |
 
-> Container/Volume = 컴퓨팅 비용 즉시 해제, Archive = GC 배치 정리
+> Container/Volume = 컴퓨팅 비용 즉시 해제, Archive = GC 배치 정리 (계약 #9)
 
 ---
 
@@ -254,15 +237,6 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 | Workspace | Volume | /home/coder |
 
 > /tmp에 tar.zst, meta, staging 저장. Job 종료 시 자동 삭제.
-
-### 입력 환경변수
-
-| 환경변수 | 설명 |
-|---------|------|
-| ARCHIVE_URL | 전체 경로 (`s3://bucket/{ws_id}/{op_id}/home.tar.zst`) |
-| S3_ENDPOINT | Object Storage 엔드포인트 |
-| S3_ACCESS_KEY | 인증 정보 |
-| S3_SECRET_KEY | 인증 정보 |
 
 ### Restore Job
 
@@ -305,40 +279,10 @@ sha256:{hex_string}
 
 ### tar 안전 원칙
 
-**Restore (추출)**:
-- 절대경로 금지
-- `..` 경로 탈출 방지
-- `--no-same-owner` (소유권 강제 덮어쓰기 금지)
+- 경로 탈출 방지 (절대경로, `..` 금지)
+- 특수파일 제외 (socket, device)
 
-**Archive (생성)**:
-- 특수파일(socket, device) 제외
-
-### 리소스 요구사항
-
-| 작업 | 필요 공간 | 계산 |
-|------|----------|------|
-| Restore | 3.0x | /tmp(tar.zst + staging) + /data |
-| Archive | 2.0x | /tmp(tar.zst) + /data |
-
-> 보수적 추정 (압축률 0% 가정)
-
-### Job Timeout
-
-| 백엔드 | 설정 | 권장값 |
-|--------|------|--------|
-| K8s | activeDeadlineSeconds | 1800초 (30분) |
-| Docker | timeout wrapper | 1800초 |
-
-> 계산 근거: 10GB / 10MB/s = 1000초 + 여유
-
-### 실행 권한
-
-| 백엔드 | 설정 |
-|--------|------|
-| Docker | `--user 1000:1000` |
-| K8s | securityContext (runAsUser: 1000) |
-
-> Job ≠ workspace UID면 Permission denied 발생
+> **구체적 옵션**: 코드에서 정의
 
 ---
 
@@ -348,11 +292,10 @@ sha256:{hex_string}
 
 ### 개요
 
-| 항목 | 값 |
-|------|---|
+| 항목 | 설명 |
+|------|------|
 | 역할 | S3 orphan archive 탐지 및 삭제 |
-| 실행 주기 | 1시간 |
-| 단일 인스턴스 | Coordinator에서 실행 |
+| 실행 | Coordinator에서 주기적 실행 |
 
 ### DELETING vs GC
 
@@ -360,7 +303,7 @@ sha256:{hex_string}
 |------|----------|-----|
 | 트리거 | 사용자 삭제 요청 | 주기적 |
 | 대상 | Volume만 | orphan Archive |
-| 타이밍 | 즉시 | 2시간 지연 |
+| 타이밍 | 즉시 | 지연 삭제 |
 | 목적 | 컴퓨팅 리소스 해제 | 저장공간 회수 |
 
 ### Orphan 발생 원인
@@ -383,21 +326,17 @@ Archive가 **보호 대상이 아니면** orphan입니다.
 | 조건 | 결과 | 이유 |
 |------|------|------|
 | archive_path == ws.archive_key | 보호 | 현재 사용 중 |
-| ws.op_id 있고 경로가 `{id}/{op_id}/`로 시작 | 보호 | 진행 중/health_status=ERROR 상태 |
+| ws.op_id 있고 경로가 `{id}/{op_id}/`로 시작 | 보호 | 진행 중/Phase=ERROR 상태 |
 | ws.deleted_at != NULL | 보호 안 함 | soft-deleted workspace |
 | 그 외 | orphan | 어떤 workspace도 참조하지 않음 |
 
-> **op_id 보호 이유**: ARCHIVING 중 health_status=ERROR 전환되면 op_id만 있고 archive_key 없는 상태. op_id로 보호하여 복구 시 재사용 가능.
+> **op_id 보호 이유**: ARCHIVING 중 Phase=ERROR 전환되면 op_id만 있고 archive_key 없는 상태. op_id로 보호하여 복구 시 재사용 가능.
 
-### 안전 지연 (TTL)
+### 안전 지연
 
-| 항목 | 값 |
-|------|---|
-| 지연 시간 | 2시간 |
-| 목적 | 진행 중인 작업 완료 대기 |
-| 조건 | 2시간 연속 orphan이면 삭제 |
+orphan으로 감지 후 일정 시간 대기 후 삭제 (진행 중인 작업 완료 대기).
 
-> **왜 2시간?**: Archive Job timeout(30분) × 3회 재시도 + 여유
+> **구체적 값**: 코드에서 정의
 
 ### 삭제 대상
 
@@ -455,29 +394,14 @@ flowchart TB
 
 ---
 
-## 에러 코드
+## 에러 처리
 
-### Instance 에러
+> **에러 분류 및 재시도 정책**: [04-control-plane.md#error-policy](./04-control-plane.md#error-policy) 참조
 
-| 코드 | 설명 | 복구 |
+| 분류 | 예시 | 복구 |
 |------|------|------|
-| IMAGE_PULL_FAILED | 이미지 다운로드 실패 | 자동 재시도 |
-| HEALTH_CHECK_FAILED | 헬스체크 타임아웃 | 자동 재시도 |
-| CONTAINER_CREATE_FAILED | 컨테이너 생성 실패 | 관리자 개입 |
-| VOLUME_NOT_FOUND | Volume 없음 | 관리자 개입 |
-
-### Storage 에러
-
-| 코드 | ErrorReason | 복구 |
-|------|-------------|------|
-| ARCHIVE_NOT_FOUND | DataLost | 관리자 개입 (즉시 terminal) |
-| META_NOT_FOUND | DataLost | 관리자 개입 (즉시 terminal) |
-| S3_ACCESS_ERROR | Unreachable | 자동 재시도 (3회) |
-| CHECKSUM_MISMATCH | DataLost | 관리자 개입 (즉시 terminal) |
-| TAR_EXTRACT_FAILED | ActionFailed | 자동 재시도 (3회) |
-| DISK_FULL | ActionFailed | 관리자 개입 |
-
-> 재시도 정책은 [04-control-plane.md#error-policy](./04-control-plane.md#error-policy) 참조
+| Transient | 네트워크 일시 오류, 추출 실패 | 자동 재시도 |
+| Terminal | 데이터 손실, checksum 불일치 | 관리자 개입 |
 
 ---
 
