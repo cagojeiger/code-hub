@@ -97,31 +97,37 @@ graph TB
 
 ## 상태 모델
 
+### 핵심 흐름
+
 ```mermaid
 stateDiagram-v2
-    [*] --> PENDING: 생성
-
-    PENDING --> STANDBY: CREATE (볼륨 생성)
-    PENDING --> ARCHIVED: CREATE_EMPTY_ARCHIVE (빈 아카이브)
-
-    STANDBY --> RUNNING: START (컨테이너 시작)
-    RUNNING --> STANDBY: STOP (컨테이너 정지)
-
-    STANDBY --> ARCHIVED: ARCHIVE (아카이빙)
-    ARCHIVED --> STANDBY: RESTORE (복원)
-
-    STANDBY --> DELETED: DELETE
-    ARCHIVED --> DELETED: DELETE
-
-    RUNNING --> ERROR: 장애
-    STANDBY --> ERROR: 장애
-    ARCHIVED --> ERROR: 장애
-
-    ERROR --> STANDBY: RECOVER (수동)
-    ERROR --> DELETED: DELETE
+    [*] --> PENDING
+    PENDING --> STANDBY: CREATE
+    PENDING --> ARCHIVED: CREATE_EMPTY
+    STANDBY --> RUNNING: START
+    RUNNING --> STANDBY: STOP
+    STANDBY --> ARCHIVED: ARCHIVE
+    ARCHIVED --> STANDBY: RESTORE
 ```
 
-**Phase 순서 (Ordered State Machine):**
+### 전체 전이
+
+| From | To | Operation | 비고 |
+|------|-----|-----------|------|
+| PENDING | STANDBY | PROVISIONING | 볼륨 생성 |
+| PENDING | ARCHIVED | CREATE_EMPTY_ARCHIVE | 빈 아카이브 |
+| STANDBY | RUNNING | STARTING | 컨테이너 시작 |
+| RUNNING | STANDBY | STOPPING | 컨테이너 정지 |
+| STANDBY | ARCHIVED | ARCHIVING | 아카이빙 |
+| ARCHIVED | STANDBY | RESTORING | 복원 |
+| STANDBY | DELETED | DELETING | 볼륨 삭제 |
+| ARCHIVED | DELETED | - | 리소스 없음 |
+| * | ERROR | - | 장애 발생 |
+| ERROR | STANDBY | RECOVER | 수동 개입 필요 |
+| ERROR | DELETED | DELETING | 삭제 허용 |
+
+### Phase 순서 (Ordered State Machine)
+
 ```
 PENDING(0) < ARCHIVED(5) < STANDBY(10) < RUNNING(20)
 ```
