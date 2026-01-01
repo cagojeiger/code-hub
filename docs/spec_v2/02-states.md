@@ -277,11 +277,11 @@ stateDiagram-v2
     state "ERROR" as error
 
     any --> error: healthy=false
-    error --> any: 수동 복구 (error_info 리셋)
+    error --> any: 수동 복구 (error_reason, error_count 리셋)
 
     note right of error
         Conditions는 실제 상태 유지
-        operation=NONE 보장 (C2)
+        operation=NONE 보장 (계약 #4)
     end note
 ```
 
