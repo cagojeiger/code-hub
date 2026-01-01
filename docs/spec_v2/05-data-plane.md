@@ -321,15 +321,18 @@ sha256:{hex_string}
 
 ### 보호 규칙
 
-Archive가 **보호 대상이 아니면** orphan입니다.
+> **SSOT**: [00-contracts.md#9 GC Separation & Protection](./00-contracts.md#9-gc-separation--protection)
 
-| 조건 | 결과 | 이유 |
-|------|------|------|
-| archive_path == ws.archive_key | 보호 | 현재 사용 중 |
-| ws.op_id 있고 경로가 `{id}/{op_id}/`로 시작 | 보호 | 진행 중/Phase=ERROR 상태 |
-| ws.deleted_at != NULL | 보호 안 함 | soft-deleted workspace |
-| 그 외 | orphan | 어떤 workspace도 참조하지 않음 |
+Archive가 **보호 대상이 아니면** orphan입니다. 보호 판정은 **우선순위 순서**로 적용:
 
+| 우선순위 | 조건 | archive_key 경로 | op_id 경로 |
+|---------|------|-----------------|-----------|
+| 1 | deleted_at != NULL | 보호 유지 | **보호 해제** |
+| 2 | healthy = false | 보호 | 보호 |
+| 3 | op_id 존재 | - | 보호 |
+
+> **사용자 의도 우선**: deleted_at 설정 = 사용자가 삭제 원함 → op_id 보호 해제 (archive_key는 보호 유지)
+>
 > **op_id 보호 이유**: ARCHIVING 중 Phase=ERROR 전환되면 op_id만 있고 archive_key 없는 상태. op_id로 보호하여 복구 시 재사용 가능.
 
 ### 안전 지연

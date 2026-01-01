@@ -106,6 +106,15 @@ RO는 각 Condition을 개별적으로 갱신합니다:
 
 ### Phase 계산
 
+RO는 conditions 갱신 후 phase를 계산합니다:
+
+```python
+phase = calculate_phase(conditions, ws.deleted_at, ws.archive_key)
+```
+
+> **일시 장애 안정성**: S3 일시 장애(ArchiveUnreachable/Timeout) 시
+> archive_key가 존재하면 ARCHIVED 상태 유지
+
 > **정의**: [02-states.md#calculate_phase](./02-states.md#calculate_phase)
 > **policy.healthy 규칙**: [03-schema.md#policy.healthy](./03-schema.md#policyhealthyfalse-조건)
 
@@ -190,8 +199,22 @@ OperationController는 desired_state와 phase를 비교하여 상태를 수렴�
 | STARTING | RUNNING | phase == RUNNING |
 | STOPPING | STANDBY | phase == STANDBY |
 | ARCHIVING | ARCHIVED | phase == ARCHIVED AND archive_key != NULL |
+| CREATE_EMPTY_ARCHIVE | ARCHIVED | phase == ARCHIVED AND archive_key != NULL |
 
 > 완료 시: `operation = NONE`, `error_count = 0`, `error_info = NULL`
+
+### CREATE_EMPTY_ARCHIVE
+
+PENDING에서 ARCHIVED로 직접 전이 시 사용 (Ordered SM 단조 경로):
+
+1. 빈 tar.zst 생성 (메모리, ~50 bytes)
+2. S3 업로드 (`{workspace_id}/{op_id}/home.tar.zst`)
+3. archive_key 설정
+4. RO 관측 → `archive_ready = true` → `phase = ARCHIVED`
+5. operation = NONE
+
+> **단조 경로**: PENDING(0) → ARCHIVED(5) 직접 전이 (step_up)
+> **결과**: 빈 Archive 생성 (복원 시 빈 Volume으로 시작)
 
 **RESTORING 완료 조건** (계약 #7):
 1. RO가 Volume 존재 관측 → `volume_ready = true` → `phase = STANDBY`
@@ -528,7 +551,7 @@ sequenceDiagram
    - **완화됨**: 적응형 Polling으로 operation 진행 중 2초 주기
 2. **Operation 중단 불가**: 시작 후 취소 불가, 완료까지 대기
 3. **순차적 전이**: RUNNING → PENDING 직접 불가 (STOPPING → ARCHIVING 순차)
-4. **재시도 간격 고정**: 지수 백오프 미적용 (M2)
+4. ~~**재시도 간격 고정**: 지수 백오프 미적용~~ → M2에서 구현 예정
 5. ~~**desired_state 경쟁**: API/TTL Manager/Proxy 동시 변경 시 Last-Write-Wins~~
    - **해결됨**: 계약 #3에 따라 API만 desired_state 변경 가능
 6. **ERROR 자동 복구 불가**: 관리자 수동 개입 필요 (error_info, error_count 리셋)

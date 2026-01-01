@@ -70,7 +70,7 @@ flowchart TB
 
 | 순서 | 문서 | 역할 |
 |------|------|------|
-| 0 | [00-contracts.md](./00-contracts.md) | 핵심 계약 9개 (SSOT, 충돌 시 우선) |
+| 0 | [00-contracts.md](./00-contracts.md) | 핵심 계약 10개 (SSOT, 충돌 시 우선) |
 | 1 | [01-glossary.md](./01-glossary.md) | 용어집 |
 | 2 | [02-states.md](./02-states.md) | 상태 모델 + 전이 규칙 |
 | 3 | [03-schema.md](./03-schema.md) | DB 스키마 + 컬럼 소유권 |
@@ -83,7 +83,7 @@ flowchart TB
 
 ### 00-contracts.md (핵심 계약)
 
-9개 핵심 계약의 SSOT. 다른 문서와 충돌 시 이 문서가 우선.
+10개 핵심 계약의 SSOT. 다른 문서와 충돌 시 이 문서가 우선.
 
 | # | 계약 |
 |---|------|
@@ -96,6 +96,7 @@ flowchart TB
 | 7 | Archive/Restore Contract |
 | 8 | Ordering Guarantee |
 | 9 | GC Separation & Protection |
+| 10 | Retry Policy |
 
 ### 04-control-plane.md
 

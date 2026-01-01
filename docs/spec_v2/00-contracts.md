@@ -86,7 +86,21 @@
 
 - step_up: 낮은 Level → 높은 Level (한 단계씩)
 - step_down: 높은 Level → 낮은 Level (한 단계씩)
-- **RUNNING → PENDING 직접 전이 금지** (순차 전이 필수)
+- 모든 경로가 **단조(monotonic)** - 상승/하강 혼합 없음
+
+**Operation별 전이**:
+
+| Operation | 전이 | 방향 |
+|-----------|------|------|
+| CREATE_EMPTY_ARCHIVE | PENDING(0) → ARCHIVED(5) | step_up |
+| PROVISIONING | PENDING(0) → STANDBY(10) | step_up |
+| RESTORING | ARCHIVED(5) → STANDBY(10) | step_up |
+| STARTING | STANDBY(10) → RUNNING(20) | step_up |
+| STOPPING | RUNNING(20) → STANDBY(10) | step_down |
+| ARCHIVING | STANDBY(10) → ARCHIVED(5) | step_down |
+
+> **PENDING 미포함**: PENDING은 desired_state가 아님 (phase로만 존재)
+> **단조 경로 보장**: CREATE_EMPTY_ARCHIVE로 비단조 경로(0→10→5) 제거
 
 **예외 상태** (Ordered SM 미적용):
 

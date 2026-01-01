@@ -40,30 +40,81 @@ Phase는 Conditions에서 계산되는 **파생 값**입니다.
 
 > **resources**: `volume_ready ∨ container_ready ∨ archive_ready`
 > **Phase 캐시**: RO가 conditions 변경 시 phase 컬럼도 함께 계산/저장
+>
+> **일시 장애 예외**: S3 일시 장애(ArchiveUnreachable/Timeout) 시
+> `archive_ready.status=false`여도 `archive_key` 존재하면 ARCHIVED 유지
+> (상세: calculate_phase() 참조)
 
 ### calculate_phase()
 
 ```python
-def calculate_phase(conditions: dict, deleted_at: datetime | None) -> Phase:
-    """Phase 계산 로직 (유일한 정의)"""
+def calculate_phase(
+    conditions: dict,
+    deleted_at: datetime | None,
+    archive_key: str | None = None
+) -> Phase:
+    """Phase 계산 로직 (유일한 정의)
+
+    Args:
+        conditions: Condition 상태 딕셔너리 (빈 dict 허용)
+        deleted_at: Soft delete 시각
+        archive_key: Archive 경로 (일시 장애 시 ARCHIVED 유지 판정에 사용)
+
+    Note:
+        conditions가 빈 딕셔너리일 수 있으므로 기본값 병합 후 계산.
+    """
+    # 기본값 정의 (관측 전 상태)
+    defaults = {
+        "storage.volume_ready": {"status": False, "reason": "NotObserved"},
+        "storage.archive_ready": {"status": False, "reason": "NotObserved"},
+        "infra.container_ready": {"status": False, "reason": "NotObserved"},
+        "policy.healthy": {"status": True, "reason": "NotObserved"},  # 관측 전엔 healthy
+    }
+
+    # 기본값과 실제값 병합
+    def merge(key):
+        return {**defaults.get(key, {}), **conditions.get(key, {})}
+
+    cond = {k: merge(k) for k in defaults}
+
+    # 삭제 처리
     if deleted_at:
         has_resources = (
-            conditions.get("storage.volume_ready", {}).get("status") or
-            conditions.get("infra.container_ready", {}).get("status") or
-            conditions.get("storage.archive_ready", {}).get("status")
+            cond["storage.volume_ready"]["status"] or
+            cond["infra.container_ready"]["status"] or
+            cond["storage.archive_ready"]["status"]
         )
         return Phase.DELETING if has_resources else Phase.DELETED
 
-    if not conditions["policy.healthy"]["status"]:
+    # 정책 위반 체크
+    if not cond["policy.healthy"]["status"]:
         return Phase.ERROR
-    if conditions["infra.container_ready"]["status"] and conditions["storage.volume_ready"]["status"]:
+
+    # 정상 상태 판정
+    if cond["infra.container_ready"]["status"] and cond["storage.volume_ready"]["status"]:
         return Phase.RUNNING
-    if conditions["storage.volume_ready"]["status"]:
+    if cond["storage.volume_ready"]["status"]:
         return Phase.STANDBY
-    if conditions.get("storage.archive_ready", {}).get("status"):
+    if cond["storage.archive_ready"]["status"]:
         return Phase.ARCHIVED
+
+    # 일시 장애 시 archive_key 존재하면 ARCHIVED 유지
+    if archive_key:
+        reason = cond["storage.archive_ready"].get("reason", "")
+        if reason in ["ArchiveUnreachable", "ArchiveTimeout"]:
+            return Phase.ARCHIVED
+
     return Phase.PENDING
 ```
+
+**기본값 정책**:
+- `policy.healthy`: **true** (관측 전에는 건강하다고 가정)
+- 나머지: **false** (리소스 존재를 가정하지 않음)
+
+> **안전성**: 빈 conditions에도 기본값을 적용하여 KeyError 없이 안전하게 계산
+>
+> **일시 장애 안정성**: S3 일시 장애(ArchiveUnreachable/Timeout) 시
+> archive_key가 존재하면 ARCHIVED 상태 유지
 
 ---
 
@@ -79,6 +130,7 @@ Operation은 **현재 진행 중인 작업**을 표현합니다.
 | STARTING | Container 시작 중 |
 | STOPPING | Container 정지 중 |
 | ARCHIVING | Volume → Archive 중 |
+| CREATE_EMPTY_ARCHIVE | 빈 Archive 생성 중 |
 | DELETING | 전체 삭제 중 |
 
 > **순수 데이터**: 전이 규칙은 State Machine 섹션 참조
@@ -90,11 +142,13 @@ Operation은 **현재 진행 중인 작업**을 표현합니다.
 | desired_state | 의미 |
 |---------------|------|
 | DELETED | 삭제 요청 |
-| PENDING | 리소스 없음 (Archive도 없음) |
 | ARCHIVED | Archive만 유지 |
 | STANDBY | Volume만 유지 |
 | RUNNING | 실행 상태 |
 
+> **PENDING 미포함**: PENDING은 phase로만 존재 (초기 상태)
+> 사용자가 요청할 수 없음 - 삭제는 DELETED, 보관은 ARCHIVED 사용
+>
 > **API 소유**: desired_state는 API만 변경 가능
 
 ---
@@ -156,14 +210,16 @@ desired_state와 현재 Phase의 불일치를 해소하기 위한 Operation 선�
 
 | 현재 Phase | desired | → operation |
 |-----------|---------|-------------|
+| PENDING | ARCHIVED | CREATE_EMPTY_ARCHIVE |
 | PENDING | STANDBY+ | PROVISIONING |
 | ARCHIVED | STANDBY+ | RESTORING |
 | STANDBY | RUNNING | STARTING |
-| STANDBY | ARCHIVED- | ARCHIVING |
+| STANDBY | ARCHIVED | ARCHIVING |
 | RUNNING | STANDBY- | STOPPING |
 
 > **STANDBY+**: STANDBY 또는 RUNNING (상승)
-> **ARCHIVED-**: ARCHIVED 또는 PENDING (하강)
+> **STANDBY-**: STANDBY 또는 ARCHIVED (하강)
+> **Note**: PENDING은 desired_state가 아님 - 하강 시 ARCHIVED까지만
 
 ### 삭제 Operation
 
@@ -187,11 +243,11 @@ stateDiagram-v2
     [*] --> PENDING: 생성 (새 workspace)
     [*] --> ARCHIVED: 생성 (기존 archive 존재)
     PENDING --> STANDBY: PROVISIONING
+    PENDING --> ARCHIVED: CREATE_EMPTY_ARCHIVE
     ARCHIVED --> STANDBY: RESTORING
     STANDBY --> RUNNING: STARTING
     RUNNING --> STANDBY: STOPPING
     STANDBY --> ARCHIVED: ARCHIVING
-    ARCHIVED --> PENDING: archive 삭제
 ```
 
 ### step_up 분기
@@ -199,9 +255,11 @@ stateDiagram-v2
 ```mermaid
 flowchart TD
     D{현재 Phase?}
-    D -->|PENDING| PR[PROVISIONING]
+    D -->|PENDING + desired=STANDBY+| PR[PROVISIONING]
+    D -->|PENDING + desired=ARCHIVED| CEA[CREATE_EMPTY_ARCHIVE]
     D -->|ARCHIVED| R[RESTORING]
     PR --> S[STANDBY]
+    CEA --> A[ARCHIVED]
     R --> S
     S --> T[STARTING]
     T --> U[RUNNING]
@@ -234,6 +292,7 @@ stateDiagram-v2
 |-------|-----------|------|
 | PENDING | NONE | 새 workspace |
 | PENDING | PROVISIONING | Volume 생성 중 |
+| PENDING | CREATE_EMPTY_ARCHIVE | 빈 Archive 생성 중 |
 | ARCHIVED | NONE | Archive만 존재 |
 | ARCHIVED | RESTORING | 복원 중 |
 | STANDBY | NONE | Volume 준비됨 |
@@ -252,13 +311,15 @@ stateDiagram-v2
 
 ### 허용 전환
 
-| 현재 Phase | → PENDING | → ARCHIVED | → STANDBY | → RUNNING | → DELETED |
-|-----------|-----------|------------|-----------|-----------|-----------|
-| PENDING | - | ✓ | ✓ | ✓ | ✓ |
-| ARCHIVED | ✓ | - | ✓ | ✓ | ✓ |
-| STANDBY | ✓ | ✓ | - | ✓ | step_down 후 |
-| RUNNING | ✓ | ✓ | ✓ | - | step_down 후 |
-| ERROR | 복구 후 | 복구 후 | 복구 후 | 복구 후 | ✓ |
+| 현재 Phase | → ARCHIVED | → STANDBY | → RUNNING | → DELETED |
+|-----------|------------|-----------|-----------|-----------|
+| PENDING | ✓ | ✓ | ✓ | ✓ |
+| ARCHIVED | - | ✓ | ✓ | ✓ |
+| STANDBY | ✓ | - | ✓ | step_down 후 |
+| RUNNING | ✓ | ✓ | - | step_down 후 |
+| ERROR | 복구 후 | 복구 후 | 복구 후 | ✓ |
+
+> **PENDING 미포함**: PENDING은 desired_state가 아님 (phase로만 존재)
 
 ### 409 Conflict
 

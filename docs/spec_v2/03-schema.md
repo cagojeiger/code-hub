@@ -67,10 +67,12 @@
 ### operation
 
 > **정의**: [02-states.md#operation](./02-states.md#operation-진행-상태)
+> **ENUM 값**: NONE, PROVISIONING, RESTORING, STARTING, STOPPING, ARCHIVING, CREATE_EMPTY_ARCHIVE, DELETING
 
 ### desired_state
 
 > **정의**: [02-states.md#desired_state](./02-states.md#desired_state-목표)
+> **ENUM 값**: DELETED, ARCHIVED, STANDBY, RUNNING (PENDING 미포함)
 
 ---
 
@@ -126,6 +128,23 @@
 | `policy.healthy` | ResourceObserver | 불변식 + 정책 준수 |
 
 > **Canonical 키**: OC/API/UI는 백엔드 무관 `infra.container_ready` 사용. RO가 실제 백엔드(Docker/K8s) 관측 결과를 Canonical 키에 기록
+
+### conditions 초기값 정책
+
+| 상황 | conditions 값 | Phase 결과 |
+|------|--------------|-----------|
+| Workspace 생성 직후 | `{}` (빈 dict) | PENDING |
+| RO 첫 관측 후 | 모든 Condition 포함 | 실제 상태 반영 |
+
+**기본값 정책** (calculate_phase 내부):
+- `policy.healthy`: **true** (관측 전에는 건강하다고 가정)
+- `storage.volume_ready`: **false** (리소스 존재를 가정하지 않음)
+- `storage.archive_ready`: **false** (리소스 존재를 가정하지 않음)
+- `infra.container_ready`: **false** (리소스 존재를 가정하지 않음)
+
+> **안전성**: calculate_phase()가 빈 conditions에도 기본값을 적용하여 KeyError 없이 안전하게 계산
+>
+> **구현**: [02-states.md#calculate_phase](./02-states.md#calculate_phase)
 
 ---
 
