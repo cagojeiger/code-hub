@@ -247,6 +247,7 @@ stateDiagram-v2
 ```mermaid
 sequenceDiagram
     U->>API: POST /workspaces
+    API->>DB: desired_state = RUNNING
     API->>U: 201 (desired=RUNNING)
     R->>R: PROVISIONING (PENDING → STANDBY)
     R->>R: STARTING (STANDBY → RUNNING)
@@ -277,6 +278,7 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     U->>API: PATCH {desired: RUNNING}
+    API->>DB: desired_state = RUNNING
     R->>R: RESTORING (ARCHIVED → STANDBY)
     R->>R: STARTING (STANDBY → RUNNING)
 ```
