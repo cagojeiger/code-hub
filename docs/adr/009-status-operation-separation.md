@@ -1,7 +1,15 @@
 # ADR-009: Status와 Operation 분리
 
 ## 상태
-Proposed
+Partially Superseded by [ADR-011](./011-declarative-conditions.md)
+
+### Superseded 부분
+- status 분리 개념 → ADR-011의 Conditions 패턴으로 대체
+
+### 여전히 유효한 부분
+- operation 분리 개념 (동시성 제어)
+- operation/op_id CAS 규칙
+- Reconciler 로직 단순화 (operation != NONE 체크)
 
 ## 컨텍스트
 
@@ -113,3 +121,10 @@ status는 단일 컬럼 유지하고 `is_transitioning: boolean`만 추가하는
 전환 이력을 별도 테이블에 기록하는 방식.
 
 미선택 이유: 현재 상태 조회 시 JOIN 필요, 복잡도 증가.
+
+## 변경 이력
+
+| 날짜 | 변경 내용 |
+|------|----------|
+| 초기 | Proposed |
+| 2026-01 | Partially Superseded by ADR-011 (status 분리만 대체, operation 개념 유지) |

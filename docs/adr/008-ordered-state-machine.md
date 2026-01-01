@@ -1,7 +1,15 @@
 # ADR-008: Ordered State Machine 패턴 채택
 
 ## 상태
-Accepted
+Partially Superseded by [ADR-011](./011-declarative-conditions.md)
+
+### Superseded 부분
+- observed_status 표현 방식 → ADR-011의 Conditions 패턴으로 대체
+
+### 여전히 유효한 부분
+- desired_state 레벨 개념 (PENDING < STANDBY < RUNNING)
+- step_up/step_down 전이 규칙
+- Active/Archive 분리 모델
 
 ## 컨텍스트
 
@@ -333,6 +341,7 @@ stateDiagram-v2
 |------|----------|
 | 초기 | Proposed |
 | 2025-01 | Active + Archive 분리 모델로 수정, COLD→ARCHIVED(파생), WARM→STANDBY, INITIALIZING→PROVISIONING |
+| 2026-01 | Partially Superseded by ADR-011 (observed_status 표현 방식만 대체) |
 
 ## 참고 자료
 - [Kubernetes Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/)
