@@ -187,7 +187,7 @@ flowchart TB
 | RESTORING | volume_ready == true AND restore_marker == archive_key |
 | STARTING | container_ready == true |
 | STOPPING | container_ready == false |
-| ARCHIVING | volume_ready == false AND archive_key != NULL |
+| ARCHIVING | volume_ready == false AND archive_ready == true AND archive_key != NULL |
 | CREATE_EMPTY_ARCHIVE | archive_ready == true AND archive_key != NULL |
 
 > 완료 시: phase 재계산 → `operation = NONE`, `error_count = 0`, `error_reason = NULL`
@@ -508,7 +508,7 @@ sequenceDiagram
 1. ~~**관측 지연**: 최대 30초~~
    - **해결됨**: 단일 WC로 통합, operation 진행 중 2초 주기
 2. **Operation 중단 불가**: 시작 후 취소 불가, 완료까지 대기
-3. **순차적 전이**: RUNNING → PENDING 직접 불가 (STOPPING → ARCHIVING 순차)
+3. **순차적 전이**: RUNNING → ARCHIVED 직접 불가 (STOPPING → ARCHIVING 순차)
 4. ~~**재시도 간격 고정**: 지수 백오프 미적용~~ → M2에서 구현 예정
 5. ~~**desired_state 경쟁**: API/TTL Manager/Proxy 동시 변경 시 Last-Write-Wins~~
    - **해결됨**: 계약 #3에 따라 API만 desired_state 변경 가능

@@ -98,7 +98,7 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 
 #### DELETING
 
-**삭제 조건** (계약 #5):
+**삭제 조건**:
 - `Phase ∈ {PENDING, ARCHIVED, ERROR}`
 - `operation = NONE` (필수)
 - RUNNING/STANDBY에서 삭제 요청 시: step_down 완료 후 삭제
@@ -171,7 +171,7 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 |-----------|----------|----------|
 | PROVISIONING | provision() | volume_ready == true |
 | RESTORING | provision() + restore() | volume_ready == true AND restore_marker == archive_key |
-| ARCHIVING | archive() + delete_volume() | volume_ready == false AND archive_key != NULL |
+| ARCHIVING | archive() + delete_volume() | volume_ready == false AND archive_ready == true AND archive_key != NULL |
 | DELETING | delete() + delete_volume() | container_ready == false AND volume_ready == false |
 
 > **계약 #1 준수**: Actuator 성공 반환 ≠ 완료. conditions 기반 완료 판정.
