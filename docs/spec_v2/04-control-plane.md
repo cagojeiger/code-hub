@@ -134,6 +134,7 @@ flowchart TB
 
     subgraph Control["3. Control"]
         PHASE{"phase == ERROR?"}
+        DEL{"desired == DELETED?"}
         OP{"operation != NONE?"}
         CONV{"phase == desired?"}
         CHECK["완료/timeout 체크"]
@@ -144,7 +145,9 @@ flowchart TB
     SAVE["단일 트랜잭션 저장<br/>(conditions, phase, operation, ...)"]
 
     START --> OBS --> COND --> CALC --> INV --> HEALTH --> PHASE
-    PHASE -->|Yes| SAVE
+    PHASE -->|Yes| DEL
+    DEL -->|Yes| OP
+    DEL -->|No| SAVE
     PHASE -->|No| OP
     OP -->|Yes| CHECK --> SAVE
     OP -->|No| CONV
