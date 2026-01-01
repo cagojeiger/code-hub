@@ -9,8 +9,8 @@
 ## 목차
 
 1. [Coordinator](#coordinator)
-2. [HealthMonitor](#healthmonitor)
-3. [StateReconciler](#statereconciler)
+2. [ResourceObserver](#resourceobserver)
+3. [OperationController](#operationcontroller)
 4. [TTL Manager](#ttl-manager)
 5. [Events](#events)
 6. [Activity](#activity)
@@ -35,8 +35,8 @@ Coordinator는 모든 백그라운드 프로세스를 관리하는 **단일 리�
 flowchart TB
     subgraph Coordinator["Coordinator Process<br/>(pg_advisory_lock 보유)"]
         EL["EventListener<br/>(실시간)"]
-        HM["HealthMonitor<br/>(30s 주기)"]
-        SR["StateReconciler<br/>(10s 주기)"]
+        RO["ResourceObserver<br/>(30s 주기)"]
+        OC["OperationController<br/>(10s 주기)"]
         TTL["TTL Manager<br/>(1m 주기)"]
         GC["Archive GC<br/>(1h 주기)"]
     end
@@ -47,8 +47,8 @@ flowchart TB
 | 컴포넌트 | 역할 |
 |---------|------|
 | EventListener | PG NOTIFY → Redis PUBLISH (CDC) |
-| HealthMonitor | 리소스 관측 → conditions/phase 갱신 |
-| StateReconciler | desired ≠ phase 수렴 |
+| ResourceObserver | 리소스 관측 → conditions/phase 갱신 |
+| OperationController | desired ≠ phase 수렴 |
 | TTL Manager | TTL 만료 → desired_state 변경 |
 | Archive GC | orphan archive 정리 |
 
@@ -74,9 +74,9 @@ flowchart TB
 
 ---
 
-## HealthMonitor
+## ResourceObserver
 
-HealthMonitor는 실제 리소스 상태를 관측하고 DB에 반영하는 **관측자** 컴포넌트입니다.
+ResourceObserver는 실제 리소스 상태를 **관측**(observe)하고 DB에 반영하는 **관측자** 컴포넌트입니다.
 
 > **계약 준수**: [#1 Reality vs DB](./00-contracts.md#1-reality-vs-db-진실의-원천)
 
@@ -84,8 +84,8 @@ HealthMonitor는 실제 리소스 상태를 관측하고 DB에 반영하는 **�
 
 1. **진실(Reality) = 실제 리소스**: Container/Volume/Archive의 실제 존재 여부가 진실
 2. **DB = Last Observed Truth**: DB는 마지막 관측치일 뿐
-3. **HealthMonitor 중단 = DB Stale**: HM이 멈추면 DB 상태가 실제와 괴리될 수 있음
-4. **Conditions 기반**: 개별 Condition 갱신 → phase 계산
+3. **ResourceObserver 중단 = DB Stale**: RO가 멈추면 DB 상태가 실제와 괴리될 수 있음
+4. **Conditions 기반**: 개별 Condition 갱신 → phase **판정**(judge)
 
 ### 입출력
 
@@ -95,7 +95,7 @@ HealthMonitor는 실제 리소스 상태를 관측하고 DB에 반영하는 **�
 
 ### Conditions 갱신 규칙
 
-HM은 각 Condition을 개별적으로 갱신합니다:
+RO는 각 Condition을 개별적으로 갱신합니다:
 
 | Condition | 관측 방법 | status=true 조건 |
 |-----------|----------|-----------------|
@@ -138,27 +138,30 @@ flowchart TB
 | ArchiveAccessError | archive_key != NULL ∧ !archive_ready | policy.healthy = {status: false, reason: "ArchiveAccessError"} |
 
 > **계약 준수**: [#3 Single Writer](./00-contracts.md#3-single-writer-principle)
-> **Single Writer 완전 준수**: error_info는 SR 소유, conditions는 HM 소유 (예외 규칙 제거)
+> **Single Writer 완전 준수**: error_info는 OC 소유, conditions는 RO 소유 (예외 규칙 제거)
 > **Conditions 유지**: Phase=ERROR 시에도 volume_ready/container_ready는 실제 상태 반영
 
 ### 즉시 관측 (Edge Hint)
 
-StateReconciler가 operation 완료 후 Redis `monitor:trigger` 채널로 즉시 관측 요청.
+OperationController가 operation 완료 후 Redis `monitor:trigger` 채널로 즉시 관측 요청.
 
 ---
 
-## StateReconciler
+## OperationController
 
-StateReconciler는 desired_state와 phase를 비교하여 상태를 수렴시키는 **실행자** 컴포넌트입니다.
+OperationController는 desired_state와 phase를 비교하여 상태를 수렴시키는 **제어자** 컴포넌트입니다.
+
+- **계획**(plan): desired ≠ phase → operation 결정
+- **실행**(execute): operation 실행 (Actuator 호출)
 
 > **계약 준수**: [#2 Level-Triggered Reconciliation](./00-contracts.md#2-level-triggered-reconciliation)
 
 ### 핵심 원칙 (Level-Triggered 4단계)
 
 1. **DB만 읽는다**: 이벤트가 아닌 현재 DB 상태 기준
-2. **Plan**: desired ≠ phase → operation 결정
-3. **Execute**: operation 실행 (Actuator 호출)
-4. **완료 판정**: phase == operation.target (HM이 관측 후 phase 계산)
+2. **계획(Plan)**: desired ≠ phase → operation 결정
+3. **실행(Execute)**: operation 실행 (Actuator 호출)
+4. **완료 판정**: phase == operation.target (RO가 관측 후 phase 계산)
 
 ### 불변식
 
@@ -191,12 +194,12 @@ StateReconciler는 desired_state와 phase를 비교하여 상태를 수렴시키
 > 완료 시: `operation = NONE`, `error_count = 0`, `error_info = NULL`
 
 **RESTORING 완료 조건** (계약 #7):
-1. HM이 Volume 존재 관측 → `volume_ready = true` → `phase = STANDBY`
-2. SR이 `home_ctx.restore_marker == archive_key` 확인 → 복원 완료
+1. RO가 Volume 존재 관측 → `volume_ready = true` → `phase = STANDBY`
+2. OC가 `home_ctx.restore_marker == archive_key` 확인 → 복원 완료
 
 > 두 조건 모두 충족해야 RESTORING 완료. restore_marker 미설정 시 미완료 판정
 >
-> **완료 판정 원칙**: StateReconciler는 DB만 읽어서 판정. HealthMonitor가 실제 리소스를 관측.
+> **완료 판정 원칙**: OperationController는 DB만 읽어서 판정. ResourceObserver가 실제 리소스를 관측.
 >
 > **ARCHIVING 순서 보장** (계약 #8):
 > 1. archive() 호출 후 archive_key를 DB에 저장
@@ -213,12 +216,12 @@ StateReconciler는 desired_state와 phase를 비교하여 상태를 수렴시키
 
 | 단계 | 컴포넌트 | 동작 |
 |------|----------|------|
-| 1 | StateReconciler | `is_terminal=true` 판정 시 `operation=NONE` 리셋 |
-| 2 | StateReconciler | `error_info` 설정 (reason, message, is_terminal, context) |
-| 3 | StateReconciler | `op_id` 유지 (GC 보호) |
-| 4 | HealthMonitor | error_info.is_terminal 확인 → `policy.healthy = {status: false}` → phase=ERROR |
+| 1 | OperationController | `is_terminal=true` 판정 시 `operation=NONE` 리셋 |
+| 2 | OperationController | `error_info` 설정 (reason, message, is_terminal, context) |
+| 3 | OperationController | `op_id` 유지 (GC 보호) |
+| 4 | ResourceObserver | error_info.is_terminal 확인 → `policy.healthy = {status: false}` → phase=ERROR |
 
-> **Single Writer 준수**: SR이 operation/op_id/error_info 설정, HM이 conditions/phase 설정
+> **Single Writer 준수**: OC가 operation/op_id/error_info 설정, RO가 conditions/phase 설정
 >
 > **Conditions 유지**: ERROR 시에도 volume_ready/container_ready는 실제 리소스 상태 반영
 >
@@ -346,7 +349,7 @@ sequenceDiagram
 | 시점 | 주체 | 값 |
 |------|------|---|
 | workspace 생성 | API | NOW() |
-| STOPPING 완료 | StateReconciler | NOW() |
+| STOPPING 완료 | OperationController | NOW() |
 
 ---
 
@@ -411,7 +414,7 @@ Accept: text/event-stream
 |------|------|------|
 | reason | string | 에러 유형 |
 | message | string | 사람이 읽는 메시지 |
-| is_terminal | bool | true면 HM이 policy.healthy=false → phase=ERROR로 설정 |
+| is_terminal | bool | true면 RO가 policy.healthy=false → phase=ERROR로 설정 |
 | operation | string | 실패한 operation |
 | error_count | int | 연속 실패 횟수 |
 | context | dict | reason별 상세 정보 |
@@ -430,26 +433,26 @@ Accept: text/event-stream
 
 | 컴포넌트 | 역할 | 책임 |
 |---------|------|------|
-| StateReconciler | **Reporter** (에러 사실 기록자) | error_info, error_count 설정, is_terminal 판정 |
-| HealthMonitor | **Judge** (에러 상태 판정자) | is_terminal 읽고 policy.healthy=false → phase=ERROR 설정 |
+| OperationController | **Reporter** (에러 사실 기록자) | error_info, error_count 설정, is_terminal 판정 |
+| ResourceObserver | **Judge** (에러 상태 판정자) | is_terminal 읽고 policy.healthy=false → phase=ERROR 설정 |
 
-**왜 SR이 에러를 기록하나?**
-- SR이 Actuator를 호출하므로, 실패를 **가장 먼저 알 수 있음** (정보의 근접성)
-- SR이 op_started_at을 설정하므로, 타임아웃을 **직접 계산 가능**
+**왜 OC가 에러를 기록하나?**
+- OC가 Actuator를 호출하므로, 실패를 **가장 먼저 알 수 있음** (정보의 근접성)
+- OC가 op_started_at을 설정하므로, 타임아웃을 **직접 계산 가능**
 - 역할 과다가 아닌 **Orchestrator의 필수 책임**
 
 **분산 에러 처리 흐름**:
-1. SR: 에러 조건 감지 → error_info 기록 ("throw" 역할)
-2. HM: error_info.is_terminal 확인 → policy.healthy=false → phase=ERROR ("catch" 역할)
+1. OC: 에러 조건 감지 → error_info 기록 ("throw" 역할)
+2. RO: error_info.is_terminal 확인 → policy.healthy=false → phase=ERROR ("catch" 역할)
 
-> **Single Writer 완전 준수**: error_info는 SR 소유, conditions는 HM 소유 (예외 규칙 제거)
+> **Single Writer 완전 준수**: error_info는 OC 소유, conditions는 RO 소유 (예외 규칙 제거)
 
 ### 재시도 책임 분리
 
 | 레벨 | 역할 |
 |------|------|
 | Job 내부 | 일시적 오류 재시도 |
-| StateReconciler | Operation 레벨 재시도 |
+| OperationController | Operation 레벨 재시도 |
 
 > 각 레벨 3회씩, 최대 9회까지 가능 (의도된 동작)
 
@@ -471,22 +474,22 @@ ERROR 전환 시 operation이 이미 NONE으로 리셋되므로, 복구 시 2개
 sequenceDiagram
     participant Admin as 관리자
     participant DB as Database
-    participant HM as HealthMonitor
+    participant RO as ResourceObserver
 
     Note over Admin,DB: operation은 이미 NONE (ERROR 전환 시 리셋됨)
     Admin->>DB: error_info = NULL
     Admin->>DB: error_count = 0
-    HM->>DB: policy.healthy=true → phase 재계산
-    Note over HM: Conditions(volume_ready, container_ready)는 이미 실제 상태 반영 중
+    RO->>DB: policy.healthy=true → phase 재계산
+    Note over RO: Conditions(volume_ready, container_ready)는 이미 실제 상태 반영 중
 ```
 
 | 필드 | 리셋 필요 | 이유 |
 |------|----------|------|
-| error_info | O | 에러 정보 초기화 → HM이 policy.healthy=true로 전환 |
+| error_info | O | 에러 정보 초기화 → RO가 policy.healthy=true로 전환 |
 | error_count | O | 재시도 횟수 초기화 |
 | operation | X | ERROR 전환 시 이미 NONE |
 | op_id | X | GC 보호용으로 유지 |
-| conditions | X | 이미 실제 리소스 상태 반영 중 (HM이 계속 갱신) |
+| conditions | X | 이미 실제 리소스 상태 반영 중 (RO가 계속 갱신) |
 
 ---
 
@@ -521,7 +524,7 @@ sequenceDiagram
 
 ## Known Issues
 
-1. ~~**관측 지연**: HM 최대 30초~~
+1. ~~**관측 지연**: RO 최대 30초~~
    - **완화됨**: 적응형 Polling으로 operation 진행 중 2초 주기
 2. **Operation 중단 불가**: 시작 후 취소 불가, 완료까지 대기
 3. **순차적 전이**: RUNNING → PENDING 직접 불가 (STOPPING → ARCHIVING 순차)

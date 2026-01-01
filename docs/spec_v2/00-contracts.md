@@ -13,7 +13,7 @@
 | 정의 | 실제 리소스(Container/Volume)가 진실, DB는 마지막 관측치 |
 | 핵심 | Actuator 성공 반환 ≠ 완료. **관측 조건 충족 = 완료** |
 | 예외 | is_terminal=true로 operation 종료 시 incomplete. ERROR 상태는 완료가 아님 |
-| 역할 분리 | HealthMonitor가 관측 → DB 갱신, StateReconciler는 DB만 읽어 판정 |
+| 역할 분리 | ResourceObserver가 관측 → conditions/phase 갱신, OperationController는 DB 읽어 operation 계획/실행 |
 
 > **Conditions**: [03-schema.md#conditions](./03-schema.md#conditions-jsonb-구조)
 > **Phase 정의**: [02-states.md#phase](./02-states.md#phase-요약)
@@ -25,12 +25,12 @@
 | 항목 | 값 |
 |------|---|
 | 정의 | 이벤트가 아닌 현재 상태를 주기적으로 관찰하여 desired state로 수렴 |
-| 핵심 | SR은 DB만 읽음, 이벤트를 신뢰하지 않음 |
+| 핵심 | OC는 DB만 읽음, 이벤트를 신뢰하지 않음 |
 | 장점 | 이벤트 유실에도 다음 reconcile에서 복구 (자기 치유) |
 | 예외 | Phase=ERROR는 자동 복구 불가. 수동 개입(error_info 리셋) 후 재개 |
 
 > **용어**: [01-glossary.md#level-triggered](./01-glossary.md#level-triggered-vs-edge-triggered)
-> **구현**: [04-control-plane.md#statereconciler](./04-control-plane.md#statereconciler)
+> **구현**: [04-control-plane.md#operationcontroller](./04-control-plane.md#operationcontroller)
 
 ---
 
@@ -45,8 +45,8 @@
 
 | 컴포넌트 | 소유 컬럼 |
 |---------|----------|
-| HealthMonitor | conditions (JSONB), phase, observed_at |
-| StateReconciler | operation, op_started_at, op_id, archive_key, error_count, error_info, home_ctx |
+| ResourceObserver | conditions (JSONB), phase, observed_at |
+| OperationController | operation, op_started_at, op_id, archive_key, error_count, error_info, home_ctx |
 | API | desired_state, deleted_at, standby_ttl_seconds, archive_ttl_seconds, last_access_at |
 
 > **컬럼 상세**: [03-schema.md](./03-schema.md)
@@ -66,9 +66,9 @@
 | 조건 | 결과 |
 |------|------|
 | `operation ≠ NONE` 시 desired_state 변경 | **409 Conflict** |
-| `Phase=ERROR` ∧ `operation≠NONE` | SR이 `operation=NONE` 리셋 (교착 방지) |
+| `Phase=ERROR` ∧ `operation≠NONE` | OC가 `operation=NONE` 리셋 (교착 방지) |
 
-**불변식**: `Phase=ERROR → operation=NONE` (SR 보장)
+**불변식**: `Phase=ERROR → operation=NONE` (OC 보장)
 
 > **Operation 정의**: [02-states.md#operation](./02-states.md#operation-진행-상태)
 
@@ -108,7 +108,7 @@
 |------|---|
 | 정의 | Container 있으면 Volume 반드시 존재 |
 | 역방향 | Volume만 존재 가능 (Phase=STANDBY) |
-| 위반 감지 | HM이 `container_ready ∧ !volume_ready` → `policy.healthy=false, reason="ContainerWithoutVolume"` |
+| 위반 감지 | RO가 `container_ready ∧ !volume_ready` → `policy.healthy=false, reason="ContainerWithoutVolume"` |
 
 **네이밍 규칙**:
 
@@ -205,11 +205,11 @@
 
 | 레벨 | 담당 | 재시도 |
 |------|------|--------|
-| Operation | SR | 즉시 3회 (단기) |
+| Operation | OC | 즉시 3회 (단기) |
 | Workspace | Controller | Exponential backoff (장기) |
 
 > **의존성 기반 재시도**: 하위 Condition(volume_ready)부터 해결 후 상위(container_ready) 처리
-> **구현**: [04-control-plane.md#statereconciler](./04-control-plane.md#statereconciler)
+> **구현**: [04-control-plane.md#operationcontroller](./04-control-plane.md#operationcontroller)
 
 ---
 
@@ -218,7 +218,7 @@
 | # | 계약 | 한줄 요약 |
 |---|------|----------|
 | 1 | Reality vs DB | 관측 조건 충족 = 완료 |
-| 2 | Level-Triggered | SR은 DB만 읽음 (이벤트 불신) |
+| 2 | Level-Triggered | OC는 DB만 읽음 (이벤트 불신) |
 | 3 | Single Writer | 컬럼별 단일 소유자 |
 | 4 | Non-preemptive | workspace당 동시 operation 1개 |
 | 5 | Ordered SM | 인접 레벨만 전이 (step_up/step_down) |

@@ -19,8 +19,8 @@ flowchart TB
 
         subgraph Coordinator["Coordinator Process<br/>(Leader Election)"]
             EL["EventListener<br/>(실시간)"]
-            HM["HealthMonitor<br/>(30s)"]
-            SR["StateReconciler<br/>(10s)"]
+            RO["ResourceObserver<br/>(30s)"]
+            OC["OperationController<br/>(10s)"]
             TTL["TTL Manager<br/>(1m)"]
             GC["Archive GC<br/>(1h)"]
         end
@@ -29,8 +29,8 @@ flowchart TB
         Redis["Redis Pub/Sub"]
 
         API -->|"desired_state"| DB
-        HM --> DB
-        SR --> DB
+        RO --> DB
+        OC --> DB
         TTL --> DB
         GC --> DB
         DB -.->|"NOTIFY"| EL
@@ -74,7 +74,7 @@ flowchart TB
 | 1 | [01-glossary.md](./01-glossary.md) | 용어집 |
 | 2 | [02-states.md](./02-states.md) | 상태 모델 + 전이 규칙 |
 | 3 | [03-schema.md](./03-schema.md) | DB 스키마 + 컬럼 소유권 |
-| 4 | [04-control-plane.md](./04-control-plane.md) | Coordinator, HM, SR, TTL, Events, Error, Limits |
+| 4 | [04-control-plane.md](./04-control-plane.md) | Coordinator, RO, OC, TTL, Events, Error, Limits |
 | 5 | [05-data-plane.md](./05-data-plane.md) | Instance, Storage, Storage Job, Archive GC |
 
 ---
@@ -102,8 +102,8 @@ flowchart TB
 | 섹션 | 주기 | 설명 |
 |------|------|------|
 | Coordinator | - | 리더 선출, 프로세스 관리 |
-| HealthMonitor | 30s | 실제 리소스 관측 → status 갱신 |
-| StateReconciler | 10s | Plan/Execute로 상태 수렴 |
+| ResourceObserver | 30s | 실제 리소스 관측 → conditions/phase 갱신 |
+| OperationController | 10s | Plan/Execute로 상태 수렴 |
 | TTL Manager | 1m | TTL → desired_state 변경 |
 | Events | 실시간 | CDC 기반 SSE 이벤트 |
 | Activity | - | WebSocket 기반 활동 감지 |

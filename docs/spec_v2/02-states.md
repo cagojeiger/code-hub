@@ -39,7 +39,7 @@ Phase는 Conditions에서 계산되는 **파생 값**입니다.
 | PENDING | healthy ∧ !volume ∧ !archive | 초기 |
 
 > **resources**: `volume_ready ∨ container_ready ∨ archive_ready`
-> **Phase 캐시**: HM이 conditions 변경 시 phase 컬럼도 함께 계산/저장
+> **Phase 캐시**: RO가 conditions 변경 시 phase 컬럼도 함께 계산/저장
 
 ### calculate_phase()
 
@@ -279,8 +279,8 @@ sequenceDiagram
     U->>API: POST /workspaces
     API->>DB: desired_state = RUNNING
     API->>U: 201 (desired=RUNNING)
-    SR->>SR: PROVISIONING (PENDING → STANDBY)
-    SR->>SR: STARTING (STANDBY → RUNNING)
+    OC->>OC: PROVISIONING (PENDING → STANDBY)
+    OC->>OC: STARTING (STANDBY → RUNNING)
 ```
 
 ### Auto-wake (STANDBY → RUNNING)
@@ -290,7 +290,7 @@ sequenceDiagram
     U->>Proxy: GET /w/{id}/
     Proxy->>API: 내부 호출 (desired_state=RUNNING)
     API->>DB: desired_state = RUNNING
-    SR->>SR: STARTING
+    OC->>OC: STARTING
 ```
 
 ### TTL Archive (STANDBY → ARCHIVED)
@@ -299,7 +299,7 @@ sequenceDiagram
 sequenceDiagram
     TTL->>API: 내부 호출 (desired_state=ARCHIVED)
     API->>DB: desired_state = ARCHIVED
-    SR->>SR: ARCHIVING (STANDBY → ARCHIVED)
+    OC->>OC: ARCHIVING (STANDBY → ARCHIVED)
 ```
 
 ### 복원 (ARCHIVED → RUNNING)
@@ -308,8 +308,8 @@ sequenceDiagram
 sequenceDiagram
     U->>API: PATCH {desired: RUNNING}
     API->>DB: desired_state = RUNNING
-    SR->>SR: RESTORING (ARCHIVED → STANDBY)
-    SR->>SR: STARTING (STANDBY → RUNNING)
+    OC->>OC: RESTORING (ARCHIVED → STANDBY)
+    OC->>OC: STARTING (STANDBY → RUNNING)
 ```
 
 ---

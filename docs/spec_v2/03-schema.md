@@ -61,7 +61,7 @@
 
 ### phase
 
-> **Phase는 계산값**: HM이 conditions 변경 시 함께 계산/저장
+> **Phase는 계산값**: RO가 conditions 변경 시 함께 계산/저장
 > **정의**: [02-states.md#phase](./02-states.md#phase-요약)
 
 ### operation
@@ -120,12 +120,12 @@
 
 | Condition | Owner | 설명 |
 |-----------|-------|------|
-| `storage.volume_ready` | HealthMonitor | Volume 존재 여부 |
-| `storage.archive_ready` | HealthMonitor | Archive 접근 가능 여부 |
-| `infra.container_ready` | HealthMonitor | Container running 여부 (Canonical 키) |
-| `policy.healthy` | HealthMonitor | 불변식 + 정책 준수 |
+| `storage.volume_ready` | ResourceObserver | Volume 존재 여부 |
+| `storage.archive_ready` | ResourceObserver | Archive 접근 가능 여부 |
+| `infra.container_ready` | ResourceObserver | Container running 여부 (Canonical 키) |
+| `policy.healthy` | ResourceObserver | 불변식 + 정책 준수 |
 
-> **Canonical 키**: SR/API/UI는 백엔드 무관 `infra.container_ready` 사용. HM이 실제 백엔드(Docker/K8s) 관측 결과를 Canonical 키에 기록
+> **Canonical 키**: OC/API/UI는 백엔드 무관 `infra.container_ready` 사용. RO가 실제 백엔드(Docker/K8s) 관측 결과를 Canonical 키에 기록
 
 ---
 
@@ -152,9 +152,9 @@
 |---------|------|--------|------|
 | 1 | container_ready ∧ !volume_ready | ContainerWithoutVolume | 불변식 위반 |
 | 2 | archive_ready.reason ∈ {Corrupted, Expired, NotFound} | ArchiveAccessError | Archive 단말 오류 |
-| 3 | error_info.is_terminal = true | (error_info.reason) | SR 작업 실패 |
+| 3 | error_info.is_terminal = true | (error_info.reason) | OC 작업 실패 |
 
-> **HM 판정**: HM이 위 조건을 확인하여 policy.healthy 설정
+> **RO 판정**: RO가 위 조건을 확인하여 policy.healthy 설정
 
 ---
 
@@ -162,7 +162,7 @@
 
 > **계약 #3 준수**: [00-contracts.md](./00-contracts.md#3-single-writer-principle)
 
-### HealthMonitor
+### ResourceObserver
 
 | 컬럼 | 설명 |
 |------|------|
@@ -170,7 +170,7 @@
 | phase | 파생 상태 (conditions에서 계산) |
 | observed_at | 마지막 관측 시점 |
 
-### StateReconciler
+### OperationController
 
 | 컬럼 | 설명 |
 |------|------|
@@ -202,7 +202,7 @@
 |------|------|------|
 | reason | string | 에러 유형 (Timeout, RetryExceeded, ActionFailed, DataLost, Unreachable) |
 | message | string | 사람이 읽는 메시지 |
-| is_terminal | boolean | true면 HM이 policy.healthy=false로 설정 |
+| is_terminal | boolean | true면 RO가 policy.healthy=false로 설정 |
 | operation | string | 실패한 operation |
 | error_count | int | 재시도 횟수 |
 | context | dict | reason별 상세 정보 |
