@@ -133,7 +133,7 @@
 | 상황 | conditions 값 | Phase 결과 |
 |------|--------------|-----------|
 | Workspace 생성 직후 | `{}` (빈 dict) | PENDING |
-| RO 첫 관측 후 | 모든 Condition 포함 | 실제 상태 반영 |
+| WC 첫 관측 후 | 모든 Condition 포함 | 실제 상태 반영 |
 
 **기본값 정책** (calculate_phase 내부):
 - `policy.healthy`: **true** (관측 전에는 건강하다고 가정)

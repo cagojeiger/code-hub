@@ -122,7 +122,7 @@
 |------|---|
 | 정의 | Container 있으면 Volume 반드시 존재 |
 | 역방향 | Volume만 존재 가능 (Phase=STANDBY) |
-| 위반 감지 | RO가 `container_ready ∧ !volume_ready` → `policy.healthy=false, reason="ContainerWithoutVolume"` |
+| 위반 감지 | WC가 `container_ready ∧ !volume_ready` → `policy.healthy=false, reason="ContainerWithoutVolume"` |
 
 **네이밍 규칙**:
 

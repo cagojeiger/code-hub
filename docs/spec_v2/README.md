@@ -54,7 +54,7 @@ flowchart TB
 
 | 원칙 | 설명 |
 |------|------|
-| Ordered State Machine | PENDING(0) < STANDBY(10) < RUNNING(20) |
+| Ordered State Machine | PENDING(0) < ARCHIVED(5) < STANDBY(10) < RUNNING(20) |
 | Level-Triggered Reconciliation | desired ≠ observed → operation 실행 |
 | Single Writer Principle | 컬럼별 단일 소유자 |
 | Crash-Only Design | 어디서 실패해도 재시도로 복구 |
@@ -72,7 +72,7 @@ flowchart TB
 | 1 | [01-glossary.md](./01-glossary.md) | 용어집 |
 | 2 | [02-states.md](./02-states.md) | 상태 모델 + 전이 규칙 |
 | 3 | [03-schema.md](./03-schema.md) | DB 스키마 + 컬럼 소유권 |
-| 4 | [04-control-plane.md](./04-control-plane.md) | Coordinator, RO, OC, TTL, Events, Error, Limits |
+| 4 | [04-control-plane.md](./04-control-plane.md) | Coordinator, WorkspaceController, TTL, Events, Error, Limits |
 | 5 | [05-data-plane.md](./05-data-plane.md) | Instance, Storage, Storage Job, Archive GC |
 
 ---

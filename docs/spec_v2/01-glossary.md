@@ -105,7 +105,7 @@ CAS(메모리주소, 예상값, 새값):
 
 | 위치 | 패턴 |
 |------|------|
-| OperationController | `UPDATE ... SET operation='STARTING' WHERE operation='NONE'` |
+| WorkspaceController | `UPDATE ... SET operation='STARTING' WHERE operation='NONE'` |
 
 ### ABA 문제
 
