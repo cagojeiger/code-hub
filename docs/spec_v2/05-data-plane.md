@@ -42,7 +42,7 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 
 > **정의**: [00-contracts.md#6](./00-contracts.md#6-containervolume-invariant)
 >
-> **Single Writer 원칙**: phase는 ResourceObserver만 변경. InstanceController/Reconciler는 리소스 정리만 담당.
+> **Single Writer 원칙**: phase는 WorkspaceController가 변경. InstanceController는 리소스 정리만 담당.
 
 ### 인터페이스
 
@@ -106,9 +106,9 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 | 순서 | 동작 | 주체 |
 |------|------|------|
 | 1 | deleted_at 설정 (Soft Delete) | API |
-| 2 | Container 삭제 (있는 경우) | InstanceController (via Reconciler) |
-| 3 | Volume 삭제 (있는 경우) | StorageProvider (via Reconciler) |
-| 4 | 리소스 없음 관측 → Phase=DELETED | ResourceObserver |
+| 2 | Container 삭제 (있는 경우) | InstanceController (via WC) |
+| 3 | Volume 삭제 (있는 경우) | StorageProvider (via WC) |
+| 4 | 리소스 없음 관측 → Phase=DELETED | WorkspaceController |
 
 > Archive는 GC가 지연 후 정리 (계약 #9)
 
@@ -148,7 +148,7 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 
 **restore() 반환값**:
 - 성공 시: `restore_marker = archive_key` 반환
-- OC가 이 값을 `home_ctx.restore_marker`에 저장
+- WC가 이 값을 `home_ctx.restore_marker`에 저장
 - 계약 #7 완료 조건: `Phase=STANDBY AND home_ctx.restore_marker=archive_key`
 
 ### 네이밍 규칙
@@ -165,18 +165,18 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 | ARCHIVING | Volume → archive + Volume 삭제 | ✅ |
 | DELETING | Volume 삭제 (Archive는 GC) | - |
 
-### 완료 조건 (관측 기반)
+### 완료 조건 (conditions 기반)
 
 | Operation | Actuator | 완료 조건 |
 |-----------|----------|----------|
-| PROVISIONING | provision() | volume_exists() (RO 관측) |
-| RESTORING | provision() + restore() | volume_exists() (RO 관측) AND restore_marker == archive_key (OC 확인) |
-| ARCHIVING | archive() + delete_volume() | !volume_exists() (RO 관측) AND archive_key != NULL |
-| DELETING | delete() + delete_volume() | !is_running() (RO 관측) AND !volume_exists() (RO 관측) |
+| PROVISIONING | provision() | volume_ready == true |
+| RESTORING | provision() + restore() | volume_ready == true AND restore_marker == archive_key |
+| ARCHIVING | archive() + delete_volume() | volume_ready == false AND archive_key != NULL |
+| DELETING | delete() + delete_volume() | container_ready == false AND volume_ready == false |
 
-> **계약 #1 준수**: Actuator 성공 반환 ≠ 완료. 관측 조건 충족 = 완료.
+> **계약 #1 준수**: Actuator 성공 반환 ≠ 완료. conditions 기반 완료 판정.
 >
-> **RESTORING 이중 조건** (계약 #7): RO가 Volume 관측 + OC가 restore_marker 확인
+> **WC가 모든 판정**: WC가 관측 → conditions 갱신 → 완료 여부 + phase 계산 (단일 트랜잭션)
 
 ### op_id 정책
 
@@ -411,5 +411,5 @@ flowchart TB
 ## 참조
 
 - [00-contracts.md](./00-contracts.md) - 핵심 계약
-- [04-control-plane.md](./04-control-plane.md) - Control Plane (OperationController, ResourceObserver)
+- [04-control-plane.md#workspacecontroller](./04-control-plane.md#workspacecontroller) - WorkspaceController
 - [02-states.md](./02-states.md) - 상태 전환

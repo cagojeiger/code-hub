@@ -39,13 +39,16 @@ Phase는 Conditions에서 계산되는 **파생 값**입니다.
 | PENDING | healthy ∧ !volume ∧ !archive | 초기 |
 
 > **resources**: `volume_ready ∨ container_ready ∨ archive_ready`
-> **Phase 캐시**: RO가 conditions 변경 시 phase 컬럼도 함께 계산/저장
+> **Phase 계산**: WC가 reconcile 시 conditions를 읽어 phase 계산/저장 (인덱스용 캐시)
 >
 > **일시 장애 예외**: S3 일시 장애(ArchiveUnreachable/Timeout) 시
 > `archive_ready.status=false`여도 `archive_key` 존재하면 ARCHIVED 유지
 > (상세: calculate_phase() 참조)
 
 ### calculate_phase()
+
+> **호출 주체**: WorkspaceController (WC)
+> **역할**: conditions를 읽어 phase 계산 (순수 함수)
 
 ```python
 def calculate_phase(
@@ -194,13 +197,13 @@ PENDING(0) → ARCHIVED(5) → STANDBY(10) → RUNNING(20)
 ### step_down (하강)
 
 ```
-RUNNING(20) → STANDBY(10) → ARCHIVED(5) → PENDING(0)
+RUNNING(20) → STANDBY(10) → ARCHIVED(5)
 ```
 
 - 높은 Level → 낮은 Level
 - 한 단계씩 순차 전이
 
-> **직접 전이 금지**: RUNNING → PENDING 직접 불가
+> **단조 경로**: 상승/하강 방향 혼합 없음
 
 ---
 
@@ -229,7 +232,7 @@ desired_state와 현재 Phase의 불일치를 해소하기 위한 Operation 선�
 | ARCHIVED | operation=NONE | DELETING |
 | ERROR | operation=NONE | DELETING |
 
-> **RUNNING/STANDBY에서 삭제**: step_down으로 ARCHIVED/PENDING 도달 후 DELETING
+> **RUNNING/STANDBY에서 삭제**: step_down으로 ARCHIVED 도달 후 DELETING
 
 ---
 
@@ -303,7 +306,7 @@ stateDiagram-v2
 | ERROR | NONE | 에러 상태 |
 | DELETING | DELETING | 삭제 진행 중 |
 
-> **불변식 (C2)**: `Phase=ERROR → operation=NONE`
+> **불변식 (C4)**: `Phase=ERROR → operation=NONE`
 
 ---
 
@@ -340,8 +343,8 @@ sequenceDiagram
     U->>API: POST /workspaces
     API->>DB: desired_state = RUNNING
     API->>U: 201 (desired=RUNNING)
-    OC->>OC: PROVISIONING (PENDING → STANDBY)
-    OC->>OC: STARTING (STANDBY → RUNNING)
+    WC->>WC: PROVISIONING (PENDING → STANDBY)
+    WC->>WC: STARTING (STANDBY → RUNNING)
 ```
 
 ### Auto-wake (STANDBY → RUNNING)
@@ -351,7 +354,7 @@ sequenceDiagram
     U->>Proxy: GET /w/{id}/
     Proxy->>API: 내부 호출 (desired_state=RUNNING)
     API->>DB: desired_state = RUNNING
-    OC->>OC: STARTING
+    WC->>WC: STARTING
 ```
 
 ### TTL Archive (STANDBY → ARCHIVED)
@@ -360,7 +363,7 @@ sequenceDiagram
 sequenceDiagram
     TTL->>API: 내부 호출 (desired_state=ARCHIVED)
     API->>DB: desired_state = ARCHIVED
-    OC->>OC: ARCHIVING (STANDBY → ARCHIVED)
+    WC->>WC: ARCHIVING (STANDBY → ARCHIVED)
 ```
 
 ### 복원 (ARCHIVED → RUNNING)
@@ -369,8 +372,8 @@ sequenceDiagram
 sequenceDiagram
     U->>API: PATCH {desired: RUNNING}
     API->>DB: desired_state = RUNNING
-    OC->>OC: RESTORING (ARCHIVED → STANDBY)
-    OC->>OC: STARTING (STANDBY → RUNNING)
+    WC->>WC: RESTORING (ARCHIVED → STANDBY)
+    WC->>WC: STARTING (STANDBY → RUNNING)
 ```
 
 ---
@@ -400,7 +403,7 @@ sequenceDiagram
 
 - [00-contracts.md](./00-contracts.md) - 핵심 계약 (규칙)
 - [03-schema.md](./03-schema.md) - DB 스키마 (Conditions SSOT)
-- [04-control-plane.md](./04-control-plane.md) - Control Plane 구현
+- [04-control-plane.md#workspacecontroller](./04-control-plane.md#workspacecontroller) - WorkspaceController 구현
 - [ADR-008](../adr/008-ordered-state-machine.md) - Ordered SM
 - [ADR-009](../adr/009-status-operation-separation.md) - operation/op_id CAS
 - [ADR-011](../adr/011-declarative-conditions.md) - Conditions 패턴

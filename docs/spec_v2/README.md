@@ -19,8 +19,7 @@ flowchart TB
 
         subgraph Coordinator["Coordinator Process<br/>(Leader Election)"]
             EL["EventListener<br/>(실시간)"]
-            RO["ResourceObserver<br/>(30s)"]
-            OC["OperationController<br/>(10s)"]
+            WC["WorkspaceController<br/>(10s)"]
             TTL["TTL Manager<br/>(1m)"]
             GC["Archive GC<br/>(1h)"]
         end
@@ -29,8 +28,7 @@ flowchart TB
         Redis["Redis Pub/Sub"]
 
         API -->|"desired_state"| DB
-        RO --> DB
-        OC --> DB
+        WC --> DB
         TTL --> DB
         GC --> DB
         DB -.->|"NOTIFY"| EL
@@ -39,11 +37,11 @@ flowchart TB
     end
 
     subgraph DataPlane["Data Plane"]
-        WC["Workspace Containers"]
+        WSC["Workspace Containers"]
         VOL["Volume"]
         S3["Object Storage"]
 
-        WC --> VOL
+        WSC --> VOL
         VOL <-.->|"archive/restore"| S3
     end
 
@@ -103,8 +101,7 @@ flowchart TB
 | 섹션 | 주기 | 설명 |
 |------|------|------|
 | Coordinator | - | 리더 선출, 프로세스 관리 |
-| ResourceObserver | 30s | 실제 리소스 관측 → conditions/phase 갱신 |
-| OperationController | 10s | Plan/Execute로 상태 수렴 |
+| WorkspaceController | 10s | 리소스 관측 + phase 계산 + 상태 수렴 |
 | TTL Manager | 1m | TTL → desired_state 변경 |
 | Events | 실시간 | CDC 기반 SSE 이벤트 |
 | Activity | - | WebSocket 기반 활동 감지 |

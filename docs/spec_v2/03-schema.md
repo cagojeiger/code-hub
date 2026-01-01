@@ -46,8 +46,7 @@
 | **last_access_at** | TIMESTAMP | YES | NULL | 마지막 접속 시각 |
 | **standby_ttl_seconds** | INT | NO | 300 | RUNNING→STANDBY TTL |
 | **archive_ttl_seconds** | INT | NO | 86400 | STANDBY→ARCHIVED TTL |
-| **error_message** | TEXT | YES | NULL | 에러 요약 |
-| **error_info** | JSONB | YES | NULL | 구조화된 에러 정보 |
+| **error_reason** | VARCHAR(50) | YES | NULL | 에러 분류 코드 |
 | **error_count** | INT | NO | 0 | 연속 실패 횟수 |
 | created_at | TIMESTAMP | NO | NOW() | 생성 시각 |
 | updated_at | TIMESTAMP | NO | NOW() | 수정 시각 |
@@ -61,7 +60,7 @@
 
 ### phase
 
-> **Phase는 계산값**: RO가 conditions 변경 시 함께 계산/저장
+> **Phase는 계산값**: WC가 reconcile 시 conditions를 읽어 계산/저장 (인덱스용 캐시)
 > **정의**: [02-states.md#phase](./02-states.md#phase-요약)
 
 ### operation
@@ -122,12 +121,12 @@
 
 | Condition | Owner | 설명 |
 |-----------|-------|------|
-| `storage.volume_ready` | ResourceObserver | Volume 존재 여부 |
-| `storage.archive_ready` | ResourceObserver | Archive 접근 가능 여부 |
-| `infra.container_ready` | ResourceObserver | Container running 여부 (Canonical 키) |
-| `policy.healthy` | ResourceObserver | 불변식 + 정책 준수 |
+| `storage.volume_ready` | WorkspaceController | Volume 존재 여부 |
+| `storage.archive_ready` | WorkspaceController | Archive 접근 가능 여부 |
+| `infra.container_ready` | WorkspaceController | Container running 여부 (Canonical 키) |
+| `policy.healthy` | WorkspaceController | 불변식 + 정책 준수 |
 
-> **Canonical 키**: OC/API/UI는 백엔드 무관 `infra.container_ready` 사용. RO가 실제 백엔드(Docker/K8s) 관측 결과를 Canonical 키에 기록
+> **Canonical 키**: API/UI는 백엔드 무관 `infra.container_ready` 사용. WC가 실제 백엔드(Docker/K8s) 관측 결과를 Canonical 키에 기록
 
 ### conditions 초기값 정책
 
@@ -171,9 +170,9 @@
 |---------|------|--------|------|
 | 1 | container_ready ∧ !volume_ready | ContainerWithoutVolume | 불변식 위반 |
 | 2 | archive_ready.reason ∈ {Corrupted, Expired, NotFound} | ArchiveAccessError | Archive 단말 오류 |
-| 3 | error_info.is_terminal = true | (error_info.reason) | OC 작업 실패 |
 
-> **RO 판정**: RO가 위 조건을 확인하여 policy.healthy 설정
+> **WC 판정**: WC가 관측 후 불변식 위반 확인하여 policy.healthy 설정
+> **에러 처리**: WC가 작업 실패 시 phase=ERROR + error_reason 원자적 설정
 
 ---
 
@@ -181,24 +180,19 @@
 
 > **계약 #3 준수**: [00-contracts.md](./00-contracts.md#3-single-writer-principle)
 
-### ResourceObserver
+### WorkspaceController
 
 | 컬럼 | 설명 |
 |------|------|
 | conditions | Condition 상태 (JSONB) |
-| phase | 파생 상태 (conditions에서 계산) |
 | observed_at | 마지막 관측 시점 |
-
-### OperationController
-
-| 컬럼 | 설명 |
-|------|------|
+| phase | 파생 상태 (conditions에서 계산, 인덱스용 캐시) |
 | operation | 진행 중인 작업 |
 | op_started_at | operation 시작 시점 |
 | op_id | 작업 고유 ID |
 | archive_key | Archive 경로 (ARCHIVING 완료 시) |
 | error_count | 재시도 횟수 |
-| error_info | 에러 정보 |
+| error_reason | 에러 분류 코드 |
 | home_ctx | Storage Provider 컨텍스트 (restore_marker 포함) |
 
 ### API
@@ -215,17 +209,26 @@
 
 ---
 
-## error_info 구조
+## error_reason 값
 
-| 필드 | 타입 | 설명 |
-|------|------|------|
-| reason | string | 에러 유형 (Timeout, RetryExceeded, ActionFailed, DataLost, Unreachable) |
-| message | string | 사람이 읽는 메시지 |
-| is_terminal | boolean | true면 RO가 policy.healthy=false로 설정 |
-| operation | string | 실패한 operation |
-| error_count | int | 재시도 횟수 |
-| context | dict | reason별 상세 정보 |
-| occurred_at | string | ISO 8601 timestamp |
+| error_reason | is_terminal | 설명 |
+|--------------|-------------|------|
+| Timeout | 즉시 | 작업 시간 초과 |
+| RetryExceeded | error_count 기반 | 재시도 한도 초과 |
+| ActionFailed | 재시도 후 | Actuator 호출 실패 |
+| DataLost | 즉시 | 복구 불가 데이터 손실 |
+| Unreachable | 재시도 후 | 리소스 접근 불가 |
+| ImagePullFailed | 즉시 | 컨테이너 이미지 가져오기 실패 |
+| ContainerWithoutVolume | 즉시 | 불변식 위반 |
+| ArchiveCorrupted | 즉시 | Archive 체크섬 불일치 |
+
+**단말 에러(is_terminal) 판정 로직**:
+```python
+TERMINAL_REASONS = {"Timeout", "DataLost", "ImagePullFailed", "ContainerWithoutVolume", "ArchiveCorrupted"}
+is_terminal = error_reason in TERMINAL_REASONS or error_count >= MAX_RETRY
+```
+
+> **상세 메시지**: 로그에서 확인 (DB 미저장)
 
 ---
 
@@ -298,7 +301,7 @@ UPDATE workspaces SET
       'status', health_status = 'OK',
       'reason', CASE
         WHEN health_status = 'OK' THEN 'AllConditionsMet'
-        ELSE COALESCE(error_info->>'reason', 'Unknown')
+        ELSE COALESCE(error_reason, 'Unknown')
       END,
       'last_transition_time', observed_at
     )
@@ -327,5 +330,5 @@ ALTER TYPE desired_state_enum ADD VALUE 'DELETED';
 
 - [00-contracts.md](./00-contracts.md) - 핵심 계약
 - [02-states.md](./02-states.md) - 상태 정의 (Phase, Operation, SM)
-- [04-control-plane.md](./04-control-plane.md) - Control Plane
+- [04-control-plane.md#workspacecontroller](./04-control-plane.md#workspacecontroller) - WorkspaceController
 - [ADR-011](../adr/011-declarative-conditions.md) - Conditions 패턴

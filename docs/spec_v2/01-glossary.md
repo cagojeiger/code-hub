@@ -364,6 +364,6 @@ PENDING(0) < ARCHIVED(5) < STANDBY(10) < RUNNING(20)
 
 - [02-states.md](./02-states.md) - 상태 정의
 - [04-control-plane.md#events](./04-control-plane.md#events) - SSE 이벤트 (CDC 적용)
-- [04-control-plane.md#resourceobserver](./04-control-plane.md#resourceobserver) - Reconciler 구현 (ResourceObserver)
+- [04-control-plane.md#workspacecontroller](./04-control-plane.md#workspacecontroller) - Reconciler 구현
 - [04-control-plane.md#coordinator](./04-control-plane.md#coordinator) - Leader Election, EventListener
 - [05-data-plane.md#archive-gc](./05-data-plane.md#archive-gc) - GC with TTL
