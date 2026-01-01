@@ -47,9 +47,9 @@ flowchart TB
 | 컴포넌트 | 기본 주기 | 가속 주기 | 역할 |
 |---------|----------|----------|------|
 | EventListener | 실시간 | - | PG NOTIFY → Redis PUBLISH (CDC) |
-| HealthMonitor | 30초 | 2초 (operation 진행 중) | 리소스 관측 → observed_status/health_status 갱신 |
-| StateReconciler | 30초 | 2초 (operation 진행 중), 5초 (수렴 필요) | desired ≠ observed 수렴 |
-| TTL Manager | 1분 | - | TTL 만료 → desired_state 변경 |
+| HealthMonitor | 30초 | 2초 (operation 진행 중) | 리소스 관측 → conditions/phase 갱신 |
+| StateReconciler | 30초 | 2초 (operation 진행 중), 5초 (수렴 필요) | desired ≠ phase 수렴 |
+| TTL Manager | 1분 | - | TTL 만료 → desired_state 변경 (STANDBY/ARCHIVED) |
 | Archive GC | 1시간 | - | orphan archive 정리 |
 
 > **계약 #2 준수**: 적응형 Polling으로 operation 진행 중 UX 향상 ([Level-Triggered](./00-contracts.md#2-level-triggered-reconciliation))
@@ -82,89 +82,87 @@ HealthMonitor는 실제 리소스 상태를 관측하고 DB에 반영하는 **�
 
 ### 핵심 원칙
 
-1. **진실(Reality) = 실제 리소스**: Container/Volume의 실제 존재 여부가 진실
+1. **진실(Reality) = 실제 리소스**: Container/Volume/Archive의 실제 존재 여부가 진실
 2. **DB = Last Observed Truth**: DB는 마지막 관측치일 뿐
 3. **HealthMonitor 중단 = DB Stale**: HM이 멈추면 DB 상태가 실제와 괴리될 수 있음
-4. **상태 분리**: observed_status(리소스 관측) vs health_status(정책 판정)
+4. **Conditions 기반**: 개별 Condition 갱신 → phase 계산
 
 ### 입출력
 
-**읽기**: DB (id, deleted_at, error_info, archive_key, operation), Container/Volume Provider
+**읽기**: DB (id, deleted_at, error_info, archive_key, operation), Container/Volume/Archive Provider
 
-**쓰기**: observed_status, health_status, observed_at (Single Writer)
+**쓰기**: conditions (JSONB), phase, observed_at (Single Writer)
 
-### 상태 결정 규칙 (2축 분리)
+### Conditions 갱신 규칙
 
-#### observed_status 결정 (리소스 관측)
+HM은 각 Condition을 개별적으로 갱신합니다:
 
-| 우선순위 | 조건 | → observed_status |
-|---------|------|-------------------|
-| 0 | `deleted_at != NULL` AND Container 없음 AND Volume 없음 | DELETED |
-| 1 | Container 있음 + running | RUNNING |
-| 2 | Volume 있음 (Container 없음) | STANDBY |
-| 3 | Container 없음 + Volume 없음 | PENDING |
+| Condition | 관측 방법 | status=true 조건 |
+|-----------|----------|-----------------|
+| `storage.volume_ready` | Volume Provider 호출 | Volume 존재 |
+| `storage.archive_ready` | S3 HEAD 요청 (archive_key 존재 시) | Archive 접근 가능 |
+| `infra.*.container_ready` | Container Provider 호출 | Container running |
+| `policy.healthy` | 아래 규칙 참조 | 불변식 + 정책 준수 |
 
-> **ERROR 없음**: observed_status는 순수 리소스 관측 결과만 반영
+#### policy.healthy 결정 규칙
 
-#### health_status 결정 (정책 판정)
+| 우선순위 | 조건 | status | reason |
+|---------|------|--------|--------|
+| 1 | container_ready ∧ !volume_ready | false | ContainerWithoutVolume |
+| 2 | archive_key != NULL ∧ !archive_ready | false | ArchiveAccessError |
+| 3 | error_info.is_terminal = true | false | (error_info.reason) |
+| 4 | 그 외 | true | AllConditionsMet |
 
-| 조건 | → health_status |
-|------|-----------------|
-| `error_info.is_terminal = true` | ERROR |
-| Container 있음 + Volume 없음 | ERROR (불변식 위반) |
-| 그 외 | OK |
+### Phase 계산
 
-> health_status는 observed_status와 독립적. ERROR 시에도 실제 리소스 상태 유지
+Conditions 갱신 후 phase를 계산하여 함께 저장:
 
-### 상태 결정 흐름
+```python
+def calculate_phase(conditions: dict, deleted_at: datetime | None) -> Phase:
+    if deleted_at:
+        return Phase.DELETED
+    if not conditions["policy.healthy"]["status"]:
+        return Phase.ERROR
+    if conditions["container_ready"]["status"] and conditions["volume_ready"]["status"]:
+        return Phase.RUNNING
+    if conditions["volume_ready"]["status"]:
+        return Phase.STANDBY
+    if conditions.get("storage.archive_ready", {}).get("status"):
+        return Phase.ARCHIVED
+    return Phase.PENDING
+```
+
+### Conditions 갱신 흐름
 
 ```mermaid
 flowchart TB
     Start["관측 시작"]
 
-    subgraph observed["observed_status 결정 (리소스 관측)"]
-        Deleted{"deleted_at != NULL<br/>AND !Container AND !Volume?"}
-        Running{"Container + running?"}
-        Volume{"Volume exists?"}
-        DELETED["DELETED"]
-        RUNNING["RUNNING"]
-        STANDBY["STANDBY"]
-        PENDING["PENDING"]
+    subgraph conditions["Conditions 갱신"]
+        Vol["volume_ready = Volume 존재?"]
+        Arch["archive_ready = Archive 접근 가능?"]
+        Cont["container_ready = Container running?"]
+        Health["policy.healthy = 불변식 + 정책?"]
     end
 
-    subgraph health["health_status 결정 (정책 판정)"]
-        Terminal{"error_info.is_terminal?"}
-        ContainerNoVol{"Container + !Volume?"}
-        HealthERROR["ERROR"]
-        HealthOK["OK"]
+    subgraph phase["Phase 계산"]
+        Calc["calculate_phase(conditions, deleted_at)"]
+        Result["→ DELETED/ERROR/RUNNING/STANDBY/ARCHIVED/PENDING"]
     end
 
-    Start --> Deleted
-    Deleted -->|Yes| DELETED
-    Deleted -->|No| Running
-    Running -->|Yes| RUNNING
-    Running -->|No| Volume
-    Volume -->|Yes| STANDBY
-    Volume -->|No| PENDING
-
-    Start --> Terminal
-    Terminal -->|Yes| HealthERROR
-    Terminal -->|No| ContainerNoVol
-    ContainerNoVol -->|Yes| HealthERROR
-    ContainerNoVol -->|No| HealthOK
+    Start --> Vol --> Arch --> Cont --> Health --> Calc --> Result
 ```
 
 ### 불변식 위반 감지
 
 | 위반 유형 | 조건 | 처리 |
 |----------|------|------|
-| ContainerWithoutVolume | Container 있음 + Volume 없음 | error_info 설정 → health_status=ERROR |
+| ContainerWithoutVolume | container_ready ∧ !volume_ready | policy.healthy = {status: false, reason: "ContainerWithoutVolume"} |
+| ArchiveAccessError | archive_key != NULL ∧ !archive_ready | policy.healthy = {status: false, reason: "ArchiveAccessError"} |
 
-> **Single Writer 예외**: 불변식 위반 시 error_info가 NULL이면 HealthMonitor가 1회 설정 가능
->
 > **계약 준수**: [#3 Single Writer](./00-contracts.md#3-single-writer-principle)
->
-> **observed_status 유지**: 불변식 위반 시에도 observed_status는 RUNNING (실제 Container 상태)
+> **Single Writer 완전 준수**: error_info는 SR 소유, conditions는 HM 소유 (예외 규칙 제거)
+> **Conditions 유지**: Phase=ERROR 시에도 volume_ready/container_ready는 실제 상태 반영
 
 ### 즉시 관측 (Edge Hint)
 
@@ -174,39 +172,41 @@ StateReconciler가 operation 완료 후 Redis `monitor:trigger` 채널로 즉시
 
 ## StateReconciler
 
-StateReconciler는 desired_state와 observed_status를 비교하여 상태를 수렴시키는 **실행자** 컴포넌트입니다.
+StateReconciler는 desired_state와 phase를 비교하여 상태를 수렴시키는 **실행자** 컴포넌트입니다.
 
 > **계약 준수**: [#2 Level-Triggered Reconciliation](./00-contracts.md#2-level-triggered-reconciliation)
 
 ### 핵심 원칙 (Level-Triggered 4단계)
 
 1. **DB만 읽는다**: 이벤트가 아닌 현재 DB 상태 기준
-2. **Plan**: desired ≠ observed → operation 결정
+2. **Plan**: desired ≠ phase → operation 결정
 3. **Execute**: operation 실행 (Actuator 호출)
-4. **완료 판정**: observed == operation.target (HM이 관측)
+4. **완료 판정**: phase == operation.target (HM이 관측 후 phase 계산)
 
 ### 불변식
 
 1. **Non-preemptive**: `operation != NONE`이면 다른 operation 시작 불가 (계약 #4)
 2. **CAS 선점**: operation 시작 시 `WHERE operation = 'NONE'` 조건 사용
-3. **ERROR skip**: `health_status=ERROR` workspace는 reconcile 대상에서 제외
+3. **ERROR skip**: `phase=ERROR` workspace는 reconcile 대상에서 제외
 
 ### 입출력
 
-**읽기**: desired_state, observed_status, operation, op_started_at, error_count, archive_key
+**읽기**: desired_state, phase, conditions, operation, op_started_at, error_count, archive_key
 
-**쓰기**: operation, op_started_at, op_id, archive_key, error_count, error_info, previous_status, home_ctx (Single Writer)
+**쓰기**: operation, op_started_at, op_id, archive_key, error_count, error_info, home_ctx (Single Writer)
 
 ### Operation 결정 규칙
 
-| observed | health | desired | archive_key | → operation |
-|----------|--------|---------|-------------|-------------|
-| PENDING | OK | STANDBY/RUNNING | NULL | PROVISIONING |
-| PENDING | OK | STANDBY/RUNNING | 있음 | RESTORING |
-| STANDBY | OK | RUNNING | - | STARTING |
-| STANDBY | OK | PENDING | - | ARCHIVING |
-| RUNNING | OK | STANDBY/PENDING | - | STOPPING |
-| * | ERROR | * | - | (skip) |
+| phase | desired | → operation |
+|-------|---------|-------------|
+| PENDING | STANDBY/RUNNING | PROVISIONING |
+| ARCHIVED | STANDBY/RUNNING | RESTORING |
+| ARCHIVED | PENDING | archive 삭제 |
+| STANDBY | RUNNING | STARTING |
+| STANDBY | ARCHIVED/PENDING | ARCHIVING |
+| RUNNING | STANDBY/ARCHIVED/PENDING | STOPPING |
+| PENDING/ARCHIVED/ERROR | DELETED | DELETING |
+| ERROR | * (except DELETED) | (skip) |
 
 > RUNNING → PENDING은 직접 불가. STOPPING → ARCHIVING 순차 진행.
 >
@@ -214,22 +214,22 @@ StateReconciler는 desired_state와 observed_status를 비교하여 상태를 �
 >
 > **계약 #4 준수**: `operation != NONE`이면 완료/timeout 체크만 진행, 새 operation 시작 금지 ([Non-preemptive](./00-contracts.md#4-non-preemptive-operation))
 >
-> **health_status=ERROR**: 새 operation 시작 안 함. 복구 후 reconcile 재개.
+> **phase=ERROR**: 새 operation 시작 안 함. 복구 후 reconcile 재개. (단, DELETED 요청은 허용)
 
 ### 완료 조건
 
-| Operation | Target Status | 완료 조건 |
-|-----------|---------------|----------|
-| PROVISIONING | STANDBY | observed_status == STANDBY |
-| RESTORING | STANDBY | observed_status == STANDBY AND home_ctx.restore_marker == archive_key |
-| STARTING | RUNNING | observed_status == RUNNING |
-| STOPPING | STANDBY | observed_status == STANDBY |
-| ARCHIVING | PENDING | observed_status == PENDING AND archive_key != NULL |
+| Operation | Target Phase | 완료 조건 |
+|-----------|--------------|----------|
+| PROVISIONING | STANDBY | phase == STANDBY |
+| RESTORING | STANDBY | phase == STANDBY AND home_ctx.restore_marker == archive_key |
+| STARTING | RUNNING | phase == RUNNING |
+| STOPPING | STANDBY | phase == STANDBY |
+| ARCHIVING | ARCHIVED | phase == ARCHIVED AND archive_key != NULL |
 
 > 완료 시: `operation = NONE`, `error_count = 0`, `error_info = NULL`
 
 **RESTORING 완료 조건** (계약 #7):
-1. HM이 Volume 존재 관측 → `observed_status = STANDBY`
+1. HM이 Volume 존재 관측 → `volume_ready = true` → `phase = STANDBY`
 2. SR이 `home_ctx.restore_marker == archive_key` 확인 → 복원 완료
 
 > 두 조건 모두 충족해야 RESTORING 완료. restore_marker 미설정 시 미완료 판정
@@ -267,12 +267,11 @@ StateReconciler는 desired_state와 observed_status를 비교하여 상태를 �
 | 1 | StateReconciler | `is_terminal=true` 판정 시 `operation=NONE` 리셋 |
 | 2 | StateReconciler | `error_info` 설정 (reason, message, is_terminal, context) |
 | 3 | StateReconciler | `op_id` 유지 (GC 보호) |
-| 4 | StateReconciler | `previous_status = observed_status` 저장 (복구용) |
-| 5 | HealthMonitor | `health_status=ERROR` 판정/기록 (error_info.is_terminal 확인) |
+| 4 | HealthMonitor | error_info.is_terminal 확인 → `policy.healthy = {status: false}` → phase=ERROR |
 
-> **Single Writer 준수**: SR이 operation/op_id/error_info/previous_status 설정, HM이 observed_status/health_status 설정
+> **Single Writer 준수**: SR이 operation/op_id/error_info 설정, HM이 conditions/phase 설정
 >
-> **observed_status 유지**: ERROR 시에도 observed_status는 실제 리소스 상태 반영 (RUNNING/STANDBY/PENDING)
+> **Conditions 유지**: ERROR 시에도 volume_ready/container_ready는 실제 리소스 상태 반영
 >
 > **CAS 실패 처리**: operation 선점 CAS 실패 시 다음 reconcile 사이클에서 재시도
 
@@ -281,18 +280,18 @@ StateReconciler는 desired_state와 observed_status를 비교하여 상태를 �
 ```mermaid
 flowchart TB
     START["reconcile(ws)"]
-    HEALTH{"health_status == ERROR?"}
+    PHASE{"phase == ERROR?"}
     OP{"operation != NONE?"}
-    CONV{"observed == desired?"}
+    CONV{"phase == desired?"}
     SKIP1["skip (ERROR)"]
     SKIP2["skip (converged)"]
     CHECK["완료/timeout 체크"]
     PLAN["Plan: operation 결정"]
     EXEC["Execute: 작업 실행"]
 
-    START --> HEALTH
-    HEALTH -->|Yes| SKIP1
-    HEALTH -->|No| OP
+    START --> PHASE
+    PHASE -->|Yes| SKIP1
+    PHASE -->|No| OP
     OP -->|Yes| CHECK
     OP -->|No| CONV
     CONV -->|Yes| SKIP2
@@ -300,7 +299,7 @@ flowchart TB
     PLAN --> EXEC
 ```
 
-> **health_status 기반 skip**: observed_status가 아닌 health_status=ERROR로 판단
+> **phase 기반 skip**: phase=ERROR일 때 reconcile 제외 (단, desired=DELETED는 허용)
 
 ---
 
@@ -310,14 +309,16 @@ TTL Manager는 비활성 워크스페이스의 TTL을 체크하고 desired_state
 
 ### TTL 종류
 
-| TTL | 대상 | 트리거 | 동작 |
-|-----|------|--------|------|
+| TTL | 대상 Phase | 트리거 | 동작 |
+|-----|-----------|--------|------|
 | standby_ttl | RUNNING | WebSocket 종료 + idle 타이머 만료 | desired_state = STANDBY |
-| archive_ttl | STANDBY | last_access_at 기준 경과 | desired_state = PENDING |
+| archive_ttl | STANDBY | last_access_at 기준 경과 | desired_state = **ARCHIVED** |
+
+> **ARCHIVED로 변경**: 기존 PENDING 대신 ARCHIVED로 설정하여 Archive 보존
 
 ### 입출력
 
-**읽기**: DB (observed_status, operation, TTL 컬럼, last_access_at), Redis (ws_conn, idle_timer)
+**읽기**: DB (phase, operation, TTL 컬럼, last_access_at), Redis (ws_conn, idle_timer)
 
 **쓰기**: (없음 - 내부 서비스 레이어를 통해 API 호출)
 
@@ -327,8 +328,7 @@ TTL Manager는 비활성 워크스페이스의 TTL을 체크하고 desired_state
 
 | 조건 | 결과 |
 |------|------|
-| observed_status != RUNNING | skip |
-| health_status = ERROR | skip |
+| phase != RUNNING | skip |
 | operation != NONE | skip |
 | ws_conn > 0 | skip (활성 연결) |
 | idle_timer 존재 | skip (5분 대기 중) |
@@ -338,11 +338,12 @@ TTL Manager는 비활성 워크스페이스의 TTL을 체크하고 desired_state
 
 | 조건 | 결과 |
 |------|------|
-| observed_status != STANDBY | skip |
-| health_status = ERROR | skip |
+| phase != STANDBY | skip |
 | operation != NONE | skip |
 | NOW() - last_access_at <= archive_ttl_seconds | skip |
-| 위 조건 모두 통과 | API 호출: desired_state = PENDING |
+| 위 조건 모두 통과 | API 호출: desired_state = **ARCHIVED** |
+
+> **ARCHIVED 유지**: desired_state=ARCHIVED로 설정되므로 Archive 보존 (M1 해결)
 
 ---
 
@@ -461,7 +462,7 @@ Accept: text/event-stream
 |------|------|------|
 | reason | string | 에러 유형 |
 | message | string | 사람이 읽는 메시지 |
-| is_terminal | bool | true면 HM이 health_status=ERROR로 설정 |
+| is_terminal | bool | true면 HM이 policy.healthy=false → phase=ERROR로 설정 |
 | operation | string | 실패한 operation |
 | error_count | int | 연속 실패 횟수 |
 | context | dict | reason별 상세 정보 |
@@ -501,12 +502,23 @@ Accept: text/event-stream
 | CONTAINER_START_FAILED | ActionFailed |
 | K8S_API_ERROR | Unreachable |
 
-### 책임 분리
+### 책임 분리 (Reporter vs Judge)
 
-| 컴포넌트 | 역할 |
-|---------|------|
-| StateReconciler | error_info, error_count 설정, is_terminal 판정, previous_status 저장 (주 소유자) |
-| HealthMonitor | is_terminal 읽고 health_status=ERROR 설정, observed_status는 실제 리소스 상태 유지 |
+| 컴포넌트 | 역할 | 책임 |
+|---------|------|------|
+| StateReconciler | **Reporter** (에러 사실 기록자) | error_info, error_count 설정, is_terminal 판정 |
+| HealthMonitor | **Judge** (에러 상태 판정자) | is_terminal 읽고 policy.healthy=false → phase=ERROR 설정 |
+
+**왜 SR이 에러를 기록하나?**
+- SR이 Actuator를 호출하므로, 실패를 **가장 먼저 알 수 있음** (정보의 근접성)
+- SR이 op_started_at을 설정하므로, 타임아웃을 **직접 계산 가능**
+- 역할 과다가 아닌 **Orchestrator의 필수 책임**
+
+**분산 에러 처리 흐름**:
+1. SR: 에러 조건 감지 → error_info 기록 ("throw" 역할)
+2. HM: error_info.is_terminal 확인 → policy.healthy=false → phase=ERROR ("catch" 역할)
+
+> **Single Writer 완전 준수**: error_info는 SR 소유, conditions는 HM 소유 (예외 규칙 제거)
 
 ### 재시도 책임 분리
 
@@ -519,13 +531,13 @@ Accept: text/event-stream
 
 ### GC 보호
 
-| health_status | GC 동작 | 이유 |
-|---------------|---------|------|
+| phase | GC 동작 | 이유 |
+|-------|---------|------|
 | ERROR | 보호 (삭제 안 함) | 복구 시 archive 필요 |
-| OK (DELETED) | 삭제 대상 | soft-delete workspace |
+| DELETED | 삭제 대상 | soft-delete workspace |
 
 > **계약 준수**: [#9 GC Separation & Protection](./00-contracts.md#9-gc-separation--protection)
-> **observed_status 무관**: GC 보호는 health_status 기준
+> **phase 기반**: GC 보호는 phase=ERROR 기준 (policy.healthy=false)
 
 ### ERROR 복구
 
@@ -540,17 +552,17 @@ sequenceDiagram
     Note over Admin,DB: operation은 이미 NONE (ERROR 전환 시 리셋됨)
     Admin->>DB: error_info = NULL
     Admin->>DB: error_count = 0
-    HM->>DB: health_status = OK (error_info=NULL 확인 후)
-    Note over HM: observed_status는 이미 실제 리소스 상태 반영 중
+    HM->>DB: policy.healthy=true → phase 재계산
+    Note over HM: Conditions(volume_ready, container_ready)는 이미 실제 상태 반영 중
 ```
 
 | 필드 | 리셋 필요 | 이유 |
 |------|----------|------|
-| error_info | O | 에러 정보 초기화 → HM이 health_status=OK로 전환 |
+| error_info | O | 에러 정보 초기화 → HM이 policy.healthy=true로 전환 |
 | error_count | O | 재시도 횟수 초기화 |
 | operation | X | ERROR 전환 시 이미 NONE |
 | op_id | X | GC 보호용으로 유지 |
-| observed_status | X | 이미 실제 리소스 상태 반영 중 |
+| conditions | X | 이미 실제 리소스 상태 반영 중 (HM이 계속 갱신) |
 
 ---
 
@@ -588,10 +600,19 @@ sequenceDiagram
 1. ~~**관측 지연**: HM 최대 30초~~
    - **완화됨**: 적응형 Polling으로 operation 진행 중 2초 주기
 2. **Operation 중단 불가**: 시작 후 취소 불가, 완료까지 대기
-3. **순차적 전이**: RUNNING → PENDING 직접 불가
+3. **순차적 전이**: RUNNING → PENDING 직접 불가 (STOPPING → ARCHIVING 순차)
 4. **재시도 간격 고정**: 지수 백오프 미적용 (M2)
 5. ~~**desired_state 경쟁**: API/TTL Manager/Proxy 동시 변경 시 Last-Write-Wins~~
-   - **해결됨**: 계약 #3에 따라 API만 desired_state 변경 가능 (TTL Manager, Proxy는 내부 서비스 레이어 통해 API 호출)
+   - **해결됨**: 계약 #3에 따라 API만 desired_state 변경 가능
 6. **ERROR 자동 복구 불가**: 관리자 수동 개입 필요 (error_info, error_count 리셋)
 7. ~~**observed_status에 ERROR 포함**: 리소스 관측과 정책 판정 혼재~~
-   - **해결됨**: health_status를 별도 축으로 분리 (계약 #1 준수)
+   - **해결됨**: Conditions 패턴으로 분리 (ADR-011)
+
+---
+
+## 참조
+
+- [00-contracts.md](./00-contracts.md) - 핵심 계약
+- [02-states.md](./02-states.md) - 상태 정의
+- [03-schema.md](./03-schema.md) - DB 스키마
+- [ADR-011](../adr/011-declarative-conditions.md) - Conditions 기반 상태 표현
