@@ -9,6 +9,7 @@ from codehub.control.coordinator.base import (
     NotifySubscriber,
 )
 from codehub.control.coordinator.gc import ArchiveGC
+from codehub.control.coordinator.observer import ObserverCoordinator
 from codehub.control.coordinator.ttl import TTLManager
 from codehub.control.coordinator.wc import WorkspaceController
 
@@ -19,6 +20,7 @@ __all__ = [
     "LeaderElection",
     "NotifyPublisher",
     "NotifySubscriber",
+    "ObserverCoordinator",
     "WorkspaceController",
     "TTLManager",
     "ArchiveGC",

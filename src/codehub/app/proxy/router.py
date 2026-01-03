@@ -53,7 +53,7 @@ DbSession = Annotated[AsyncSession, Depends(get_session)]
 # Dummy code-server for testing (하드코딩)
 # =============================================================================
 # docker-compose의 dummy-codeserver 컨테이너로 프록시
-DUMMY_MODE = True  # TODO: 실제 구현 시 False로 변경
+DUMMY_MODE = False  # Dynamic code-server containers enabled
 DUMMY_HOSTNAME = "codehub-dummy-codeserver"
 DUMMY_PORT = 8080
 

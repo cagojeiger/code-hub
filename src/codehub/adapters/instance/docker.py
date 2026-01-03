@@ -12,7 +12,7 @@ from codehub.infra.docker import (
 logger = logging.getLogger(__name__)
 
 # Container configuration
-CONTAINER_PREFIX = "ws-"
+CONTAINER_PREFIX = "codehub-ws-"
 CONTAINER_PORT = 8080
 NETWORK_NAME = "codehub-net"
 CODER_UID = 1000
