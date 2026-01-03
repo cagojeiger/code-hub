@@ -1,0 +1,151 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:17
+    container_name: codehub-postgres
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: codehub
+      POSTGRES_PASSWORD: codehub
+      POSTGRES_DB: codehub
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - codehub-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codehub"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Redis - Pub/Sub for SSE event broadcasting
+  redis:
+    image: redis:7
+    container_name: codehub-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - codehub-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.25
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # MinIO - Object Storage (S3 compatible)
+  minio:
+    image: minio/minio
+    container_name: codehub-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    environment:
+      MINIO_ROOT_USER: codehub
+      MINIO_ROOT_PASSWORD: codehub123
+    volumes:
+      - minio_data:/data
+    networks:
+      - codehub-net
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Docker Socket Proxy - Secure Docker API access
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: codehub-docker-proxy
+    environment:
+      - CONTAINERS=1
+      - NETWORKS=1
+      - IMAGES=1
+      - INFO=1
+      - VERSION=1
+      - POST=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - codehub-net
+    restart: unless-stopped
+    mem_limit: 64m
+    cpus: 0.25
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Control Plane - API, Reconciler, Coordinator
+  control-plane:
+    build:
+      context: src
+      dockerfile: Dockerfile
+    container_name: codehub-control-plane
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
+      - REDIS_URL=redis://redis:6379
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=codehub
+      - MINIO_SECRET_KEY=codehub123
+      - DOCKER_HOST=tcp://docker-proxy:2375
+      - WORKERS=3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - codehub-net
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+networks:
+  codehub-net:
+    name: codehub-net
+    driver: bridge
+
+volumes:
+  postgres_data:
+  minio_data:
