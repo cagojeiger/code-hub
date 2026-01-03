@@ -83,3 +83,41 @@
 | 방식 | 구현 | 용도 |
 |------|------|------|
 | UUID v4 | `uuid.uuid4()` | CAS 충돌 방지, 중복 실행 방지 |
+
+---
+
+## DB 연결 전략
+
+### Connection per Coordinator
+
+각 Coordinator는 **독립된 DB 연결**을 사용:
+
+```
+┌─────────────────────────────────────────────────────┐
+│                 FastAPI Process                      │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
+│  │  Observer   │  │     WC      │  │    TTL/GC   │  │
+│  │  (conn #1)  │  │  (conn #2)  │  │ (conn #3,4) │  │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  │
+│         │                │                │         │
+│         ▼                ▼                ▼         │
+│      PostgreSQL Connection Pool (4 connections)     │
+└─────────────────────────────────────────────────────┘
+```
+
+**이유:**
+- SQLAlchemy AsyncConnection은 concurrent task 간 공유 불가
+- 각 연결은 독립된 트랜잭션 컨텍스트 유지
+- Advisory Lock도 연결별로 동작 (동일 Lock ID = 서로 블로킹)
+
+**Advisory Lock 동작:**
+
+| Coordinator | Lock Key | 같은 타입 다른 Pod | 다른 타입 같은 Pod |
+|-------------|----------|-------------------|-------------------|
+| Observer | `coordinator:observer` | ❌ 블로킹 | ✅ 독립 |
+| WC | `coordinator:wc` | ❌ 블로킹 | ✅ 독립 |
+| TTL | `coordinator:ttl` | ❌ 블로킹 | ✅ 독립 |
+| GC | `coordinator:gc` | ❌ 블로킹 | ✅ 독립 |
+
+→ 동일 타입 Coordinator는 클러스터 전체에서 1개만 리더로 동작
+→ 서로 다른 타입은 같은 프로세스 내에서도 병렬 실행 가능
