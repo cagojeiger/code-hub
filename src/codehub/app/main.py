@@ -3,12 +3,18 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
+from codehub.app.api.v1 import auth_router, workspaces_router
 from codehub.app.logging import setup_logging
+from codehub.app.proxy import router as proxy_router
+from codehub.app.proxy.client import close_http_client
 from codehub.control.coordinator import (
     ArchiveGC,
     TTLManager,
@@ -49,6 +55,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     except asyncio.CancelledError:
         pass
 
+    await close_http_client()
     await close_storage()
     await close_redis()
     await close_db()
@@ -76,6 +83,11 @@ async def _run_coordinators() -> None:
 
 
 app = FastAPI(title="CodeHub", version="0.1.0", lifespan=lifespan)
+
+# Register routers
+app.include_router(auth_router, prefix="/api/v1")
+app.include_router(workspaces_router, prefix="/api/v1")
+app.include_router(proxy_router)
 
 
 @app.get("/health")
@@ -111,3 +123,20 @@ async def health():
         status["status"] = "degraded"
 
     return status
+
+
+# Static files
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/")
+async def root() -> FileResponse:
+    """Serve the dashboard UI."""
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/login")
+async def login_page() -> FileResponse:
+    """Serve the login page."""
+    return FileResponse(STATIC_DIR / "login.html")

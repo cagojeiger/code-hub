@@ -27,6 +27,7 @@ class StorageConfig(BaseSettings):
     endpoint_url: str = Field(default="http://minio:9000", alias="MINIO_ENDPOINT")
     access_key: str = Field(default="codehub", alias="MINIO_ACCESS_KEY")
     secret_key: str = Field(default="codehub123", alias="MINIO_SECRET_KEY")
+    bucket_name: str = Field(default="codehub-archives", alias="MINIO_BUCKET")
 
 
 class Settings(BaseSettings):

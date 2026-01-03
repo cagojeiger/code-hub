@@ -3,6 +3,7 @@
 from types import TracebackType
 
 import aioboto3
+from botocore.exceptions import ClientError
 from types_aiobotocore_s3 import S3Client
 
 from codehub.app.config import get_settings
@@ -22,7 +23,11 @@ async def init_storage() -> None:
         aws_access_key_id=settings.storage.access_key,
         aws_secret_access_key=settings.storage.secret_key,
     ) as s3:
-        await s3.list_buckets()
+        # Ensure bucket exists
+        try:
+            await s3.head_bucket(Bucket=settings.storage.bucket_name)
+        except ClientError:
+            await s3.create_bucket(Bucket=settings.storage.bucket_name)
 
 
 async def close_storage() -> None:

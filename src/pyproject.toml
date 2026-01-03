@@ -20,6 +20,14 @@ dependencies = [
     "alembic>=1.14.0",
     # Logging
     "python-json-logger>=3.0.0",
+    # Auth
+    "argon2-cffi>=23.1.0",
+    "python-ulid>=3.0.0",
+    # Proxy
+    "httpx>=0.28.0",
+    "websockets>=14.0",
+    # Compression
+    "zstandard>=0.23.0",
 ]
 
 [build-system]
