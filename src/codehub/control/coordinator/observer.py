@@ -35,7 +35,7 @@ class BulkObserver:
         self,
         instance_controller: InstanceController,
         storage_provider: StorageProvider,
-        prefix: str = "ws-",
+        prefix: str = "codehub-ws-",
     ) -> None:
         self._ic = instance_controller
         self._sp = storage_provider
@@ -96,7 +96,7 @@ class ObserverCoordinator(CoordinatorBase):
         instance_controller: InstanceController,
         storage_provider: StorageProvider,
         publisher: NotifyPublisher,
-        prefix: str = "ws-",
+        prefix: str = "codehub-ws-",
     ) -> None:
         super().__init__(conn, leader, notify)
         self._observer = BulkObserver(instance_controller, storage_provider, prefix)

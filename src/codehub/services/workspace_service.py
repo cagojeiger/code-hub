@@ -41,7 +41,7 @@ async def create_workspace(
         image_ref=image_ref,
         instance_backend="local-docker",
         storage_backend="minio",
-        home_store_key=f"ws-{workspace_id}-home",
+        home_store_key=f"codehub-ws-{workspace_id}-home",
         phase=Phase.PENDING.value,
         operation=Operation.NONE.value,
         desired_state=DesiredState.RUNNING.value,

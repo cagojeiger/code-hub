@@ -68,7 +68,7 @@ def _get_container_hostname(workspace_id: str) -> str:
     """
     if DUMMY_MODE:
         return DUMMY_HOSTNAME
-    return f"ws-{workspace_id}"
+    return f"codehub-ws-{workspace_id}"
 
 
 def _get_container_port(workspace_id: str) -> int:

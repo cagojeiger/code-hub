@@ -82,7 +82,7 @@ class DockerInstanceController(InstanceController):
             exposed_ports={"8080/tcp": {}},
             host_config=HostConfig(
                 network_mode=NETWORK_NAME,
-                binds=[f"ws-{workspace_id}-home:/home/coder"],
+                binds=[f"codehub-ws-{workspace_id}-home:/home/coder"],
             ),
         )
 

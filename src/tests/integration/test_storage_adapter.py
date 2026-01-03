@@ -39,7 +39,7 @@ class TestS3StorageProvider:
         workspace_id = f"{test_prefix}list"
         try:
             await storage_provider.provision(workspace_id)
-            volumes = await storage_provider.list_volumes("ws-")
+            volumes = await storage_provider.list_volumes("codehub-ws-")
             found = any(v.workspace_id == workspace_id for v in volumes)
             assert found, f"Workspace {workspace_id} not found in volumes"
         finally:
@@ -156,8 +156,8 @@ async def _write_test_data(
     workspace_id: str, data: bytes, containers: ContainerAPI
 ) -> None:
     """Write test data to volume using helper container."""
-    volume_name = f"ws-{workspace_id}-home"
-    helper_name = f"ws-helper-write-{workspace_id}"
+    volume_name = f"codehub-ws-{workspace_id}-home"
+    helper_name = f"codehub-ws-helper-write-{workspace_id}"
 
     try:
         # Create container
@@ -185,8 +185,8 @@ async def _write_test_data(
 
 async def _read_test_data(workspace_id: str, containers: ContainerAPI) -> bytes:
     """Read test data from volume using helper container."""
-    volume_name = f"ws-{workspace_id}-home"
-    helper_name = f"ws-helper-read-{workspace_id}"
+    volume_name = f"codehub-ws-{workspace_id}-home"
+    helper_name = f"codehub-ws-helper-read-{workspace_id}"
 
     try:
         # Create container

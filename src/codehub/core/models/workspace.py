@@ -33,7 +33,7 @@ class Workspace(SQLModel, table=True):
     image_ref: str = Field(max_length=512)
     instance_backend: str  # 'local-docker' / 'k8s'
     storage_backend: str  # 'docker-volume' / 'minio'
-    home_store_key: str = Field(max_length=512)  # ws-{id}-home
+    home_store_key: str = Field(max_length=512)  # codehub-ws-{id}-home
     home_ctx: dict | None = Field(default=None, sa_column=Column(JSONB))
 
     # M2 state fields
