@@ -14,7 +14,6 @@ from codehub.control.coordinator.base import (
     CoordinatorBase,
     CoordinatorType,
     LeaderElection,
-    NotifyPublisher,
     NotifySubscriber,
 )
 from codehub.core.interfaces.instance import ContainerInfo, InstanceController
@@ -89,9 +88,6 @@ class ObserverCoordinator(CoordinatorBase):
     COORDINATOR_TYPE = CoordinatorType.OBSERVER
     CHANNELS = [Channel.OB_WAKE]
 
-    IDLE_INTERVAL = 15.0
-    ACTIVE_INTERVAL = 2.0
-
     def __init__(
         self,
         conn: AsyncConnection,
@@ -99,12 +95,10 @@ class ObserverCoordinator(CoordinatorBase):
         notify: NotifySubscriber,
         instance_controller: InstanceController,
         storage_provider: StorageProvider,
-        publisher: NotifyPublisher,
         prefix: str = "codehub-ws-",
     ) -> None:
         super().__init__(conn, leader, notify)
         self._observer = BulkObserver(instance_controller, storage_provider, prefix)
-        self._publisher = publisher
 
     async def tick(self) -> None:
         """Observe all resources and persist conditions to DB."""
@@ -140,9 +134,6 @@ class ObserverCoordinator(CoordinatorBase):
             # Commit at connection level
             await self._conn.commit()
             logger.info("[Observer] Committed %d updates to DB", count)
-
-            # 5. Wake WC to process updated conditions
-            await self._publisher.wake_wc()
         else:
             logger.debug("[Observer] No updates to apply")
 

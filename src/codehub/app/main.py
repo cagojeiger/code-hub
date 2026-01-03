@@ -31,7 +31,6 @@ from codehub.control.coordinator import (
 )
 from codehub.control.coordinator.base import (
     LeaderElection,
-    NotifyPublisher,
     NotifySubscriber,
 )
 from codehub.infra import (
@@ -43,6 +42,7 @@ from codehub.infra import (
     get_redis,
     get_s3_client,
     init_db,
+    init_publisher,
     init_redis,
     init_storage,
 )
@@ -91,6 +91,7 @@ async def _ensure_admin_user() -> None:
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await init_db()
     await init_redis()
+    init_publisher()  # Initialize global NotifyPublisher for API
     await init_storage()
     await _ensure_admin_user()
 
@@ -127,9 +128,6 @@ async def _run_coordinators() -> None:
     ic = DockerInstanceController()
     sp = S3StorageProvider()
 
-    # Shared publisher (Observer → WC wakeup)
-    publisher = NotifyPublisher(redis_client)
-
     def make_runner(coordinator_cls: type, *args) -> callable:
         """Factory for coordinator runner coroutines.
 
@@ -145,7 +143,7 @@ async def _run_coordinators() -> None:
 
     try:
         await asyncio.gather(
-            make_runner(ObserverCoordinator, ic, sp, publisher)(),
+            make_runner(ObserverCoordinator, ic, sp)(),
             make_runner(WorkspaceController, ic, sp)(),
             make_runner(TTLManager)(),
             make_runner(ArchiveGC)(),

@@ -7,13 +7,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codehub.app.proxy.auth import get_user_id_from_session
+from codehub.control.coordinator.base import NotifyPublisher
 from codehub.core.domain import DesiredState
-from codehub.infra import get_session
+from codehub.infra import get_publisher, get_session
 from codehub.services import workspace_service
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
+Publisher = Annotated[NotifyPublisher, Depends(get_publisher)]
 
 
 # =============================================================================
@@ -100,6 +102,7 @@ def _to_response(ws) -> WorkspaceResponse:
 async def create_workspace(
     request: CreateWorkspaceRequest,
     db: DbSession,
+    publisher: Publisher,
     session: Annotated[str | None, Cookie(alias="session")] = None,
 ) -> WorkspaceResponse:
     """Create a new workspace."""
@@ -112,6 +115,10 @@ async def create_workspace(
         description=request.description,
         image_ref=request.image_ref,
     )
+
+    # Accelerate coordinators for fast convergence
+    await publisher.wake_ob()
+    await publisher.wake_wc()
 
     return _to_response(workspace)
 
@@ -162,6 +169,7 @@ async def update_workspace(
     workspace_id: str,
     request: UpdateWorkspaceRequest,
     db: DbSession,
+    publisher: Publisher,
     session: Annotated[str | None, Cookie(alias="session")] = None,
 ) -> WorkspaceResponse:
     """Update workspace."""
@@ -177,6 +185,11 @@ async def update_workspace(
         desired_state=request.desired_state,
     )
 
+    # Accelerate coordinators when desired_state changes
+    if request.desired_state is not None:
+        await publisher.wake_ob()
+        await publisher.wake_wc()
+
     return _to_response(workspace)
 
 
@@ -184,6 +197,7 @@ async def update_workspace(
 async def delete_workspace(
     workspace_id: str,
     db: DbSession,
+    publisher: Publisher,
     session: Annotated[str | None, Cookie(alias="session")] = None,
 ) -> None:
     """Delete workspace (soft delete)."""
@@ -194,3 +208,7 @@ async def delete_workspace(
         workspace_id=workspace_id,
         user_id=user_id,
     )
+
+    # Accelerate coordinators for fast cleanup
+    await publisher.wake_ob()
+    await publisher.wake_wc()

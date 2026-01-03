@@ -149,7 +149,7 @@ class CoordinatorBase(ABC):
     """
 
     IDLE_INTERVAL: float = 15.0
-    ACTIVE_INTERVAL: float = 2.0
+    ACTIVE_INTERVAL: float = 1.0
     MIN_INTERVAL: float = 1.0
     LEADER_RETRY_INTERVAL: float = 5.0
     VERIFY_INTERVAL: float = 60.0
@@ -183,7 +183,7 @@ class CoordinatorBase(ABC):
 
     def accelerate(self) -> None:
         self._active_until = time.time() + self.ACTIVE_DURATION
-        logger.debug("[%s] Accelerating for %.0fs", self.name, self.ACTIVE_DURATION)
+        logger.info("[%s] Accelerating for %.0fs", self.name, self.ACTIVE_DURATION)
 
     def _get_interval(self) -> float:
         return self.ACTIVE_INTERVAL if self.is_active else self.IDLE_INTERVAL
