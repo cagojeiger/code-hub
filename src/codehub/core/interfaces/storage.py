@@ -1,11 +1,11 @@
 """Storage provider interface for volume and archive operations."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+
+from pydantic import BaseModel
 
 
-@dataclass
-class VolumeInfo:
+class VolumeInfo(BaseModel):
     """Volume observation result."""
 
     workspace_id: str
@@ -13,9 +13,10 @@ class VolumeInfo:
     reason: str
     message: str
 
+    model_config = {"frozen": True}
 
-@dataclass
-class ArchiveInfo:
+
+class ArchiveInfo(BaseModel):
     """Archive observation result."""
 
     workspace_id: str
@@ -24,11 +25,13 @@ class ArchiveInfo:
     reason: str  # ArchiveUploaded, ArchiveCorrupted, ArchiveUnreachable, etc.
     message: str
 
+    model_config = {"frozen": True}
+
 
 class StorageProvider(ABC):
     """Interface for storage operations.
 
-    Implementations: MinIOStorageProvider, LocalStorageProvider (future)
+    Implementations: S3StorageProvider, LocalStorageProvider (future)
     """
 
     @abstractmethod
@@ -122,4 +125,9 @@ class StorageProvider(ABC):
         Returns:
             Archive key for the created empty archive
         """
+        ...
+
+    @abstractmethod
+    async def close(self) -> None:
+        """Close provider and release resources."""
         ...

@@ -7,6 +7,7 @@ import pytest
 
 import codehub.infra.docker as docker_module
 import codehub.infra.storage as storage_module
+from codehub.app.config import get_settings
 from codehub.infra.docker import (
     ContainerAPI,
     DockerClient,
@@ -41,7 +42,8 @@ async def setup_storage():
     - Uses TEST_BUCKET instead of production bucket
     - Cleans up all test objects after each test
     """
-    # Override bucket name for tests
+    # Clear settings cache first, then set env var
+    get_settings.cache_clear()
     os.environ["MINIO_BUCKET"] = TEST_BUCKET
 
     # Reset before test
@@ -56,8 +58,6 @@ async def setup_storage():
 
 async def _cleanup_test_bucket():
     """Delete all objects in the test bucket."""
-    from codehub.app.config import get_settings
-
     settings = get_settings()
     try:
         async with get_s3_client() as s3:

@@ -1,17 +1,19 @@
 """Instance controller interface for container orchestration."""
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+
+from pydantic import BaseModel
 
 
-@dataclass
-class ContainerInfo:
+class ContainerInfo(BaseModel):
     """Container observation result."""
 
     workspace_id: str
     running: bool
     reason: str
     message: str
+
+    model_config = {"frozen": True}
 
 
 class InstanceController(ABC):
@@ -61,4 +63,9 @@ class InstanceController(ABC):
         Returns:
             True if container is running
         """
+        ...
+
+    @abstractmethod
+    async def close(self) -> None:
+        """Close controller and release resources."""
         ...
