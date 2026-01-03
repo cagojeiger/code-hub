@@ -3,7 +3,7 @@
 Implements Spec-v2 Storage Job for archive/restore operations:
 - Crash-Only, Stateless, Idempotent design
 - All operations (sha256, S3 upload) happen inside container
-- Python only orchestrates container execution
+- Python only orchestrates container execution via JobRunner
 """
 
 import logging
@@ -12,39 +12,51 @@ from collections import defaultdict
 from botocore.exceptions import ClientError
 
 from codehub.app.config import get_settings
-from codehub.core.interfaces import ArchiveInfo, StorageProvider, VolumeInfo
-from codehub.infra.docker import (
-    ContainerAPI,
-    ContainerConfig,
-    HostConfig,
-    VolumeAPI,
-    VolumeConfig,
+from codehub.core.interfaces import (
+    ArchiveInfo,
+    JobRunner,
+    StorageProvider,
+    VolumeInfo,
+    VolumeProvider,
 )
 from codehub.infra import get_s3_client
 
 logger = logging.getLogger(__name__)
 
 VOLUME_PREFIX = "codehub-ws-"
-STORAGE_JOB_IMAGE = "codehub/storage-job:latest"
 
 
 class S3StorageProvider(StorageProvider):
-    """S3-based storage provider using Docker volumes and S3."""
+    """S3-based storage provider using Docker volumes and S3.
+
+    Uses VolumeProvider for volume operations and JobRunner for
+    archive/restore job execution. K8s-compatible via DI.
+    """
 
     def __init__(
         self,
-        volumes: VolumeAPI | None = None,
-        containers: ContainerAPI | None = None,
+        volumes: VolumeProvider | None = None,
+        job_runner: JobRunner | None = None,
     ) -> None:
-        self._volumes = volumes or VolumeAPI()
-        self._containers = containers or ContainerAPI()
+        # Lazy imports to avoid circular dependencies
+        if volumes is None:
+            from codehub.adapters.volume.docker import DockerVolumeProvider
+
+            volumes = DockerVolumeProvider()
+        if job_runner is None:
+            from codehub.adapters.job.docker import DockerJobRunner
+
+            job_runner = DockerJobRunner()
+
+        self._volumes = volumes
+        self._job_runner = job_runner
 
     def _volume_name(self, workspace_id: str) -> str:
         return f"{VOLUME_PREFIX}{workspace_id}-home"
 
     async def list_volumes(self, prefix: str) -> list[VolumeInfo]:
         """List all volumes with given prefix."""
-        volumes = await self._volumes.list(filters={"name": [prefix]})
+        volumes = await self._volumes.list(prefix)
 
         results = []
         for volume in volumes:
@@ -134,8 +146,7 @@ class S3StorageProvider(StorageProvider):
     async def provision(self, workspace_id: str) -> None:
         """Create new volume for workspace."""
         volume_name = self._volume_name(workspace_id)
-        config = VolumeConfig(name=volume_name)
-        await self._volumes.create(config)
+        await self._volumes.create(volume_name)
 
     async def archive(self, workspace_id: str, op_id: str) -> str:
         """Archive volume to S3 using storage-job container (Spec-v2).
@@ -158,36 +169,19 @@ class S3StorageProvider(StorageProvider):
         """
         settings = get_settings()
         archive_key = f"{VOLUME_PREFIX}{workspace_id}/{op_id}/home.tar.zst"
+        archive_url = f"s3://{settings.storage.bucket_name}/{archive_key}"
         volume_name = self._volume_name(workspace_id)
-        helper_name = f"codehub-ws-helper-archive-{workspace_id}-{op_id[:8]}"
 
-        try:
-            config = ContainerConfig(
-                image=STORAGE_JOB_IMAGE,
-                name=helper_name,
-                cmd=["-c", "/usr/local/bin/archive"],
-                env=[
-                    f"AWS_ACCESS_KEY_ID={settings.storage.access_key}",
-                    f"AWS_SECRET_ACCESS_KEY={settings.storage.secret_key}",
-                    f"AWS_ENDPOINT_URL={settings.storage.endpoint_url}",
-                    f"S3_BUCKET={settings.storage.bucket_name}",
-                    f"S3_KEY={archive_key}",
-                ],
-                host_config=HostConfig(
-                    network_mode="codehub-net",
-                    binds=[f"{volume_name}:/data:ro"],
-                ),
-            )
-            await self._containers.create(config)
-            await self._containers.start(helper_name)
+        result = await self._job_runner.run_archive(
+            archive_url=archive_url,
+            volume_name=volume_name,
+            s3_endpoint=settings.storage.internal_endpoint_url,
+            s3_access_key=settings.storage.access_key,
+            s3_secret_key=settings.storage.secret_key,
+        )
 
-            exit_code = await self._containers.wait(helper_name)
-            if exit_code != 0:
-                logs = await self._containers.logs(helper_name)
-                raise RuntimeError(f"Archive job failed (exit {exit_code}): {logs!r}")
-
-        finally:
-            await self._containers.remove(helper_name)
+        if result.exit_code != 0:
+            raise RuntimeError(f"Archive job failed (exit {result.exit_code}): {result.logs}")
 
         logger.info("Archive complete: %s", archive_key)
         return archive_key
@@ -212,39 +206,22 @@ class S3StorageProvider(StorageProvider):
             RuntimeError: If restore job fails
         """
         settings = get_settings()
+        archive_url = f"s3://{settings.storage.bucket_name}/{archive_key}"
         volume_name = self._volume_name(workspace_id)
-        helper_name = f"codehub-ws-helper-restore-{workspace_id}"
 
         # Ensure volume exists
         await self.provision(workspace_id)
 
-        try:
-            config = ContainerConfig(
-                image=STORAGE_JOB_IMAGE,
-                name=helper_name,
-                cmd=["-c", "/usr/local/bin/restore"],
-                env=[
-                    f"AWS_ACCESS_KEY_ID={settings.storage.access_key}",
-                    f"AWS_SECRET_ACCESS_KEY={settings.storage.secret_key}",
-                    f"AWS_ENDPOINT_URL={settings.storage.endpoint_url}",
-                    f"S3_BUCKET={settings.storage.bucket_name}",
-                    f"S3_KEY={archive_key}",
-                ],
-                host_config=HostConfig(
-                    network_mode="codehub-net",
-                    binds=[f"{volume_name}:/data"],
-                ),
-            )
-            await self._containers.create(config)
-            await self._containers.start(helper_name)
+        result = await self._job_runner.run_restore(
+            archive_url=archive_url,
+            volume_name=volume_name,
+            s3_endpoint=settings.storage.internal_endpoint_url,
+            s3_access_key=settings.storage.access_key,
+            s3_secret_key=settings.storage.secret_key,
+        )
 
-            exit_code = await self._containers.wait(helper_name)
-            if exit_code != 0:
-                logs = await self._containers.logs(helper_name)
-                raise RuntimeError(f"Restore job failed (exit {exit_code}): {logs!r}")
-
-        finally:
-            await self._containers.remove(helper_name)
+        if result.exit_code != 0:
+            raise RuntimeError(f"Restore job failed (exit {result.exit_code}): {result.logs}")
 
         logger.info("Restore complete: %s", archive_key)
         return archive_key
@@ -257,8 +234,7 @@ class S3StorageProvider(StorageProvider):
     async def volume_exists(self, workspace_id: str) -> bool:
         """Check if volume exists."""
         volume_name = self._volume_name(workspace_id)
-        data = await self._volumes.inspect(volume_name)
-        return data is not None
+        return await self._volumes.exists(volume_name)
 
     async def create_empty_archive(self, workspace_id: str, op_id: str) -> str:
         """Create empty archive and return archive_key."""

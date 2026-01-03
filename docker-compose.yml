@@ -107,6 +107,14 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Storage Job - Archive/Restore helper container (build only)
+  storage-job:
+    build:
+      context: containers/storage-job
+    image: codehub/storage-job:latest
+    profiles:
+      - build  # docker compose --profile build build storage-job
+
   # Test runner - isolated test environment
   test:
     build:

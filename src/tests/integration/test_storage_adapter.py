@@ -5,14 +5,28 @@ import tarfile
 
 import pytest
 
-from codehub.adapters import S3StorageProvider
+from codehub.adapters import DockerJobRunner, DockerVolumeProvider, S3StorageProvider
 from codehub.infra.docker import ContainerAPI, ContainerConfig, HostConfig, VolumeAPI
 
 
 @pytest.fixture
-def storage_provider(volume_api: VolumeAPI, container_api: ContainerAPI):
+def volume_provider(volume_api: VolumeAPI) -> DockerVolumeProvider:
+    """Create DockerVolumeProvider with injected VolumeAPI."""
+    return DockerVolumeProvider(api=volume_api)
+
+
+@pytest.fixture
+def job_runner(container_api: ContainerAPI) -> DockerJobRunner:
+    """Create DockerJobRunner with injected ContainerAPI."""
+    return DockerJobRunner(containers=container_api)
+
+
+@pytest.fixture
+def storage_provider(
+    volume_provider: DockerVolumeProvider, job_runner: DockerJobRunner
+) -> S3StorageProvider:
     """Create S3StorageProvider with injected dependencies."""
-    return S3StorageProvider(volumes=volume_api, containers=container_api)
+    return S3StorageProvider(volumes=volume_provider, job_runner=job_runner)
 
 
 @pytest.mark.integration

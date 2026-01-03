@@ -25,6 +25,11 @@ class StorageConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="S3_")
 
     endpoint_url: str = Field(default="http://minio:9000", validation_alias="S3_ENDPOINT")
+    # Internal endpoint for containers (e.g., storage-job) running on Docker network.
+    # Defaults to endpoint_url. Set S3_ENDPOINT_INTERNAL for local tests.
+    internal_endpoint_url: str = Field(
+        default="http://minio:9000", validation_alias="S3_ENDPOINT_INTERNAL"
+    )
     access_key: str = Field(default="codehub", validation_alias="S3_ACCESS_KEY")
     secret_key: str = Field(default="codehub123", validation_alias="S3_SECRET_KEY")
     bucket_name: str = Field(default="codehub-archives", validation_alias="S3_BUCKET")
