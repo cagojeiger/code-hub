@@ -28,7 +28,7 @@ from codehub.infra.docker import (
     VolumeAPI,
     VolumeConfig,
 )
-from codehub.infra.storage import get_s3_client
+from codehub.infra import get_s3_client
 
 logger = logging.getLogger(__name__)
 

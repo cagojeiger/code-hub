@@ -6,14 +6,14 @@ import uuid
 import pytest
 
 import codehub.infra.docker as docker_module
-import codehub.infra.storage as storage_module
+import codehub.infra.object_storage as storage_module
 from codehub.app.config import get_settings
 from codehub.infra.docker import (
     ContainerAPI,
     DockerClient,
     VolumeAPI,
 )
-from codehub.infra.storage import close_storage, get_s3_client, init_storage
+from codehub.infra import close_storage, get_s3_client, init_storage
 
 # Test bucket name - separate from production
 TEST_BUCKET = "codehub-archives-test"
