@@ -129,15 +129,20 @@ class CoordinatorBase(ABC):
     Coordinator uses the same connection for both Advisory Lock and DB transactions.
     This ensures atomic failure: if connection drops, both lock and transaction fail together.
 
-    In tick(), always use AsyncSession(bind=self._conn):
+    In tick(), use self._conn directly (NOT AsyncSession):
 
         async def tick(self) -> None:
-            # IMPORTANT: Use self._conn to share connection with Advisory Lock
-            # - bind=Engine -> gets new connection from pool (different from lock)
-            # - bind=Connection -> uses exact same connection (shares with lock)
-            # See: ADR-012, sqlalchemy/orm/session.py:1179-1188
-            async with AsyncSession(bind=self._conn) as session:
-                ...
+            # Use connection directly for queries
+            result = await self._conn.execute(select(Workspace))
+
+            # Commit at connection level after writes
+            await self._conn.execute(update_stmt)
+            await self._conn.commit()
+
+    WARNING: Do NOT use AsyncSession(bind=self._conn)!
+    - AsyncSession.commit() only commits at session level
+    - Connection stays in "idle in transaction" state
+    - This causes lock conflicts between Coordinators (Observer ↔ WC)
 
     DO NOT use get_session() in Coordinator - it gets connection from pool,
     which may differ from the Advisory Lock connection, causing Zombie Lock risk.

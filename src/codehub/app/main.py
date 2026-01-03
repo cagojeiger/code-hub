@@ -30,7 +30,6 @@ from codehub.control.coordinator import (
     WorkspaceController,
 )
 from codehub.control.coordinator.base import (
-    CoordinatorType,
     LeaderElection,
     NotifyPublisher,
     NotifySubscriber,
@@ -95,13 +94,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await init_storage()
     await _ensure_admin_user()
 
-    logger.info("Starting")
+    logger.info("[main] Starting application")
 
     coordinator_task = asyncio.create_task(_run_coordinators())
 
     yield
 
-    logger.info("Shutting down")
+    logger.info("[main] Shutting down application")
     coordinator_task.cancel()
     try:
         await coordinator_task
@@ -116,45 +115,46 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 async def _run_coordinators() -> None:
+    """Run all coordinators with separate DB connections.
+
+    Each coordinator gets its own connection to avoid SQLAlchemy
+    AsyncConnection sharing issues across concurrent tasks.
+    """
     engine = get_engine()
     redis_client = get_redis()
 
-    # Adapters
+    # Adapters (thread-safe, can be shared)
     ic = DockerInstanceController()
     sp = S3StorageProvider()
 
     # Shared publisher (Observer → WC wakeup)
     publisher = NotifyPublisher(redis_client)
 
+    def make_runner(coordinator_cls: type, *args) -> callable:
+        """Factory for coordinator runner coroutines.
+
+        Uses coordinator_cls.COORDINATOR_TYPE to create LeaderElection.
+        """
+        async def runner() -> None:
+            async with engine.connect() as conn:
+                leader = LeaderElection(conn, coordinator_cls.COORDINATOR_TYPE)
+                notify = NotifySubscriber(redis_client)
+                coordinator = coordinator_cls(conn, leader, notify, *args)
+                await coordinator.run()
+        return runner
+
     try:
-        async with engine.connect() as conn:
-            # Per-coordinator DI
-            ob_leader = LeaderElection(conn, CoordinatorType.OBSERVER)
-            ob_notify = NotifySubscriber(redis_client)
-
-            wc_leader = LeaderElection(conn, CoordinatorType.WC)
-            wc_notify = NotifySubscriber(redis_client)
-
-            ttl_leader = LeaderElection(conn, CoordinatorType.TTL)
-            ttl_notify = NotifySubscriber(redis_client)
-
-            gc_leader = LeaderElection(conn, CoordinatorType.GC)
-            gc_notify = NotifySubscriber(redis_client)
-
-            coordinators = [
-                ObserverCoordinator(conn, ob_leader, ob_notify, ic, sp, publisher),
-                WorkspaceController(conn, wc_leader, wc_notify, ic, sp),
-                TTLManager(conn, ttl_leader, ttl_notify),
-                ArchiveGC(conn, gc_leader, gc_notify),
-            ]
-            # gather가 cancel되면 모든 자식 task를 cancel하고
-            # 각 run()에서 _cleanup() 호출됨
-            await asyncio.gather(*[c.run() for c in coordinators])
+        await asyncio.gather(
+            make_runner(ObserverCoordinator, ic, sp, publisher)(),
+            make_runner(WorkspaceController, ic, sp)(),
+            make_runner(TTLManager)(),
+            make_runner(ArchiveGC)(),
+        )
     except asyncio.CancelledError:
-        logger.info("Coordinators cancelled")
+        logger.info("[main] Coordinators cancelled")
         raise
     except Exception as e:
-        logger.exception("Coordinator error: %s", e)
+        logger.exception("[main] Coordinator error: %s", e)
     finally:
         await ic.close()
         await sp.close()
@@ -178,39 +178,53 @@ app.include_router(workspaces_router, prefix="/api/v1")
 app.include_router(proxy_router)
 
 
+async def _check_service(check_fn: callable) -> str:
+    """Check service health and return status string."""
+    try:
+        await check_fn()
+        return "connected"
+    except RuntimeError:
+        return "not initialized"
+    except Exception as e:
+        return f"error: {e}"
+
+
+async def _check_postgres() -> None:
+    engine = get_engine()
+    async with engine.begin() as conn:
+        await conn.execute(text("SELECT 1"))
+
+
+async def _check_redis() -> None:
+    redis_client = get_redis()
+    await redis_client.ping()
+
+
+async def _check_s3() -> None:
+    async with get_s3_client() as s3:
+        await s3.list_buckets()
+
+
 @app.get("/health")
 async def health():
-    status: dict = {"status": "ok", "services": {}}
+    results = await asyncio.gather(
+        _check_service(_check_postgres),
+        _check_service(_check_redis),
+        _check_service(_check_s3),
+    )
 
-    try:
-        engine = get_engine()
-        async with engine.begin() as conn:
-            await conn.execute(text("SELECT 1"))
-        status["services"]["postgres"] = "connected"
-    except RuntimeError:
-        status["services"]["postgres"] = "not initialized"
-        status["status"] = "degraded"
-    except Exception as e:
-        status["services"]["postgres"] = f"error: {e}"
-        status["status"] = "degraded"
+    services = {
+        "postgres": results[0],
+        "redis": results[1],
+        "s3": results[2],
+    }
 
-    try:
-        redis_client = get_redis()
-        await redis_client.ping()
-        status["services"]["redis"] = "connected"
-    except Exception as e:
-        status["services"]["redis"] = f"error: {e}"
-        status["status"] = "degraded"
+    is_degraded = any(s != "connected" for s in services.values())
 
-    try:
-        async with get_s3_client() as s3:
-            await s3.list_buckets()
-        status["services"]["s3"] = "connected"
-    except Exception as e:
-        status["services"]["s3"] = f"error: {e}"
-        status["status"] = "degraded"
-
-    return status
+    return {
+        "status": "degraded" if is_degraded else "ok",
+        "services": services,
+    }
 
 
 # Static files
