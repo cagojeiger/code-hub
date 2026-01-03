@@ -44,7 +44,7 @@ async def setup_storage():
     """
     # Clear settings cache first, then set env var
     get_settings.cache_clear()
-    os.environ["MINIO_BUCKET"] = TEST_BUCKET
+    os.environ["S3_BUCKET"] = TEST_BUCKET
 
     # Reset before test
     storage_module._session = None

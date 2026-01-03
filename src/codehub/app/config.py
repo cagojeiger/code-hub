@@ -22,12 +22,12 @@ class RedisConfig(BaseSettings):
 
 
 class StorageConfig(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="MINIO_")
+    model_config = SettingsConfigDict(env_prefix="S3_")
 
-    endpoint_url: str = Field(default="http://minio:9000", alias="MINIO_ENDPOINT")
-    access_key: str = Field(default="codehub", alias="MINIO_ACCESS_KEY")
-    secret_key: str = Field(default="codehub123", alias="MINIO_SECRET_KEY")
-    bucket_name: str = Field(default="codehub-archives", alias="MINIO_BUCKET")
+    endpoint_url: str = Field(default="http://minio:9000", validation_alias="S3_ENDPOINT")
+    access_key: str = Field(default="codehub", validation_alias="S3_ACCESS_KEY")
+    secret_key: str = Field(default="codehub123", validation_alias="S3_SECRET_KEY")
+    bucket_name: str = Field(default="codehub-archives", validation_alias="S3_BUCKET")
 
 
 class Settings(BaseSettings):
