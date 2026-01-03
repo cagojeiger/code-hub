@@ -209,3 +209,109 @@ class TestContainerAPI:
             assert data is not None
         finally:
             await container_api.remove(name)
+
+    @pytest.mark.asyncio
+    async def test_container_wait(
+        self, container_api: ContainerAPI, test_prefix: str
+    ):
+        """Test waiting for container to exit."""
+        name = f"{test_prefix}wait-container"
+
+        config = ContainerConfig(
+            image=TEST_IMAGE,
+            name=name,
+            cmd=["python", "-c", "exit(42)"],
+        )
+
+        try:
+            await container_api.create(config)
+            await container_api.start(name)
+
+            # Wait for container to exit
+            exit_code = await container_api.wait(name, timeout=30)
+            assert exit_code == 42
+        finally:
+            await container_api.remove(name)
+
+    @pytest.mark.asyncio
+    async def test_container_logs(
+        self, container_api: ContainerAPI, test_prefix: str
+    ):
+        """Test getting container logs."""
+        name = f"{test_prefix}logs-container"
+
+        config = ContainerConfig(
+            image=TEST_IMAGE,
+            name=name,
+            cmd=["python", "-c", "print('hello world')"],
+        )
+
+        try:
+            await container_api.create(config)
+            await container_api.start(name)
+
+            # Wait for container to exit
+            await container_api.wait(name, timeout=30)
+
+            # Get logs
+            logs = await container_api.logs(name)
+            # Docker logs have 8-byte headers for each stream
+            assert b"hello world" in logs
+        finally:
+            await container_api.remove(name)
+
+    @pytest.mark.asyncio
+    async def test_container_archive(
+        self,
+        container_api: ContainerAPI,
+        volume_api: VolumeAPI,
+        test_prefix: str,
+    ):
+        """Test get_archive and put_archive."""
+        import io
+        import tarfile
+
+        vol_name = f"{test_prefix}archive-vol"
+        name = f"{test_prefix}archive-container"
+
+        try:
+            # Create volume
+            await volume_api.create(VolumeConfig(name=vol_name))
+
+            # Create container with volume
+            config = ContainerConfig(
+                image=TEST_IMAGE,
+                name=name,
+                cmd=["python", "-c", "import time; time.sleep(30)"],
+                host_config=HostConfig(binds=[f"{vol_name}:/data"]),
+            )
+            await container_api.create(config)
+            await container_api.start(name)
+
+            # Put a file into container via put_archive
+            tar_buffer = io.BytesIO()
+            with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
+                data = b"test content"
+                tarinfo = tarfile.TarInfo(name="test.txt")
+                tarinfo.size = len(data)
+                tar.addfile(tarinfo, io.BytesIO(data))
+            tar_buffer.seek(0)
+
+            await container_api.put_archive(name, "/data", tar_buffer.read())
+
+            # Get the file back via get_archive
+            result = await container_api.get_archive(name, "/data/test.txt")
+
+            # Parse the tar
+            tar_buffer = io.BytesIO(result)
+            with tarfile.open(fileobj=tar_buffer, mode="r") as tar:
+                member = tar.getmembers()[0]
+                extracted = tar.extractfile(member)
+                assert extracted is not None
+                content = extracted.read()
+                assert content == b"test content"
+
+        finally:
+            await container_api.stop(name, timeout=1)
+            await container_api.remove(name)
+            await volume_api.remove(vol_name)

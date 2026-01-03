@@ -1,62 +1,60 @@
-"""MinIO storage provider implementation."""
+"""S3 storage provider implementation with Docker volumes.
 
+Implements Spec-v2 Storage Job for archive/restore operations:
+- Crash-Only, Stateless, Idempotent design
+- sha256 checksum with .meta file
+- Helper container pattern for volume operations
+"""
+
+import io
 import logging
-import os
+import tarfile
+from collections import defaultdict
 
-import httpx
 from botocore.exceptions import ClientError
 
+from codehub.adapters.storage.job import (
+    HELPER_IMAGE,
+    compute_sha256,
+    create_meta,
+    parse_meta,
+)
 from codehub.app.config import get_settings
 from codehub.core.interfaces import ArchiveInfo, StorageProvider, VolumeInfo
+from codehub.infra.docker import (
+    ContainerAPI,
+    ContainerConfig,
+    HostConfig,
+    VolumeAPI,
+    VolumeConfig,
+)
 from codehub.infra.storage import get_s3_client
 
 logger = logging.getLogger(__name__)
 
-# Docker API for volume management
-DOCKER_HOST = os.getenv("DOCKER_HOST", "unix:///var/run/docker.sock")
 VOLUME_PREFIX = "ws-"
 
 
-class MinIOStorageProvider(StorageProvider):
-    """MinIO-based storage provider using Docker volumes and S3."""
+class S3StorageProvider(StorageProvider):
+    """S3-based storage provider using Docker volumes and S3."""
 
-    def __init__(self) -> None:
-        self._docker_client: httpx.AsyncClient | None = None
-
-    async def _get_docker_client(self) -> httpx.AsyncClient:
-        if self._docker_client is None:
-            docker_host = DOCKER_HOST
-            if docker_host.startswith("unix://"):
-                # Unix socket
-                socket_path = docker_host.replace("unix://", "")
-                transport = httpx.AsyncHTTPTransport(uds=socket_path)
-                self._docker_client = httpx.AsyncClient(
-                    transport=transport, base_url="http://localhost", timeout=30.0
-                )
-            else:
-                # TCP (docker-proxy)
-                if docker_host.startswith("tcp://"):
-                    docker_host = docker_host.replace("tcp://", "http://")
-                self._docker_client = httpx.AsyncClient(
-                    base_url=docker_host, timeout=30.0
-                )
-        return self._docker_client
+    def __init__(
+        self,
+        volumes: VolumeAPI | None = None,
+        containers: ContainerAPI | None = None,
+    ) -> None:
+        self._volumes = volumes or VolumeAPI()
+        self._containers = containers or ContainerAPI()
 
     def _volume_name(self, workspace_id: str) -> str:
         return f"{VOLUME_PREFIX}{workspace_id}-home"
 
     async def list_volumes(self, prefix: str) -> list[VolumeInfo]:
         """List all volumes with given prefix."""
-        client = await self._get_docker_client()
-        resp = await client.get(
-            "/volumes",
-            params={"filters": f'{{"name": ["{prefix}"]}}'},
-        )
-        resp.raise_for_status()
+        volumes = await self._volumes.list(filters={"name": [prefix]})
 
         results = []
-        data = resp.json()
-        for volume in data.get("Volumes", []):
+        for volume in volumes:
             name = volume.get("Name", "")
             if not name.startswith(prefix):
                 continue
@@ -79,150 +77,301 @@ class MinIOStorageProvider(StorageProvider):
         return results
 
     async def list_archives(self, prefix: str) -> list[ArchiveInfo]:
-        """List all archives with given prefix."""
+        """List all archives with given prefix.
+
+        Performance: 1 S3 API call instead of N+1 (paginated list all objects).
+        """
         settings = get_settings()
         results = []
 
+        # workspace_id -> list of (archive_key, last_modified)
+        workspace_archives: dict[str, list[tuple[str, str]]] = defaultdict(list)
+
         async with get_s3_client() as s3:
             try:
+                # 1 query: list all objects with prefix (paginated)
                 paginator = s3.get_paginator("list_objects_v2")
                 async for page in paginator.paginate(
                     Bucket=settings.storage.bucket_name,
                     Prefix=prefix,
-                    Delimiter="/",
                 ):
-                    for prefix_obj in page.get("CommonPrefixes", []):
-                        # prefix format: ws-{workspace_id}/
-                        ws_prefix = prefix_obj.get("Prefix", "").rstrip("/")
-                        if not ws_prefix.startswith(prefix):
+                    for obj in page.get("Contents", []):
+                        key = obj.get("Key", "")
+                        # Filter for home.tar.zst files
+                        if not key.endswith("/home.tar.zst"):
                             continue
 
-                        workspace_id = ws_prefix[len(prefix) :]
+                        # Extract workspace_id from key: ws-{workspace_id}/{op_id}/home.tar.zst
+                        parts = key.split("/")
+                        if len(parts) < 3:
+                            continue
 
-                        # Find latest archive in this workspace folder
-                        archive_key = await self._find_latest_archive(
-                            s3, settings.storage.bucket_name, ws_prefix
-                        )
+                        ws_prefix_part = parts[0]  # ws-{workspace_id}
+                        if not ws_prefix_part.startswith(prefix):
+                            continue
 
-                        results.append(
-                            ArchiveInfo(
-                                workspace_id=workspace_id,
-                                archive_key=archive_key,
-                                exists=archive_key is not None,
-                                reason="ArchiveUploaded"
-                                if archive_key
-                                else "NoArchive",
-                                message=f"Archive: {archive_key}"
-                                if archive_key
-                                else "No archive found",
-                            )
-                        )
+                        workspace_id = ws_prefix_part[len(prefix) :]
+                        last_modified = obj.get("LastModified", "")
+                        workspace_archives[workspace_id].append((key, last_modified))
+
             except ClientError as e:
                 logger.error("Failed to list archives: %s", e)
+                return results
+
+        # Find latest archive per workspace (in memory)
+        for workspace_id, archives in workspace_archives.items():
+            if not archives:
+                continue
+            # Sort by last_modified descending
+            archives.sort(key=lambda x: x[1], reverse=True)
+            latest_key = archives[0][0]
+
+            results.append(
+                ArchiveInfo(
+                    workspace_id=workspace_id,
+                    archive_key=latest_key,
+                    exists=True,
+                    reason="ArchiveUploaded",
+                    message=f"Archive: {latest_key}",
+                )
+            )
 
         return results
 
-    async def _find_latest_archive(
-        self, s3, bucket: str, prefix: str
-    ) -> str | None:
-        """Find the latest archive in a workspace folder."""
-        try:
-            resp = await s3.list_objects_v2(
-                Bucket=bucket,
-                Prefix=f"{prefix}/",
-            )
-            contents = resp.get("Contents", [])
-            # Filter for home.tar.zst files and get the latest
-            archives = [
-                obj
-                for obj in contents
-                if obj.get("Key", "").endswith("/home.tar.zst")
-            ]
-            if not archives:
-                return None
-            # Sort by LastModified descending
-            archives.sort(key=lambda x: x.get("LastModified", ""), reverse=True)
-            return archives[0].get("Key")
-        except ClientError:
-            return None
-
     async def provision(self, workspace_id: str) -> None:
         """Create new volume for workspace."""
-        client = await self._get_docker_client()
         volume_name = self._volume_name(workspace_id)
+        config = VolumeConfig(name=volume_name)
+        await self._volumes.create(config)
 
-        resp = await client.post(
-            "/volumes/create",
-            json={"Name": volume_name},
-        )
-        if resp.status_code == 409:
-            # Volume already exists
-            logger.debug("Volume already exists: %s", volume_name)
-            return
-        resp.raise_for_status()
-        logger.info("Created volume: %s", volume_name)
+    async def _head_object(self, s3, key: str) -> bool:
+        """Check if S3 object exists using HEAD request."""
+        settings = get_settings()
+        try:
+            await s3.head_object(Bucket=settings.storage.bucket_name, Key=key)
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                return False
+            raise
 
     async def restore(self, workspace_id: str, archive_key: str) -> str:
-        """Restore volume from archive."""
-        # 1. Create volume if not exists
+        """Restore volume from S3 archive (Spec-v2).
+
+        Flow:
+        1. Download tar.zst + .meta from S3
+        2. Verify sha256 checksum
+        3. Create volume if not exists
+        4. Extract to staging directory via helper container
+        5. rsync --delete to /data
+
+        Args:
+            workspace_id: Workspace ID
+            archive_key: S3 key for the archive
+
+        Returns:
+            restore_marker (= archive_key)
+
+        Raises:
+            ValueError: If checksum verification fails
+            RuntimeError: If restore job fails
+        """
+        settings = get_settings()
+        meta_key = f"{archive_key}.meta"
+        volume_name = self._volume_name(workspace_id)
+        helper_name = f"ws-helper-restore-{workspace_id}"
+
+        # 1. Download archive + meta from S3
+        async with get_s3_client() as s3:
+            tar_resp = await s3.get_object(
+                Bucket=settings.storage.bucket_name,
+                Key=archive_key,
+            )
+            compressed_data = await tar_resp["Body"].read()
+
+            meta_resp = await s3.get_object(
+                Bucket=settings.storage.bucket_name,
+                Key=meta_key,
+            )
+            meta_content = await meta_resp["Body"].read()
+
+        # 2. Verify checksum
+        expected_hash = parse_meta(meta_content)
+        actual_hash = compute_sha256(compressed_data)
+        if expected_hash != actual_hash:
+            raise ValueError(f"Checksum mismatch: {expected_hash} != {actual_hash}")
+
+        logger.debug("Checksum verified for %s", archive_key)
+
+        # 3. Ensure volume exists
         await self.provision(workspace_id)
 
-        # 2. Download archive from S3 and extract to volume
-        # This requires a helper container to mount the volume and extract
-        # For now, return the archive_key as restore_marker
-        settings = get_settings()
+        # Use a temp volume for input data (avoids docker-proxy PUT restrictions)
+        input_volume = f"ws-restore-input-{workspace_id}"
 
-        # TODO: Implement actual restore using a helper container
-        # For MVP, we'll use a simple approach:
-        # - Download to temp file
-        # - Run tar extraction in a container
+        try:
+            # 4. Create temp input volume
+            await self._volumes.create(VolumeConfig(name=input_volume))
 
-        logger.info(
-            "Restore requested: workspace=%s, archive=%s", workspace_id, archive_key
-        )
-        return archive_key
+            # 5. Write archive data to input volume using a writer container
+            writer_name = f"ws-helper-writer-{workspace_id}"
+            writer_config = ContainerConfig(
+                image=HELPER_IMAGE,
+                name=writer_name,
+                cmd=["sh", "-c", "sleep 30"],  # Keep alive for put_archive
+                host_config=HostConfig(binds=[f"{input_volume}:/input"]),
+            )
+            await self._containers.create(writer_config)
+            await self._containers.start(writer_name)
+
+            # Put archive data into running writer container
+            tar_buffer = io.BytesIO()
+            with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
+                tarinfo = tarfile.TarInfo(name="home.tar.zst")
+                tarinfo.size = len(compressed_data)
+                tar.addfile(tarinfo, io.BytesIO(compressed_data))
+            tar_buffer.seek(0)
+
+            await self._containers.put_archive(writer_name, "/input", tar_buffer.read())
+            await self._containers.stop(writer_name, timeout=1)
+            await self._containers.remove(writer_name)
+
+            # 6. Create restore container with both volumes
+            config = ContainerConfig(
+                image=HELPER_IMAGE,
+                name=helper_name,
+                cmd=[
+                    "sh",
+                    "-c",
+                    "apk add --no-cache zstd rsync && "
+                    "mkdir -p /tmp/staging && "
+                    "zstd -d < /input/home.tar.zst | tar -xf - -C /tmp/staging && "
+                    "rsync -a --delete /tmp/staging/ /data/",
+                ],
+                host_config=HostConfig(
+                    binds=[f"{volume_name}:/data", f"{input_volume}:/input:ro"]
+                ),
+            )
+            await self._containers.create(config)
+            await self._containers.start(helper_name)
+
+            # 7. Wait for completion
+            exit_code = await self._containers.wait(helper_name)
+
+            if exit_code != 0:
+                logs = await self._containers.logs(helper_name)
+                raise RuntimeError(f"Restore job failed (exit {exit_code}): {logs!r}")
+
+        finally:
+            await self._containers.remove(helper_name)
+            await self._volumes.remove(input_volume)
+
+        logger.info("Restore complete: %s", archive_key)
+        return archive_key  # restore_marker
 
     async def archive(self, workspace_id: str, op_id: str) -> str:
-        """Archive volume and return archive_key."""
+        """Archive volume to S3 using helper container (Spec-v2).
+
+        Flow:
+        1. HEAD check: skip if tar.zst + meta both exist (idempotent)
+        2. Create helper container with volume mounted
+        3. Compress volume to tar.zst
+        4. Compute sha256 checksum
+        5. Upload tar.zst → upload .meta (order fixed)
+
+        Args:
+            workspace_id: Workspace ID
+            op_id: Operation ID for idempotency
+
+        Returns:
+            archive_key
+
+        Raises:
+            RuntimeError: If archive job fails
+        """
         settings = get_settings()
-        volume_name = self._volume_name(workspace_id)
         archive_key = f"{VOLUME_PREFIX}{workspace_id}/{op_id}/home.tar.zst"
+        meta_key = f"{archive_key}.meta"
+        volume_name = self._volume_name(workspace_id)
+        helper_name = f"ws-helper-archive-{workspace_id}-{op_id[:8]}"
 
-        # TODO: Implement actual archive using a helper container
-        # For MVP:
-        # - Run tar in a container with volume mounted
-        # - Upload result to S3
+        # 1. HEAD check - idempotent
+        async with get_s3_client() as s3:
+            tar_exists = await self._head_object(s3, archive_key)
+            meta_exists = await self._head_object(s3, meta_key)
+            if tar_exists and meta_exists:
+                logger.info("Archive already complete: %s", archive_key)
+                return archive_key
 
-        logger.info(
-            "Archive requested: workspace=%s, op_id=%s, key=%s",
-            workspace_id,
-            op_id,
-            archive_key,
-        )
+        try:
+            # 2. Create helper container with volume mounted
+            config = ContainerConfig(
+                image=HELPER_IMAGE,
+                name=helper_name,
+                cmd=[
+                    "sh",
+                    "-c",
+                    "apk add --no-cache zstd && "
+                    "mkdir -p /output && "
+                    "tar --exclude='*.sock' --exclude='*.socket' "
+                    "-cf - -C /data . | zstd -o /output/home.tar.zst",
+                ],
+                host_config=HostConfig(binds=[f"{volume_name}:/data:ro"]),
+            )
+            await self._containers.create(config)
+            await self._containers.start(helper_name)
+
+            # 3. Wait for completion
+            exit_code = await self._containers.wait(helper_name)
+            if exit_code != 0:
+                logs = await self._containers.logs(helper_name)
+                raise RuntimeError(f"Archive job failed (exit {exit_code}): {logs!r}")
+
+            # 4. Get output file from container
+            tar_data = await self._containers.get_archive(helper_name, "/output/home.tar.zst")
+
+            # Docker returns a tar containing the file, extract it
+            tar_buffer = io.BytesIO(tar_data)
+            with tarfile.open(fileobj=tar_buffer, mode="r") as tar:
+                member = tar.getmembers()[0]
+                extracted = tar.extractfile(member)
+                if extracted is None:
+                    raise RuntimeError("Failed to extract archive from container")
+                compressed_data = extracted.read()
+
+        finally:
+            await self._containers.remove(helper_name)
+
+        # 5. Compute sha256 and upload
+        sha256_hex = compute_sha256(compressed_data)
+
+        async with get_s3_client() as s3:
+            # Upload tar.zst first
+            await s3.put_object(
+                Bucket=settings.storage.bucket_name,
+                Key=archive_key,
+                Body=compressed_data,
+            )
+            # Upload .meta last (commit marker)
+            await s3.put_object(
+                Bucket=settings.storage.bucket_name,
+                Key=meta_key,
+                Body=create_meta(sha256_hex),
+            )
+
+        logger.info("Archive complete: %s (sha256=%s)", archive_key, sha256_hex[:16])
         return archive_key
 
     async def delete_volume(self, workspace_id: str) -> None:
         """Delete volume."""
-        client = await self._get_docker_client()
         volume_name = self._volume_name(workspace_id)
-
-        resp = await client.delete(f"/volumes/{volume_name}")
-        if resp.status_code == 404:
-            logger.debug("Volume not found: %s", volume_name)
-            return
-        if resp.status_code == 409:
-            logger.warning("Volume in use, cannot delete: %s", volume_name)
-            return
-        resp.raise_for_status()
-        logger.info("Deleted volume: %s", volume_name)
+        await self._volumes.remove(volume_name)
 
     async def volume_exists(self, workspace_id: str) -> bool:
         """Check if volume exists."""
-        client = await self._get_docker_client()
         volume_name = self._volume_name(workspace_id)
-
-        resp = await client.get(f"/volumes/{volume_name}")
-        return resp.status_code == 200
+        data = await self._volumes.inspect(volume_name)
+        return data is not None
 
     async def create_empty_archive(self, workspace_id: str, op_id: str) -> str:
         """Create empty archive and return archive_key."""
@@ -248,7 +397,5 @@ class MinIOStorageProvider(StorageProvider):
         return archive_key
 
     async def close(self) -> None:
-        """Close clients."""
-        if self._docker_client:
-            await self._docker_client.aclose()
-            self._docker_client = None
+        """Close is no-op (Docker client is singleton)."""
+        pass

@@ -262,6 +262,82 @@ class ContainerAPI:
         resp.raise_for_status()
         logger.info("Removed container: %s", name)
 
+    async def wait(self, name: str, timeout: int = 300) -> int:
+        """Wait for container to exit and return exit code.
+
+        Args:
+            name: Container name or ID
+            timeout: Seconds to wait for container to exit
+
+        Returns:
+            Container exit code (0 = success)
+        """
+        client = await self._docker.get()
+        # Use longer HTTP timeout than container timeout
+        resp = await client.post(
+            f"/containers/{name}/wait",
+            timeout=timeout + 10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        exit_code = data.get("StatusCode", -1)
+        logger.debug("Container %s exited with code %d", name, exit_code)
+        return exit_code
+
+    async def logs(
+        self, name: str, stdout: bool = True, stderr: bool = True
+    ) -> bytes:
+        """Get container logs.
+
+        Args:
+            name: Container name or ID
+            stdout: Include stdout
+            stderr: Include stderr
+
+        Returns:
+            Raw log bytes (with Docker stream headers)
+        """
+        client = await self._docker.get()
+        params = {"stdout": stdout, "stderr": stderr}
+        resp = await client.get(f"/containers/{name}/logs", params=params)
+        resp.raise_for_status()
+        return resp.content
+
+    async def get_archive(self, name: str, path: str) -> bytes:
+        """Get file from container as tar archive.
+
+        Args:
+            name: Container name or ID
+            path: Path inside container
+
+        Returns:
+            Tar archive containing the file/directory
+        """
+        client = await self._docker.get()
+        resp = await client.get(
+            f"/containers/{name}/archive",
+            params={"path": path},
+        )
+        resp.raise_for_status()
+        return resp.content
+
+    async def put_archive(self, name: str, path: str, data: bytes) -> None:
+        """Put tar archive into container.
+
+        Args:
+            name: Container name or ID
+            path: Destination path inside container
+            data: Tar archive data
+        """
+        client = await self._docker.get()
+        resp = await client.put(
+            f"/containers/{name}/archive",
+            params={"path": path},
+            content=data,
+            headers={"Content-Type": "application/x-tar"},
+        )
+        resp.raise_for_status()
+
 
 # =============================================================================
 # Volume API
