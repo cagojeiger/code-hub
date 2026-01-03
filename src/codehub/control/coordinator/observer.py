@@ -18,17 +18,11 @@ from codehub.control.coordinator.base import (
     NotifyPublisher,
     NotifySubscriber,
 )
-from codehub.core.domain.conditions import ConditionStatus
-from codehub.core.interfaces.instance import InstanceController
-from codehub.core.interfaces.storage import StorageProvider
+from codehub.core.interfaces.instance import ContainerInfo, InstanceController
+from codehub.core.interfaces.storage import ArchiveInfo, StorageProvider, VolumeInfo
 from codehub.infra.models import Workspace
 
 logger = logging.getLogger(__name__)
-
-# Condition keys
-COND_VOLUME_READY = "storage.volume_ready"
-COND_ARCHIVE_READY = "storage.archive_ready"
-COND_CONTAINER_READY = "infra.container_ready"
 
 
 class BulkObserver:
@@ -47,60 +41,37 @@ class BulkObserver:
         self._sp = storage_provider
         self._prefix = prefix
 
-    async def observe_all(self) -> dict[str, dict[str, ConditionStatus]]:
+    async def observe_all(self) -> dict[str, dict[str, dict | None]]:
         """Observe all resources and return conditions by workspace_id.
 
         Returns:
-            {workspace_id: {condition_key: ConditionStatus, ...}, ...}
+            {workspace_id: {"container": {...}, "volume": {...}, "archive": {...}}, ...}
         """
-        now = datetime.now(UTC)
-        result: dict[str, dict[str, ConditionStatus]] = {}
-
         # 1. Bulk API calls (3회)
         containers = await self._ic.list_all(self._prefix)
         volumes = await self._sp.list_volumes(self._prefix)
         archives = await self._sp.list_archives(self._prefix)
 
         # 2. Index by workspace_id
-        container_map = {c.workspace_id: c for c in containers}
-        volume_map = {v.workspace_id: v for v in volumes}
-        archive_map = {a.workspace_id: a for a in archives}
+        container_map: dict[str, ContainerInfo] = {c.workspace_id: c for c in containers}
+        volume_map: dict[str, VolumeInfo] = {v.workspace_id: v for v in volumes}
+        archive_map: dict[str, ArchiveInfo] = {a.workspace_id: a for a in archives}
 
         # 3. Collect all workspace_ids
         all_ws_ids = set(container_map) | set(volume_map) | set(archive_map)
 
-        # 4. Build conditions for each workspace
+        # 4. Build conditions for each workspace (Pydantic model_dump 직접 사용)
+        result: dict[str, dict[str, dict | None]] = {}
         for ws_id in all_ws_ids:
-            conditions: dict[str, ConditionStatus] = {}
-
-            # container_ready
             container = container_map.get(ws_id)
-            conditions[COND_CONTAINER_READY] = ConditionStatus(
-                status="True" if container and container.running else "False",
-                reason=container.reason if container else "ContainerNotFound",
-                message=container.message if container else "No container",
-                last_transition_time=now,
-            )
-
-            # volume_ready
             volume = volume_map.get(ws_id)
-            conditions[COND_VOLUME_READY] = ConditionStatus(
-                status="True" if volume and volume.exists else "False",
-                reason=volume.reason if volume else "VolumeNotFound",
-                message=volume.message if volume else "No volume",
-                last_transition_time=now,
-            )
-
-            # archive_ready
             archive = archive_map.get(ws_id)
-            conditions[COND_ARCHIVE_READY] = ConditionStatus(
-                status="True" if archive and archive.exists else "False",
-                reason=archive.reason if archive else "NoArchive",
-                message=archive.message if archive else "No archive",
-                last_transition_time=now,
-            )
 
-            result[ws_id] = conditions
+            result[ws_id] = {
+                "container": container.model_dump() if container else None,
+                "volume": volume.model_dump() if volume else None,
+                "archive": archive.model_dump() if archive else None,
+            }
 
         return result
 
@@ -155,14 +126,9 @@ class ObserverCoordinator(CoordinatorBase):
                 if ws_id not in ws_ids:
                     continue
 
-                # Convert ConditionStatus to dict for JSONB
-                conditions_dict = {
-                    k: v.to_dict() if hasattr(v, "to_dict") else v
-                    for k, v in conditions.items()
-                }
                 rows.append({
                     "id": ws_id,
-                    "conditions": conditions_dict,
+                    "conditions": conditions,  # 이미 dict, 변환 불필요
                     "observed_at": now,
                 })
 

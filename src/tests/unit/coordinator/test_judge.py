@@ -355,9 +355,9 @@ class TestConditionInputFromConditions:
     def test_from_full_conditions(self):
         """모든 조건 True인 conditions."""
         conditions = {
-            "infra.container_ready": {"status": "True", "reason": "ContainerRunning"},
-            "storage.volume_ready": {"status": "True", "reason": "VolumeMounted"},
-            "storage.archive_ready": {"status": "True", "reason": "ArchiveUploaded"},
+            "container": {"workspace_id": "ws-1", "running": True, "reason": "Running", "message": ""},
+            "volume": {"workspace_id": "ws-1", "exists": True, "reason": "VolumeExists", "message": ""},
+            "archive": {"workspace_id": "ws-1", "archive_key": "ws-1/op/home.tar.zst", "exists": True, "reason": "ArchiveUploaded", "message": ""},
         }
 
         cond = ConditionInput.from_conditions(conditions)
@@ -370,9 +370,12 @@ class TestConditionInputFromConditions:
     def test_from_conditions_with_archive_error(self):
         """Archive 오류 상태 conditions."""
         conditions = {
-            "storage.archive_ready": {
-                "status": "False",
+            "archive": {
+                "workspace_id": "ws-1",
+                "archive_key": None,
+                "exists": False,
                 "reason": "ArchiveCorrupted",
+                "message": "",
             },
         }
 
@@ -380,3 +383,18 @@ class TestConditionInputFromConditions:
 
         assert cond.archive_ready is False
         assert cond.archive_reason == "ArchiveCorrupted"
+
+    def test_from_conditions_with_none_values(self):
+        """None 값 처리 테스트."""
+        conditions = {
+            "container": None,
+            "volume": None,
+            "archive": None,
+        }
+
+        cond = ConditionInput.from_conditions(conditions)
+
+        assert cond.container_ready is False
+        assert cond.volume_ready is False
+        assert cond.archive_ready is False
+        assert cond.archive_reason is None
