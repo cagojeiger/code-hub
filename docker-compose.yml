@@ -78,22 +78,6 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Dummy code-server for proxy testing
-  dummy-codeserver:
-    image: cagojeiger/code-server:4.107.0
-    container_name: codehub-dummy-codeserver
-    command: --auth none --bind-addr 0.0.0.0:8080
-    networks:
-      - codehub-net
-    restart: unless-stopped
-    mem_limit: 512m
-    cpus: 0.5
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
   # Docker Socket Proxy - Secure Docker API access
   docker-proxy:
     image: tecnativa/docker-socket-proxy:latest
@@ -105,6 +89,7 @@ services:
       - INFO=1
       - VERSION=1
       - POST=1
+      - VOLUMES=1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
@@ -117,6 +102,27 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  # Test runner - isolated test environment
+  test:
+    build:
+      context: src
+      dockerfile: Dockerfile.test
+    container_name: codehub-test
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
+      - REDIS_URL=redis://redis:6379
+    networks:
+      - codehub-net
+    profiles:
+      - test
+    # No restart - runs once and exits
 
   # Database migration - runs once before control-plane starts
   migrate:

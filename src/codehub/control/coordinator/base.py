@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 class Channel(StrEnum):
     """Notify channel names."""
 
+    OB_WAKE = "ob:wake"
     WC_WAKE = "wc:wake"
     GC_WAKE = "gc:wake"
 
@@ -23,6 +24,7 @@ class Channel(StrEnum):
 class CoordinatorType(StrEnum):
     """Coordinator types for leader election."""
 
+    OBSERVER = "observer"
     WC = "wc"
     GC = "gc"
     TTL = "ttl"
@@ -38,6 +40,9 @@ class NotifyPublisher:
         count = await self._client.publish(channel, message)
         logger.debug("Published notify to %s (receivers=%d)", channel, count)
         return count
+
+    async def wake_ob(self) -> int:
+        return await self.publish(Channel.OB_WAKE)
 
     async def wake_wc(self) -> int:
         return await self.publish(Channel.WC_WAKE)
@@ -148,10 +153,15 @@ class CoordinatorBase(ABC):
     COORDINATOR_TYPE: CoordinatorType
     CHANNELS: list[Channel] = []
 
-    def __init__(self, conn: AsyncConnection, redis_client: redis.Redis) -> None:
+    def __init__(
+        self,
+        conn: AsyncConnection,
+        leader: LeaderElection,
+        notify: NotifySubscriber,
+    ) -> None:
         self._conn = conn  # Shared with Advisory Lock - see ADR-012
-        self._leader = LeaderElection(conn, self.COORDINATOR_TYPE)
-        self._notify = NotifySubscriber(redis_client)
+        self._leader = leader
+        self._notify = notify
         self._running = False
         self._subscribed = False
         self._active_until = time.time() + self.ACTIVE_DURATION
