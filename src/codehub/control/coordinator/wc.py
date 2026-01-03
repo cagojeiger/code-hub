@@ -34,7 +34,7 @@ from codehub.core.domain.workspace import (
 )
 from codehub.core.interfaces.instance import InstanceController
 from codehub.core.interfaces.storage import StorageProvider
-from codehub.infra.models import Workspace
+from codehub.core.models import Workspace
 
 logger = logging.getLogger(__name__)
 
@@ -151,8 +151,8 @@ class WorkspaceController(CoordinatorBase):
         3. phase == desired → no-op
         4. phase != desired → operation 선택
         """
-        ws_op = Operation(ws.operation)
-        ws_desired = DesiredState(ws.desired_state)
+        ws_op = ws.operation
+        ws_desired = ws.desired_state
 
         # Case 1: 진행 중인 operation
         if ws_op != Operation.NONE:
@@ -207,7 +207,7 @@ class WorkspaceController(CoordinatorBase):
         - CREATE_EMPTY_ARCHIVE: archive_ready
         - DELETING: !container_ready ∧ !volume_ready
         """
-        ws_op = Operation(ws.operation)
+        ws_op = ws.operation
 
         # 완료 조건 체크
         complete = self._check_completion(ws_op, ws)
@@ -361,7 +361,7 @@ class WorkspaceController(CoordinatorBase):
         CAS 조건: operation = expected_op
         - 다른 WC 인스턴스가 동시에 처리하면 CAS 실패 → 다음 tick에서 재시도
         """
-        ws_op = Operation(ws.operation)
+        ws_op = ws.operation
         now = datetime.now(UTC)
 
         # operation 시작 시점 결정

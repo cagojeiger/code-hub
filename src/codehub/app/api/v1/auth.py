@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from codehub.core.errors import TooManyRequestsError, UnauthorizedError
 from codehub.core.security import calculate_lockout_duration, verify_password
 from codehub.infra import get_session
-from codehub.infra.models import User
+from codehub.core.models import User
 from codehub.services.session_service import SessionService
 
 router = APIRouter(tags=["auth"])

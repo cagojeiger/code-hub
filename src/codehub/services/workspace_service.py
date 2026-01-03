@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from codehub.core.domain import DesiredState, Operation, Phase
 from codehub.core.errors import ForbiddenError, WorkspaceNotFoundError
-from codehub.infra.models import Workspace
+from codehub.core.models import Workspace
 
 
 async def create_workspace(

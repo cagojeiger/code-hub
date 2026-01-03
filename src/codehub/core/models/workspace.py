@@ -1,66 +1,15 @@
-"""Database models for code-hub.
+"""Workspace model (M2 schema).
 
-Models are defined using SQLModel (SQLAlchemy + Pydantic).
-All models follow the schema defined in spec_v2/03-schema.md.
-
-Note: Enum values are stored as strings to avoid circular imports.
-      Use core.domain enums for type-safe operations in service layer.
+Reference: docs/spec_v2/03-schema.md
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import Column, DateTime, Index, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
-from ulid import ULID
 
-
-def generate_ulid() -> str:
-    """Generate a new ULID string."""
-    return str(ULID())
-
-
-def utc_now() -> datetime:
-    """Get current UTC datetime."""
-    return datetime.now(UTC)
-
-
-class User(SQLModel, table=True):
-    """User account model."""
-
-    __tablename__ = "users"
-
-    id: str = Field(default_factory=generate_ulid, primary_key=True)
-    username: str = Field(unique=True, index=True)
-    password_hash: str
-    created_at: datetime = Field(
-        default_factory=utc_now, sa_column=Column(DateTime(timezone=True))
-    )
-
-    # Login rate limiting fields
-    failed_login_attempts: int = Field(default=0)
-    locked_until: datetime | None = Field(
-        default=None, sa_column=Column(DateTime(timezone=True))
-    )
-    last_failed_at: datetime | None = Field(
-        default=None, sa_column=Column(DateTime(timezone=True))
-    )
-
-
-class Session(SQLModel, table=True):
-    """Login session model."""
-
-    __tablename__ = "sessions"
-
-    id: str = Field(default_factory=generate_ulid, primary_key=True)
-    user_id: str = Field(foreign_key="users.id", index=True)
-    created_at: datetime = Field(
-        default_factory=utc_now, sa_column=Column(DateTime(timezone=True))
-    )
-    expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True)))
-    revoked_at: datetime | None = Field(
-        default=None, sa_column=Column(DateTime(timezone=True))
-    )
+from codehub.core.domain.workspace import DesiredState, Operation, Phase
 
 
 class Workspace(SQLModel, table=True):
@@ -87,18 +36,18 @@ class Workspace(SQLModel, table=True):
     home_store_key: str = Field(max_length=512)  # ws-{id}-home
     home_ctx: dict | None = Field(default=None, sa_column=Column(JSONB))
 
-    # M2 state fields (stored as str, convert to Enum in service layer)
+    # M2 state fields
     conditions: dict = Field(
         default_factory=dict,
         sa_column=Column(JSONB, nullable=False, server_default="{}"),
     )
-    phase: str = Field(default="PENDING")  # Phase enum value
-    operation: str = Field(default="NONE")  # Operation enum value
+    phase: Phase = Field(default=Phase.PENDING)
+    operation: Operation = Field(default=Operation.NONE)
     op_started_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True))
     )
     op_id: str | None = None  # UUID for idempotency
-    desired_state: str = Field(default="RUNNING")  # DesiredState enum value
+    desired_state: DesiredState = Field(default=DesiredState.RUNNING)
     archive_key: str | None = Field(default=None, max_length=512)
     observed_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True))

@@ -13,7 +13,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
-from codehub.infra.models import Session, User
+from codehub.core.models import Session, User
 
 
 class SessionService:

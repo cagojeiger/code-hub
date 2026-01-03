@@ -17,7 +17,7 @@ from codehub.core.domain.workspace import (
 )
 from codehub.core.interfaces.instance import InstanceController
 from codehub.core.interfaces.storage import StorageProvider
-from codehub.infra.models import Workspace
+from codehub.core.models import Workspace
 
 
 @pytest.fixture

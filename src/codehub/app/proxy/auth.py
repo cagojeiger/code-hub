@@ -8,7 +8,7 @@ from codehub.core.errors import (
     UnauthorizedError,
     WorkspaceNotFoundError,
 )
-from codehub.infra.models import Workspace
+from codehub.core.models import Workspace
 from codehub.services.session_service import SessionService
 
 

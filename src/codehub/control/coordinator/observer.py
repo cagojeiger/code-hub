@@ -20,7 +20,7 @@ from codehub.control.coordinator.base import (
 )
 from codehub.core.interfaces.instance import ContainerInfo, InstanceController
 from codehub.core.interfaces.storage import ArchiveInfo, StorageProvider, VolumeInfo
-from codehub.infra.models import Workspace
+from codehub.core.models import Workspace
 
 logger = logging.getLogger(__name__)
 
