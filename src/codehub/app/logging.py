@@ -52,3 +52,7 @@ def setup_logging(level: int = logging.INFO) -> None:
         uv_logger.handlers.clear()
         uv_logger.propagate = False
         uv_logger.addHandler(handler)
+
+    # Suppress verbose HTTP client logs (polling noise)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)

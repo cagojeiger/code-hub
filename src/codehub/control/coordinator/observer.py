@@ -85,7 +85,7 @@ class ObserverCoordinator(CoordinatorBase):
     COORDINATOR_TYPE = CoordinatorType.OBSERVER
     CHANNELS = [Channel.OB_WAKE]
 
-    IDLE_INTERVAL = 10.0
+    IDLE_INTERVAL = 15.0
     ACTIVE_INTERVAL = 2.0
 
     def __init__(
