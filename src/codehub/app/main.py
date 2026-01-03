@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -10,9 +11,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from codehub.adapters.instance import DockerInstanceController
 from codehub.core.errors import CodeHubError
+from codehub.core.models import User
+from codehub.core.security import hash_password
 from codehub.adapters.storage import S3StorageProvider
 from codehub.app.api.v1 import auth_router, workspaces_router
 from codehub.app.logging import setup_logging
@@ -47,11 +52,48 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+async def _ensure_admin_user() -> None:
+    """Create or update admin user from environment variables.
+
+    Uses PostgreSQL upsert to handle concurrent worker startup safely.
+
+    Env vars:
+    - ADMIN_USERNAME: Admin username (default: admin)
+    - ADMIN_PASSWORD: Admin password (default: qwer1234)
+    """
+    from datetime import UTC, datetime
+
+    from ulid import ULID
+
+    username = os.getenv("ADMIN_USERNAME", "admin")
+    password = os.getenv("ADMIN_PASSWORD", "qwer1234")
+    password_hash = hash_password(password)
+    now = datetime.now(UTC)
+
+    engine = get_engine()
+    async with AsyncSession(engine) as session:
+        stmt = insert(User).values(
+            id=str(ULID()),
+            username=username,
+            password_hash=password_hash,
+            created_at=now,
+            failed_login_attempts=0,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["username"],
+            set_={"password_hash": stmt.excluded.password_hash},
+        )
+        await session.execute(stmt)
+        await session.commit()
+        logger.info("Ensured admin user: %s", username)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await init_db()
     await init_redis()
     await init_storage()
+    await _ensure_admin_user()
 
     logger.info("Starting")
 
