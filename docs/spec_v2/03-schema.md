@@ -82,25 +82,25 @@
 ```json
 {
   "storage.volume_ready": {
-    "status": true,
+    "status": "True",
     "reason": "VolumeProvisioned",
     "message": "Volume is ready",
     "last_transition_time": "2026-01-01T12:00:00Z"
   },
   "storage.archive_ready": {
-    "status": false,
+    "status": "False",
     "reason": "NoArchive",
     "message": "No archive exists",
     "last_transition_time": "2026-01-01T12:00:00Z"
   },
   "infra.container_ready": {
-    "status": true,
+    "status": "True",
     "reason": "ContainerRunning",
     "message": "Container is running",
     "last_transition_time": "2026-01-01T12:00:00Z"
   },
   "policy.healthy": {
-    "status": true,
+    "status": "True",
     "reason": "AllConditionsMet",
     "message": "All conditions are satisfied",
     "last_transition_time": "2026-01-01T12:00:00Z"
@@ -112,10 +112,12 @@
 
 | 필드 | 타입 | 설명 |
 |------|------|------|
-| status | boolean | 조건 충족 여부 |
+| status | string | 조건 충족 여부 (`"True"` / `"False"`) |
 | reason | string | 상태 이유 (CamelCase) |
 | message | string | 사람이 읽는 메시지 |
 | last_transition_time | string | ISO 8601 timestamp |
+
+> **K8s 패턴**: boolean 대신 문자열 사용으로 타입 안전성 확보. `status == "True"` 명시적 비교 필수
 
 ### 핵심 Conditions
 
@@ -136,10 +138,10 @@
 | WC 첫 관측 후 | 모든 Condition 포함 | 실제 상태 반영 |
 
 **기본값 정책** (calculate_phase 내부):
-- `policy.healthy`: **true** (관측 전에는 건강하다고 가정)
-- `storage.volume_ready`: **false** (리소스 존재를 가정하지 않음)
-- `storage.archive_ready`: **false** (리소스 존재를 가정하지 않음)
-- `infra.container_ready`: **false** (리소스 존재를 가정하지 않음)
+- `policy.healthy`: **"True"** (관측 전에는 건강하다고 가정)
+- `storage.volume_ready`: **"False"** (리소스 존재를 가정하지 않음)
+- `storage.archive_ready`: **"False"** (리소스 존재를 가정하지 않음)
+- `infra.container_ready`: **"False"** (리소스 존재를 가정하지 않음)
 
 > **안전성**: calculate_phase()가 빈 conditions에도 기본값을 적용하여 KeyError 없이 안전하게 계산
 >

@@ -67,11 +67,12 @@ def calculate_phase(
         conditions가 빈 딕셔너리일 수 있으므로 기본값 병합 후 계산.
     """
     # 기본값 정의 (관측 전 상태)
+    # K8s 패턴: boolean 대신 문자열 "True"/"False" 사용
     defaults = {
-        "storage.volume_ready": {"status": False, "reason": "NotObserved"},
-        "storage.archive_ready": {"status": False, "reason": "NotObserved"},
-        "infra.container_ready": {"status": False, "reason": "NotObserved"},
-        "policy.healthy": {"status": True, "reason": "NotObserved"},  # 관측 전엔 healthy
+        "storage.volume_ready": {"status": "False", "reason": "NotObserved"},
+        "storage.archive_ready": {"status": "False", "reason": "NotObserved"},
+        "infra.container_ready": {"status": "False", "reason": "NotObserved"},
+        "policy.healthy": {"status": "True", "reason": "NotObserved"},  # 관측 전엔 healthy
     }
 
     # 기본값과 실제값 병합
@@ -83,22 +84,22 @@ def calculate_phase(
     # 삭제 처리
     if deleted_at:
         has_resources = (
-            cond["storage.volume_ready"]["status"] or
-            cond["infra.container_ready"]["status"] or
-            cond["storage.archive_ready"]["status"]
+            cond["storage.volume_ready"]["status"] == "True" or
+            cond["infra.container_ready"]["status"] == "True" or
+            cond["storage.archive_ready"]["status"] == "True"
         )
         return Phase.DELETING if has_resources else Phase.DELETED
 
-    # 정책 위반 체크
-    if not cond["policy.healthy"]["status"]:
+    # 정책 위반 체크 (명시적 문자열 비교)
+    if cond["policy.healthy"]["status"] != "True":
         return Phase.ERROR
 
-    # 정상 상태 판정
-    if cond["infra.container_ready"]["status"] and cond["storage.volume_ready"]["status"]:
+    # 정상 상태 판정 (명시적 문자열 비교)
+    if cond["infra.container_ready"]["status"] == "True" and cond["storage.volume_ready"]["status"] == "True":
         return Phase.RUNNING
-    if cond["storage.volume_ready"]["status"]:
+    if cond["storage.volume_ready"]["status"] == "True":
         return Phase.STANDBY
-    if cond["storage.archive_ready"]["status"]:
+    if cond["storage.archive_ready"]["status"] == "True":
         return Phase.ARCHIVED
 
     # 일시 장애 시 archive_key 존재하면 ARCHIVED 유지
@@ -111,8 +112,10 @@ def calculate_phase(
 ```
 
 **기본값 정책**:
-- `policy.healthy`: **true** (관측 전에는 건강하다고 가정)
-- 나머지: **false** (리소스 존재를 가정하지 않음)
+- `policy.healthy`: **"True"** (관측 전에는 건강하다고 가정)
+- 나머지: **"False"** (리소스 존재를 가정하지 않음)
+
+> **타입 안전성**: K8s 패턴에 따라 boolean 대신 문자열 사용. `status == "True"` 명시적 비교로 truthy 오류 방지
 
 > **안전성**: 빈 conditions에도 기본값을 적용하여 KeyError 없이 안전하게 계산
 >
