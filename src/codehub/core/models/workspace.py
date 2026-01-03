@@ -5,7 +5,7 @@ Reference: docs/spec_v2/03-schema.md
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Index, Text
+from sqlalchemy import Column, DateTime, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -41,13 +41,13 @@ class Workspace(SQLModel, table=True):
         default_factory=dict,
         sa_column=Column(JSONB, nullable=False, server_default="{}"),
     )
-    phase: Phase = Field(default=Phase.PENDING)
-    operation: Operation = Field(default=Operation.NONE)
+    phase: Phase = Field(default=Phase.PENDING, sa_type=String)
+    operation: Operation = Field(default=Operation.NONE, sa_type=String)
     op_started_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True))
     )
     op_id: str | None = None  # UUID for idempotency
-    desired_state: DesiredState = Field(default=DesiredState.RUNNING)
+    desired_state: DesiredState = Field(default=DesiredState.RUNNING, sa_type=String)
     archive_key: str | None = Field(default=None, max_length=512)
     observed_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True))
