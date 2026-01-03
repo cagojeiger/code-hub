@@ -78,6 +78,22 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Dummy code-server for proxy testing
+  dummy-codeserver:
+    image: cagojeiger/code-server:4.107.0
+    container_name: codehub-dummy-codeserver
+    command: --auth none --bind-addr 0.0.0.0:8080
+    networks:
+      - codehub-net
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # Docker Socket Proxy - Secure Docker API access
   docker-proxy:
     image: tecnativa/docker-socket-proxy:latest
@@ -102,6 +118,22 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # Database migration - runs once before control-plane starts
+  migrate:
+    build:
+      context: src
+      dockerfile: Dockerfile
+    container_name: codehub-migrate
+    command: uv run alembic upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
+    networks:
+      - codehub-net
+    # No restart - runs once and exits
+
   # Control Plane - API, Reconciler, Coordinator
   control-plane:
     build:
@@ -124,6 +156,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     networks:
       - codehub-net
     restart: unless-stopped
