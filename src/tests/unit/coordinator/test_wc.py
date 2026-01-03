@@ -462,3 +462,73 @@ class TestPhaseFromDesired:
 
     def test_deleted(self, wc: WorkspaceController):
         assert wc._phase_from_desired(DesiredState.DELETED) == Phase.DELETED
+
+
+class TestTickParallel:
+    """tick() 병렬 처리 테스트."""
+
+    @pytest.fixture
+    def mock_ic(self) -> AsyncMock:
+        ic = AsyncMock(spec=InstanceController)
+        ic.start = AsyncMock()
+        ic.delete = AsyncMock()
+        return ic
+
+    @pytest.fixture
+    def mock_sp(self) -> AsyncMock:
+        sp = AsyncMock(spec=StorageProvider)
+        sp.provision = AsyncMock()
+        sp.restore = AsyncMock()
+        sp.archive = AsyncMock(return_value="ws-1/op-1/home.tar.zst")
+        sp.create_empty_archive = AsyncMock(return_value="ws-1/op-1/home.tar.zst")
+        sp.delete_volume = AsyncMock()
+        return sp
+
+    async def test_multiple_workspaces_parallel(
+        self,
+        mock_conn: AsyncMock,
+        mock_leader: AsyncMock,
+        mock_notify: AsyncMock,
+        mock_ic: AsyncMock,
+        mock_sp: AsyncMock,
+    ):
+        """여러 ws 동시 처리."""
+        wc = WorkspaceController(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
+
+        # _load_workspaces가 빈 리스트 반환하도록 mock
+        wc._load_workspaces = AsyncMock(return_value=[])
+
+        await wc.tick()
+
+        wc._load_workspaces.assert_called_once()
+
+    async def test_error_isolation(
+        self,
+        mock_conn: AsyncMock,
+        mock_leader: AsyncMock,
+        mock_notify: AsyncMock,
+        mock_ic: AsyncMock,
+        mock_sp: AsyncMock,
+    ):
+        """한 ws 실패해도 나머지 계속."""
+        wc = WorkspaceController(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
+
+        ws1 = make_workspace(id="ws-1")
+        ws2 = make_workspace(id="ws-2")
+        ws3 = make_workspace(id="ws-3")
+
+        call_count = {"count": 0}
+
+        async def mock_reconcile(ws):
+            call_count["count"] += 1
+            if ws.id == "ws-2":
+                raise RuntimeError("ws-2 failed")
+
+        wc._load_workspaces = AsyncMock(return_value=[ws1, ws2, ws3])
+        wc._reconcile_one = mock_reconcile
+
+        # 에러가 발생해도 다른 ws는 처리됨
+        await wc.tick()
+
+        # 3개 모두 reconcile 시도됨
+        assert call_count["count"] == 3

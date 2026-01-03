@@ -7,6 +7,7 @@ WC = Judge + Control (Observer 분리)
 - WC는 DB에서 conditions 읽어서 phase 계산 + operation 실행
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -86,11 +87,16 @@ class WorkspaceController(CoordinatorBase):
         """Reconcile loop: Load → Judge → Plan → Execute → Persist."""
         workspaces = await self._load_workspaces()
 
-        for ws in workspaces:
-            try:
-                await self._reconcile_one(ws)
-            except Exception as e:
-                logger.exception("Failed to reconcile %s: %s", ws.id, e)
+        # 병렬 실행 (return_exceptions=True로 한 ws 실패해도 나머지 계속)
+        results = await asyncio.gather(
+            *[self._reconcile_one(ws) for ws in workspaces],
+            return_exceptions=True,
+        )
+
+        # 에러 로깅
+        for ws, result in zip(workspaces, results):
+            if isinstance(result, Exception):
+                logger.exception("Failed to reconcile %s: %s", ws.id, result)
 
     async def _load_workspaces(self) -> list[Workspace]:
         """Load workspaces that need reconciliation.
