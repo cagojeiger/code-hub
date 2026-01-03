@@ -6,22 +6,33 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
+from codehub.adapters.instance import DockerInstanceController
+from codehub.core.errors import CodeHubError
+from codehub.adapters.storage import S3StorageProvider
 from codehub.app.api.v1 import auth_router, workspaces_router
 from codehub.app.logging import setup_logging
 from codehub.app.proxy import router as proxy_router
 from codehub.app.proxy.client import close_http_client
 from codehub.control.coordinator import (
     ArchiveGC,
+    ObserverCoordinator,
     TTLManager,
     WorkspaceController,
 )
+from codehub.control.coordinator.base import (
+    CoordinatorType,
+    LeaderElection,
+    NotifyPublisher,
+    NotifySubscriber,
+)
 from codehub.infra import (
     close_db,
+    close_docker,
     close_redis,
     close_storage,
     get_engine,
@@ -56,6 +67,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         pass
 
     await close_http_client()
+    await close_docker()
     await close_storage()
     await close_redis()
     await close_db()
@@ -63,14 +75,35 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 async def _run_coordinators() -> None:
     engine = get_engine()
-    redis = get_redis()
+    redis_client = get_redis()
+
+    # Adapters
+    ic = DockerInstanceController()
+    sp = S3StorageProvider()
+
+    # Shared publisher (Observer → WC wakeup)
+    publisher = NotifyPublisher(redis_client)
 
     try:
         async with engine.connect() as conn:
+            # Per-coordinator DI
+            ob_leader = LeaderElection(conn, CoordinatorType.OBSERVER)
+            ob_notify = NotifySubscriber(redis_client)
+
+            wc_leader = LeaderElection(conn, CoordinatorType.WC)
+            wc_notify = NotifySubscriber(redis_client)
+
+            ttl_leader = LeaderElection(conn, CoordinatorType.TTL)
+            ttl_notify = NotifySubscriber(redis_client)
+
+            gc_leader = LeaderElection(conn, CoordinatorType.GC)
+            gc_notify = NotifySubscriber(redis_client)
+
             coordinators = [
-                WorkspaceController(conn, redis),
-                TTLManager(conn, redis),
-                ArchiveGC(conn, redis),
+                ObserverCoordinator(conn, ob_leader, ob_notify, ic, sp, publisher),
+                WorkspaceController(conn, wc_leader, wc_notify, ic, sp),
+                TTLManager(conn, ttl_leader, ttl_notify),
+                ArchiveGC(conn, gc_leader, gc_notify),
             ]
             # gather가 cancel되면 모든 자식 task를 cancel하고
             # 각 run()에서 _cleanup() 호출됨
@@ -80,9 +113,22 @@ async def _run_coordinators() -> None:
         raise
     except Exception as e:
         logger.exception("Coordinator error: %s", e)
+    finally:
+        await ic.close()
+        await sp.close()
 
 
 app = FastAPI(title="CodeHub", version="0.1.0", lifespan=lifespan)
+
+
+@app.exception_handler(CodeHubError)
+async def codehub_error_handler(request: Request, exc: CodeHubError) -> JSONResponse:
+    """Handle CodeHubError exceptions."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_response().model_dump(),
+    )
+
 
 # Register routers
 app.include_router(auth_router, prefix="/api/v1")
