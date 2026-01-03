@@ -2,22 +2,19 @@
 
 설계: docs/architecture_v2/wc.md, wc-judge.md
 
-핵심 원칙:
-- Level-Triggered: DB에서 conditions 읽기 (Observer가 저장한 것)
-- Single Writer: phase, operation 등만 저장 (conditions 제외)
-- Ordered SM: step_up/step_down 순차 전이
-- Non-preemptive: workspace당 동시에 1개 operation만
+WC = Judge + Control (Observer 분리)
+- Observer Coordinator가 conditions 저장
+- WC는 DB에서 conditions 읽어서 phase 계산 + operation 실행
 """
 
 import logging
-import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import StrEnum
+from uuid import uuid4
 
-from pydantic import BaseModel
-
-from sqlalchemy import or_, select, update
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from codehub.control.coordinator.base import (
     Channel,
@@ -26,85 +23,42 @@ from codehub.control.coordinator.base import (
     LeaderElection,
     NotifySubscriber,
 )
-from codehub.control.coordinator.judge import (
-    COND_ARCHIVE_READY,
-    COND_CONTAINER_READY,
-    COND_VOLUME_READY,
-    calculate_phase,
-    is_condition_true,
-)
+from codehub.control.coordinator.judge import JudgeInput, JudgeOutput, judge
+from codehub.core.domain.conditions import ConditionInput
 from codehub.core.domain.workspace import (
     DesiredState,
     ErrorReason,
     Operation,
     Phase,
 )
+from codehub.core.interfaces.instance import InstanceController
+from codehub.core.interfaces.storage import StorageProvider
 from codehub.infra.models import Workspace
 
 logger = logging.getLogger(__name__)
 
-# Timeout for operations (seconds)
-OPERATION_TIMEOUT_SECONDS = 300  # 5 minutes
 
+@dataclass
+class PlanAction:
+    """Plan 단계 결과."""
 
-class ActionType(StrEnum):
-    """Action result type."""
-
-    START = "start"  # operation 시작
-    COMPLETE = "complete"  # operation 완료
-    ERROR = "error"  # ERROR 전환
-    CONTINUE = "continue"  # 진행 중 (아무것도 안 함)
-
-
-class Action(BaseModel):
-    """Reconcile action result."""
-
-    type: ActionType
-    operation: Operation | None = None
-    op_id: str | None = None
+    operation: Operation
+    phase: Phase
     error_reason: ErrorReason | None = None
-    archive_key: str | None = None  # ARCHIVING 완료 시 설정
-
-    model_config = {"frozen": True}
-
-    @classmethod
-    def start(cls, operation: Operation, op_id: str | None = None) -> "Action":
-        """Create start action."""
-        return cls(
-            type=ActionType.START,
-            operation=operation,
-            op_id=op_id or str(uuid.uuid4()),
-        )
-
-    @classmethod
-    def complete(cls, archive_key: str | None = None) -> "Action":
-        """Create complete action."""
-        return cls(type=ActionType.COMPLETE, archive_key=archive_key)
-
-    @classmethod
-    def error(cls, reason: ErrorReason) -> "Action":
-        """Create error action."""
-        return cls(type=ActionType.ERROR, error_reason=reason)
-
-    @classmethod
-    def cont(cls) -> "Action":
-        """Create continue action (no-op)."""
-        return cls(type=ActionType.CONTINUE)
+    archive_key: str | None = None
+    op_id: str | None = None
+    complete: bool = False  # operation 완료 여부
 
 
 class WorkspaceController(CoordinatorBase):
     """워크스페이스 상태 수렴 컨트롤러.
 
     Reconcile Loop:
-    1. DB에서 conditions 읽기 (Observer가 저장)
-    2. Judge: calculate_phase()
-    3. Control: Plan → Execute
-    4. Persist: phase, operation 등 저장 (CAS)
-
-    Single Writer 컬럼:
-    - 읽기: conditions, observed_at, desired_state, deleted_at
-    - 쓰기: phase, operation, op_started_at, op_id, archive_key,
-            error_count, error_reason, home_ctx
+    1. Load: DB에서 workspace 목록 로드 (conditions 포함)
+    2. Judge: judge() 호출 → phase 계산
+    3. Plan: operation 결정
+    4. Execute: Actuator 호출
+    5. Persist: CAS 패턴으로 DB 저장
     """
 
     COORDINATOR_TYPE = CoordinatorType.WC
@@ -113,312 +67,356 @@ class WorkspaceController(CoordinatorBase):
     IDLE_INTERVAL = 10.0
     ACTIVE_INTERVAL = 2.0
 
+    # Operation timeout (초)
+    OPERATION_TIMEOUT = 300  # 5분
+
     def __init__(
         self,
         conn: AsyncConnection,
         leader: LeaderElection,
         notify: NotifySubscriber,
+        ic: InstanceController,
+        sp: StorageProvider,
     ) -> None:
         super().__init__(conn, leader, notify)
+        self._ic = ic
+        self._sp = sp
 
     async def tick(self) -> None:
-        """Reconcile all workspaces: Judge → Control → Persist."""
+        """Reconcile loop: Load → Judge → Plan → Execute → Persist."""
+        workspaces = await self._load_workspaces()
+
+        for ws in workspaces:
+            try:
+                await self._reconcile_one(ws)
+            except Exception as e:
+                logger.exception("Failed to reconcile %s: %s", ws.id, e)
+
+    async def _load_workspaces(self) -> list[Workspace]:
+        """Load workspaces that need reconciliation.
+
+        조건:
+        - operation != NONE (진행 중)
+        - 또는 phase != desired_state (수렴 필요)
+        """
         async with AsyncSession(bind=self._conn) as session:
-            # Reconcile 대상 조회:
-            # - phase != desired_state (수렴 필요)
-            # - OR operation != NONE (진행 중)
             result = await session.execute(
-                select(Workspace).where(
-                    Workspace.deleted_at.is_(None),
-                    or_(
-                        Workspace.phase != Workspace.desired_state,
-                        Workspace.operation != Operation.NONE.value,
-                    ),
-                )
+                text("""
+                    SELECT * FROM workspaces
+                    WHERE deleted_at IS NULL
+                      AND (
+                        operation != 'NONE'
+                        OR phase != desired_state
+                      )
+                """)
             )
-            workspaces = result.scalars().all()
+            rows = result.mappings().all()
+            return [Workspace.model_validate(dict(row)) for row in rows]
 
-            if workspaces:
-                logger.debug("Reconciling %d workspaces", len(workspaces))
-
-            for ws in workspaces:
-                await self._reconcile_one(session, ws)
-
-            await session.commit()
-
-    async def _reconcile_one(self, session: AsyncSession, ws: Workspace) -> None:
+    async def _reconcile_one(self, ws: Workspace) -> None:
         """Reconcile single workspace."""
-        ws_id = str(ws.id)
-
-        # 1. Judge: conditions → phase
-        new_phase = calculate_phase(
-            conditions=ws.conditions,
+        # 1. Judge
+        cond_input = ConditionInput.from_conditions(ws.conditions or {})
+        judge_input = JudgeInput(
+            conditions=cond_input,
             deleted_at=ws.deleted_at is not None,
             archive_key=ws.archive_key,
         )
+        judge_output = judge(judge_input)
 
-        # Phase 변경 로그
-        if new_phase.value != ws.phase:
-            logger.info("Workspace %s: phase %s → %s", ws_id, ws.phase, new_phase.value)
+        # 2. Plan
+        action = self._plan(ws, judge_output)
 
-        # 2. Control: Plan
-        action = self._plan(ws, new_phase)
+        # 3. Execute (operation 시작 시에만)
+        if action.operation != Operation.NONE and not action.complete:
+            # 새 operation 시작 또는 재시도
+            if ws.operation == Operation.NONE or ws.operation == action.operation:
+                await self._execute(ws, action)
 
-        # 3. Control: Execute (stub)
-        if action.type == ActionType.START:
-            await self._execute(ws, action)
+        # 4. Persist (CAS)
+        await self._persist(ws, action)
 
-        # 4. Persist
-        await self._persist(session, ws, new_phase, action)
+    def _plan(self, ws: Workspace, judge_output: JudgeOutput) -> PlanAction:
+        """operation 결정 로직.
 
-    def _plan(self, ws: Workspace, current_phase: Phase) -> Action:
-        """Plan next action based on phase and desired_state.
-
-        Priority:
-        1. 진행 중인 operation → 완료 체크
-        2. ERROR → DELETED만 허용
-        3. 수렴 완료 → no-op
-        4. Ordered SM → step_up/step_down
+        Cases:
+        1. operation != NONE → 완료 조건 체크
+        2. phase == ERROR → 대기 (또는 DELETING)
+        3. phase == desired → no-op
+        4. phase != desired → operation 선택
         """
-        desired = DesiredState(ws.desired_state)
-        operation = Operation(ws.operation)
+        ws_op = Operation(ws.operation)
+        ws_desired = DesiredState(ws.desired_state)
 
-        # 1. 진행 중인 operation 완료 체크
-        if operation != Operation.NONE:
-            return self._check_completion(ws, current_phase, operation)
+        # Case 1: 진행 중인 operation
+        if ws_op != Operation.NONE:
+            return self._handle_in_progress(ws, judge_output)
 
-        # 2. ERROR면 DELETED만 허용
-        if current_phase == Phase.ERROR:
-            if desired == DesiredState.DELETED:
-                return Action.start(Operation.DELETING)
-            # 수동 복구 대기
-            return Action.cont()
+        # Case 2: ERROR 처리
+        if judge_output.phase == Phase.ERROR:
+            if ws_desired == DesiredState.DELETED:
+                return PlanAction(
+                    operation=Operation.DELETING,
+                    phase=Phase.DELETING,
+                    op_id=str(uuid4()),
+                )
+            # ERROR 상태 유지 (수동 복구 필요)
+            return PlanAction(
+                operation=Operation.NONE,
+                phase=Phase.ERROR,
+                error_reason=judge_output.error_reason,
+            )
 
-        # 3. 수렴 완료
-        if current_phase.value == desired.value:
-            return Action.cont()
+        # Case 3: 이미 수렴됨
+        target_phase = self._phase_from_desired(ws_desired)
+        if judge_output.phase == target_phase:
+            return PlanAction(
+                operation=Operation.NONE,
+                phase=judge_output.phase,
+            )
 
-        # 4. Ordered SM: step_up / step_down
-        return self._select_operation(current_phase, desired, ws)
+        # Case 4: operation 선택
+        operation = self._select_operation(judge_output.phase, ws_desired)
+        if operation == Operation.NONE:
+            return PlanAction(
+                operation=Operation.NONE,
+                phase=judge_output.phase,
+            )
 
-    def _select_operation(
-        self, phase: Phase, desired: DesiredState, _ws: Workspace
-    ) -> Action:
-        """Select operation based on Ordered State Machine.
+        return PlanAction(
+            operation=operation,
+            phase=judge_output.phase,
+            op_id=str(uuid4()),
+        )
 
-        Phase Level: PENDING(0) < ARCHIVED(5) < STANDBY(10) < RUNNING(20)
+    def _handle_in_progress(self, ws: Workspace, judge_output: JudgeOutput) -> PlanAction:
+        """진행 중인 operation 처리.
 
-        step_up: PENDING → ARCHIVED/STANDBY → RUNNING
-        step_down: RUNNING → STANDBY → ARCHIVED
+        완료 조건:
+        - PROVISIONING: volume_ready
+        - RESTORING: volume_ready
+        - STARTING: container_ready
+        - STOPPING: !container_ready
+        - ARCHIVING: !volume_ready ∧ archive_ready
+        - CREATE_EMPTY_ARCHIVE: archive_ready
+        - DELETING: !container_ready ∧ !volume_ready
         """
-        # step_up
-        if phase == Phase.PENDING:
-            if desired == DesiredState.ARCHIVED:
-                return Action.start(Operation.CREATE_EMPTY_ARCHIVE)
-            # STANDBY or RUNNING
-            return Action.start(Operation.PROVISIONING)
+        ws_op = Operation(ws.operation)
 
-        if phase == Phase.ARCHIVED:
-            # ARCHIVED → STANDBY (then → RUNNING if needed)
-            return Action.start(Operation.RESTORING)
+        # 완료 조건 체크
+        complete = self._check_completion(ws_op, ws)
 
-        if phase == Phase.STANDBY:
-            if desired == DesiredState.RUNNING:
-                return Action.start(Operation.STARTING)
-            if desired == DesiredState.ARCHIVED:
-                return Action.start(Operation.ARCHIVING)
+        if complete:
+            # 완료 → phase 재계산, operation = NONE
+            return PlanAction(
+                operation=Operation.NONE,
+                phase=judge_output.phase,
+                complete=True,
+            )
 
-        # step_down
-        if phase == Phase.RUNNING:
-            # RUNNING → STANDBY (then → ARCHIVED if needed)
-            return Action.start(Operation.STOPPING)
+        # Timeout 체크
+        if ws.op_started_at and self._is_timeout(ws.op_started_at):
+            return PlanAction(
+                operation=Operation.NONE,
+                phase=Phase.ERROR,
+                error_reason=ErrorReason.TIMEOUT,
+            )
 
-        # DELETING / DELETED 처리
-        if phase == Phase.DELETING:
-            return Action.start(Operation.DELETING)
+        # 진행 중 → 재시도 (멱등)
+        return PlanAction(
+            operation=ws_op,
+            phase=ws.phase,
+            op_id=ws.op_id,
+        )
 
-        return Action.cont()
-
-    def _check_completion(
-        self, ws: Workspace, _phase: Phase, operation: Operation
-    ) -> Action:
-        """Check if current operation is complete.
-
-        완료 조건은 Observer가 저장한 conditions 기반.
-        """
-        conditions = ws.conditions
+    def _check_completion(self, operation: Operation, ws: Workspace) -> bool:
+        """operation 완료 조건 체크."""
+        cond = ConditionInput.from_conditions(ws.conditions or {})
 
         match operation:
             case Operation.PROVISIONING:
-                if is_condition_true(conditions, COND_VOLUME_READY):
-                    return Action.complete()
-
+                return cond.volume_ready
             case Operation.RESTORING:
-                home_ctx = ws.home_ctx or {}
-                if (
-                    is_condition_true(conditions, COND_VOLUME_READY)
-                    and home_ctx.get("restore_marker") == ws.archive_key
-                ):
-                    return Action.complete()
-
+                return cond.volume_ready
             case Operation.STARTING:
-                if is_condition_true(conditions, COND_CONTAINER_READY):
-                    return Action.complete()
-
+                return cond.container_ready
             case Operation.STOPPING:
-                if not is_condition_true(conditions, COND_CONTAINER_READY):
-                    return Action.complete()
-
+                return not cond.container_ready
             case Operation.ARCHIVING:
-                if (
-                    not is_condition_true(conditions, COND_VOLUME_READY)
-                    and is_condition_true(conditions, COND_ARCHIVE_READY)
-                    and ws.archive_key
-                ):
-                    return Action.complete()
-
+                return not cond.volume_ready and cond.archive_ready
             case Operation.CREATE_EMPTY_ARCHIVE:
-                if is_condition_true(conditions, COND_ARCHIVE_READY) and ws.archive_key:
-                    return Action.complete()
-
+                return cond.archive_ready
             case Operation.DELETING:
-                if (
-                    not is_condition_true(conditions, COND_CONTAINER_READY)
-                    and not is_condition_true(conditions, COND_VOLUME_READY)
-                ):
-                    return Action.complete()
+                return not cond.container_ready and not cond.volume_ready
+            case _:
+                return False
 
-        # Timeout 체크
-        if self._is_timeout(ws.op_started_at):
-            logger.warning(
-                "Workspace %s: operation %s timeout", ws.id, operation.value
-            )
-            return Action.error(ErrorReason.TIMEOUT)
-
-        # 아직 진행 중
-        return Action.cont()
-
-    def _is_timeout(self, op_started_at: datetime | None) -> bool:
-        """Check if operation has timed out."""
-        if op_started_at is None:
-            return False
+    def _is_timeout(self, op_started_at: datetime) -> bool:
+        """operation timeout 체크."""
         elapsed = (datetime.now(UTC) - op_started_at).total_seconds()
-        return elapsed > OPERATION_TIMEOUT_SECONDS
+        return elapsed > self.OPERATION_TIMEOUT
 
-    async def _execute(self, ws: Workspace, action: Action) -> None:
-        """Execute action (stub - log only).
+    def _phase_from_desired(self, desired: DesiredState) -> Phase:
+        """DesiredState → 목표 Phase 변환."""
+        match desired:
+            case DesiredState.RUNNING:
+                return Phase.RUNNING
+            case DesiredState.STANDBY:
+                return Phase.STANDBY
+            case DesiredState.ARCHIVED:
+                return Phase.ARCHIVED
+            case DesiredState.DELETED:
+                return Phase.DELETED
+            case _:
+                return Phase.PENDING
 
-        실제 Actuator 구현체는 별도 작업으로 진행.
+    def _select_operation(self, current_phase: Phase, desired: DesiredState) -> Operation:
+        """현재 phase에서 desired로 가기 위한 operation 선택.
+
+        Operation 선택 테이블 (wc.md):
+        | Phase | desired | Operation |
+        |-------|---------|-----------|
+        | PENDING | ARCHIVED | CREATE_EMPTY_ARCHIVE |
+        | PENDING | STANDBY/RUNNING | PROVISIONING |
+        | ARCHIVED | STANDBY/RUNNING | RESTORING |
+        | STANDBY | RUNNING | STARTING |
+        | RUNNING | STANDBY/ARCHIVED | STOPPING |
+        | STANDBY | ARCHIVED | ARCHIVING |
+        | * | DELETED | DELETING |
         """
-        ws_id = str(ws.id)
+        # DELETED는 어디서든 DELETING
+        if desired == DesiredState.DELETED:
+            return Operation.DELETING
 
+        match current_phase:
+            case Phase.PENDING:
+                if desired == DesiredState.ARCHIVED:
+                    return Operation.CREATE_EMPTY_ARCHIVE
+                if desired in (DesiredState.STANDBY, DesiredState.RUNNING):
+                    return Operation.PROVISIONING
+
+            case Phase.ARCHIVED:
+                if desired in (DesiredState.STANDBY, DesiredState.RUNNING):
+                    return Operation.RESTORING
+
+            case Phase.STANDBY:
+                if desired == DesiredState.RUNNING:
+                    return Operation.STARTING
+                if desired == DesiredState.ARCHIVED:
+                    return Operation.ARCHIVING
+
+            case Phase.RUNNING:
+                if desired in (DesiredState.STANDBY, DesiredState.ARCHIVED):
+                    return Operation.STOPPING
+
+        return Operation.NONE
+
+    async def _execute(self, ws: Workspace, action: PlanAction) -> None:
+        """Actuator 호출.
+
+        계약 #8: 순서 보장
+        - ARCHIVING: archive() → delete_volume()
+        - DELETING: delete() → delete_volume()
+        """
         match action.operation:
             case Operation.PROVISIONING:
-                logger.info("[STUB] SP.provision(%s)", ws_id)
+                await self._sp.provision(ws.id)
 
             case Operation.RESTORING:
-                logger.info("[STUB] SP.restore(%s, %s)", ws_id, ws.archive_key)
+                if ws.archive_key:
+                    await self._sp.restore(ws.id, ws.archive_key)
 
             case Operation.STARTING:
-                logger.info("[STUB] IC.start(%s, %s)", ws_id, ws.image_ref)
+                await self._ic.start(ws.id, ws.image_ref)
 
             case Operation.STOPPING:
-                logger.info("[STUB] IC.delete(%s)", ws_id)
+                await self._ic.delete(ws.id)
 
             case Operation.ARCHIVING:
-                logger.info("[STUB] SP.archive(%s, %s)", ws_id, action.op_id)
+                # 2단계 operation: archive → delete_volume (계약 #8)
+                op_id = action.op_id or ws.op_id or str(uuid4())
+                archive_key = await self._sp.archive(ws.id, op_id)
+                action.archive_key = archive_key
+                await self._sp.delete_volume(ws.id)
 
             case Operation.CREATE_EMPTY_ARCHIVE:
-                logger.info(
-                    "[STUB] SP.create_empty_archive(%s, %s)", ws_id, action.op_id
-                )
+                op_id = action.op_id or ws.op_id or str(uuid4())
+                archive_key = await self._sp.create_empty_archive(ws.id, op_id)
+                action.archive_key = archive_key
 
             case Operation.DELETING:
-                logger.info("[STUB] IC.delete + SP.delete_volume(%s)", ws_id)
+                # 2단계 operation: delete container → delete_volume (계약 #8)
+                await self._ic.delete(ws.id)
+                await self._sp.delete_volume(ws.id)
 
-    async def _persist(
-        self,
-        session: AsyncSession,
-        ws: Workspace,
-        new_phase: Phase,
-        action: Action,
-    ) -> None:
-        """Persist changes to DB with CAS pattern.
+    async def _persist(self, ws: Workspace, action: PlanAction) -> None:
+        """CAS 패턴으로 DB 저장.
 
-        Single Writer: phase, operation, op_started_at, op_id,
-                       archive_key, error_count, error_reason, home_ctx
+        CAS 조건: operation = expected_op
+        - 다른 WC 인스턴스가 동시에 처리하면 CAS 실패 → 다음 tick에서 재시도
         """
-        ws_id = str(ws.id)
+        ws_op = Operation(ws.operation)
         now = datetime.now(UTC)
 
-        # 기본 업데이트 값
-        values: dict = {"phase": new_phase.value}
+        # operation 시작 시점 결정
+        if action.operation != Operation.NONE and ws_op == Operation.NONE:
+            # 새 operation 시작
+            op_started_at = now
+            op_id = action.op_id or str(uuid4())
+        elif action.operation == Operation.NONE:
+            # operation 완료 또는 no-op
+            op_started_at = None
+            op_id = ws.op_id  # GC 보호용 유지
+        else:
+            # 진행 중
+            op_started_at = ws.op_started_at
+            op_id = ws.op_id
 
-        match action.type:
-            case ActionType.START:
-                # operation 시작
-                values.update(
-                    {
-                        "operation": action.operation.value,
-                        "op_started_at": now,
-                        "op_id": action.op_id,
-                        "error_count": 0,
-                        "error_reason": None,
-                    }
-                )
-                logger.info(
-                    "Workspace %s: starting %s (op_id=%s)",
-                    ws_id,
-                    action.operation.value,
-                    action.op_id,
-                )
+        # error_count 계산
+        if action.error_reason:
+            error_count = ws.error_count + 1
+        elif action.complete:
+            error_count = 0  # 성공 완료 시 리셋
+        else:
+            error_count = ws.error_count
 
-            case ActionType.COMPLETE:
-                # operation 완료
-                values.update(
-                    {
-                        "operation": Operation.NONE.value,
-                        "op_started_at": None,
-                        # op_id 유지 (GC 보호)
-                        "error_count": 0,
-                        "error_reason": None,
-                    }
-                )
-                if action.archive_key:
-                    values["archive_key"] = action.archive_key
-                logger.info(
-                    "Workspace %s: completed %s", ws_id, ws.operation
-                )
-
-            case ActionType.ERROR:
-                # ERROR 전환 (원자적)
-                values.update(
-                    {
-                        "phase": Phase.ERROR.value,
-                        "operation": Operation.NONE.value,
-                        "error_reason": action.error_reason.value,
-                        "error_count": ws.error_count + 1,
-                    }
-                )
-                logger.warning(
-                    "Workspace %s: ERROR (%s)", ws_id, action.error_reason.value
-                )
-
-            case ActionType.CONTINUE:
-                # 진행 중 또는 no-op
-                pass
-
-        # CAS 패턴: operation 변경 시 이전 상태 확인
-        result = await session.execute(
-            update(Workspace)
-            .where(
-                Workspace.id == ws_id,
-                Workspace.operation == ws.operation,  # CAS 조건
+        async with AsyncSession(bind=self._conn) as session:
+            result = await session.execute(
+                text("""
+                    UPDATE workspaces
+                    SET phase = :phase,
+                        operation = :operation,
+                        op_started_at = :op_started_at,
+                        op_id = :op_id,
+                        archive_key = COALESCE(:archive_key, archive_key),
+                        error_count = :error_count,
+                        error_reason = :error_reason,
+                        updated_at = :updated_at
+                    WHERE id = :ws_id
+                      AND operation = :expected_op
+                    RETURNING id
+                """),
+                {
+                    "ws_id": ws.id,
+                    "phase": action.phase.value,
+                    "operation": action.operation.value,
+                    "op_started_at": op_started_at,
+                    "op_id": op_id,
+                    "archive_key": action.archive_key,
+                    "error_count": error_count,
+                    "error_reason": action.error_reason.value if action.error_reason else None,
+                    "expected_op": ws_op.value,
+                    "updated_at": now,
+                },
             )
-            .values(**values)
-            .returning(Workspace.id)
-        )
+            await session.commit()
 
-        if not result.fetchone():
-            # CAS 실패 → 다음 tick에서 재시도
-            logger.warning("Workspace %s: CAS failed, will retry", ws_id)
+            if result.rowcount == 0:
+                logger.info("CAS failed for %s (expected_op=%s), will retry next tick", ws.id, ws_op)
+            else:
+                logger.debug(
+                    "Updated %s: phase=%s, operation=%s",
+                    ws.id,
+                    action.phase,
+                    action.operation,
+                )
