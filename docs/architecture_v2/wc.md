@@ -2,7 +2,7 @@
 
 > WorkspaceController의 Judge/Control 로직 설계
 >
-> **의존**: [wc-observer.md](./wc-observer.md) (Observe 단계)
+> **관련**: [wc-observer.md](./wc-observer.md) (Observer Coordinator)
 
 ---
 
@@ -12,11 +12,11 @@ WC는 워크스페이스의 상태를 desired_state로 수렴시키는 컨트롤
 
 | 역할 | 입력 | 출력 |
 |------|------|------|
-| **Observer** | IC, SP | conditions |
+| **Observe** | DB | conditions |
 | **Judge** | conditions, deleted_at, archive_key | phase |
 | **Controller** | phase, desired_state | operation 실행 |
 
-> **Observer 상세**: [wc-observer.md](./wc-observer.md)
+> **Observer Coordinator**: [wc-observer.md](./wc-observer.md) (리소스 관측 → DB 저장)
 > **Judge 상세**: [wc-judge.md](./wc-judge.md)
 
 ---
@@ -25,8 +25,19 @@ WC는 워크스페이스의 상태를 desired_state로 수렴시키는 컨트롤
 
 ```mermaid
 flowchart TB
+    subgraph OBS_COORD["Observer Coordinator (별도)"]
+        IC["IC.list_all()"]
+        SPV["SP.list_volumes()"]
+        SPA["SP.list_archives()"]
+        SAVE_COND["conditions 저장"]
+
+        IC --> SAVE_COND
+        SPV --> SAVE_COND
+        SPA --> SAVE_COND
+    end
+
     subgraph WC["WC Reconcile Loop"]
-        OBS["1. Bulk Observe<br/>(wc-observer.md 참조)"]
+        OBS["1. Observe<br/>(DB에서 conditions 읽기)"]
         JUDGE["2. Judge<br/>check_invariants()<br/>calculate_phase()"]
 
         subgraph CTRL["3. Control"]
@@ -34,16 +45,18 @@ flowchart TB
             EXEC["Execute: Actuator 호출"]
         end
 
-        SAVE["단일 트랜잭션 저장<br/>(conditions, phase, operation, ...)"]
+        SAVE["단일 트랜잭션 저장<br/>(phase, operation, ...)"]
 
         OBS -->|conditions| JUDGE
         JUDGE -->|phase| PLAN
         PLAN --> EXEC
         EXEC --> SAVE
     end
+
+    SAVE_COND -.->|DB| OBS
 ```
 
-> **원자성**: 관측/판정/제어 결과를 단일 트랜잭션으로 저장
+> **분리**: Observer Coordinator가 리소스 관측, WC는 DB만 읽음 (Level-Triggered)
 
 ---
 
@@ -162,23 +175,26 @@ Plan에서 결정된 operation에 따라 Actuator를 호출합니다.
 
 #### 저장 대상
 
-| 출처 | 저장 컬럼 |
-|------|----------|
-| Observer | conditions, observed_at |
-| Judge | phase |
-| Control | operation, op_started_at, op_id, archive_key, error_count, error_reason, home_ctx |
+| 단계 | 역할 |
+|------|------|
+| Observe | DB에서 conditions 읽기 (저장 없음) |
+| Judge | phase 계산 |
+| Control | phase, operation, op_started_at, op_id, archive_key, error_count, error_reason, home_ctx 저장 |
+
+> **Note**: conditions, observed_at은 Observer Coordinator가 저장
 
 #### CAS 패턴
 
 ```sql
 UPDATE workspaces
-SET conditions   = $conditions,
-    phase        = $phase,
+SET phase        = $phase,
     operation    = $operation,
     op_started_at = $op_started_at,
     op_id        = $op_id,
-    observed_at  = NOW(),
-    ...
+    archive_key  = $archive_key,
+    error_count  = $error_count,
+    error_reason = $error_reason,
+    home_ctx     = $home_ctx
 WHERE id = $ws_id
   AND operation = $expected_op   -- CAS 조건
 RETURNING id;
@@ -266,8 +282,8 @@ WC가 에러 감지 시 단일 트랜잭션으로 원자적 전환:
 
 | 컬럼 | 소유자 |
 |------|--------|
-| conditions | WC |
-| observed_at | WC |
+| conditions | Observer |
+| observed_at | Observer |
 | phase | WC |
 | operation | WC |
 | op_started_at | WC |
@@ -281,7 +297,8 @@ WC가 에러 감지 시 단일 트랜잭션으로 원자적 전환:
 
 ## 참조
 
-- [wc-observer.md](./wc-observer.md) - Bulk Observe 설계
+- [wc-observer.md](./wc-observer.md) - Observer Coordinator 설계
+- [wc-judge.md](./wc-judge.md) - Judge 로직 상세
 - [00-contracts.md](../spec_v2/00-contracts.md) - 핵심 계약
 - [02-states.md](../spec_v2/02-states.md) - 상태 정의
 - [04-control-plane.md](../spec_v2/04-control-plane.md) - WC 스펙
