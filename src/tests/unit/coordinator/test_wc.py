@@ -495,12 +495,12 @@ class TestTickParallel:
         """여러 ws 동시 처리."""
         wc = WorkspaceController(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
 
-        # _load_workspaces가 빈 리스트 반환하도록 mock
-        wc._load_workspaces = AsyncMock(return_value=[])
+        # _load_for_reconcile가 빈 리스트 반환하도록 mock
+        wc._load_for_reconcile = AsyncMock(return_value=[])
 
         await wc.tick()
 
-        wc._load_workspaces.assert_called_once()
+        wc._load_for_reconcile.assert_called_once()
 
     async def test_error_isolation(
         self,
@@ -524,7 +524,7 @@ class TestTickParallel:
             if ws.id == "ws-2":
                 raise RuntimeError("ws-2 failed")
 
-        wc._load_workspaces = AsyncMock(return_value=[ws1, ws2, ws3])
+        wc._load_for_reconcile = AsyncMock(return_value=[ws1, ws2, ws3])
         wc._reconcile_one = mock_reconcile
 
         # 에러가 발생해도 다른 ws는 처리됨

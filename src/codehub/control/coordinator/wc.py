@@ -9,13 +9,13 @@ WC = Judge + Control (Observer 분리)
 
 import asyncio
 import logging
-from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import text
+from pydantic import BaseModel
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
-from sqlmodel.ext.asyncio.session import AsyncSession
 
 from codehub.control.coordinator.base import (
     Channel,
@@ -39,8 +39,7 @@ from codehub.core.models import Workspace
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class PlanAction:
+class PlanAction(BaseModel):
     """Plan 단계 결과."""
 
     operation: Operation
@@ -65,8 +64,8 @@ class WorkspaceController(CoordinatorBase):
     COORDINATOR_TYPE = CoordinatorType.WC
     CHANNELS = [Channel.WC_WAKE]
 
-    IDLE_INTERVAL = 10.0
-    ACTIVE_INTERVAL = 2.0
+    IDLE_INTERVAL = 15.0
+    ACTIVE_INTERVAL = 1.0
 
     # Operation timeout (초)
     OPERATION_TIMEOUT = 300  # 5분
@@ -85,7 +84,7 @@ class WorkspaceController(CoordinatorBase):
 
     async def tick(self) -> None:
         """Reconcile loop: Load → Judge → Plan → Execute → Persist."""
-        workspaces = await self._load_workspaces()
+        workspaces = await self._load_for_reconcile()
 
         # 병렬 실행 (return_exceptions=True로 한 ws 실패해도 나머지 계속)
         results = await asyncio.gather(
@@ -97,27 +96,6 @@ class WorkspaceController(CoordinatorBase):
         for ws, result in zip(workspaces, results):
             if isinstance(result, Exception):
                 logger.exception("Failed to reconcile %s: %s", ws.id, result)
-
-    async def _load_workspaces(self) -> list[Workspace]:
-        """Load workspaces that need reconciliation.
-
-        조건:
-        - operation != NONE (진행 중)
-        - 또는 phase != desired_state (수렴 필요)
-        """
-        async with AsyncSession(bind=self._conn) as session:
-            result = await session.execute(
-                text("""
-                    SELECT * FROM workspaces
-                    WHERE deleted_at IS NULL
-                      AND (
-                        operation != 'NONE'
-                        OR phase != desired_state
-                      )
-                """)
-            )
-            rows = result.mappings().all()
-            return [Workspace.model_validate(dict(row)) for row in rows]
 
     async def _reconcile_one(self, ws: Workspace) -> None:
         """Reconcile single workspace."""
@@ -386,43 +364,92 @@ class WorkspaceController(CoordinatorBase):
         else:
             error_count = ws.error_count
 
-        async with AsyncSession(bind=self._conn) as session:
-            result = await session.execute(
-                text("""
-                    UPDATE workspaces
-                    SET phase = :phase,
-                        operation = :operation,
-                        op_started_at = :op_started_at,
-                        op_id = :op_id,
-                        archive_key = COALESCE(:archive_key, archive_key),
-                        error_count = :error_count,
-                        error_reason = :error_reason,
-                        updated_at = :updated_at
-                    WHERE id = :ws_id
-                      AND operation = :expected_op
-                    RETURNING id
-                """),
-                {
-                    "ws_id": ws.id,
-                    "phase": action.phase.value,
-                    "operation": action.operation.value,
-                    "op_started_at": op_started_at,
-                    "op_id": op_id,
-                    "archive_key": action.archive_key,
-                    "error_count": error_count,
-                    "error_reason": action.error_reason.value if action.error_reason else None,
-                    "expected_op": ws_op.value,
-                    "updated_at": now,
-                },
-            )
-            await session.commit()
+        success = await self._cas_update(
+            workspace_id=ws.id,
+            expected_operation=ws_op,
+            phase=action.phase,
+            operation=action.operation,
+            op_started_at=op_started_at,
+            op_id=op_id,
+            archive_key=action.archive_key,
+            error_count=error_count,
+            error_reason=action.error_reason,
+            updated_at=now,
+        )
+        # Commit at connection level
+        await self._conn.commit()
 
-            if result.rowcount == 0:
-                logger.info("CAS failed for %s (expected_op=%s), will retry next tick", ws.id, ws_op)
-            else:
-                logger.debug(
-                    "Updated %s: phase=%s, operation=%s",
-                    ws.id,
-                    action.phase,
-                    action.operation,
-                )
+        if not success:
+            logger.info("CAS failed for %s (expected_op=%s), will retry next tick", ws.id, ws_op)
+        else:
+            logger.debug(
+                "Updated %s: phase=%s, operation=%s",
+                ws.id,
+                action.phase,
+                action.operation,
+            )
+
+    # =================================================================
+    # DB Operations (WC-owned columns, CAS pattern)
+    # =================================================================
+
+    async def _load_for_reconcile(self) -> list[Workspace]:
+        """Load workspaces needing reconciliation.
+
+        Conditions:
+        - operation != NONE (in progress)
+        - OR phase != desired_state (needs convergence)
+        """
+        stmt = select(Workspace).where(
+            Workspace.deleted_at.is_(None),
+            or_(
+                Workspace.operation != Operation.NONE.value,
+                Workspace.phase != Workspace.desired_state,
+            ),
+        )
+        result = await self._conn.execute(stmt)
+        rows = result.mappings().all()
+        return [Workspace.model_validate(dict(row)) for row in rows]
+
+    async def _cas_update(
+        self,
+        workspace_id: str,
+        expected_operation: Operation,
+        phase: Phase,
+        operation: Operation,
+        op_started_at: datetime | None,
+        op_id: str | None,
+        archive_key: str | None,
+        error_count: int,
+        error_reason: ErrorReason | None,
+        updated_at: datetime | None = None,
+    ) -> bool:
+        """CAS update for WC-owned columns.
+
+        CAS condition: current operation must match expected_operation.
+        """
+        values: dict[str, Any] = {
+            "phase": phase.value,
+            "operation": operation.value,
+            "op_started_at": op_started_at,
+            "op_id": op_id,
+            "error_count": error_count,
+            "error_reason": error_reason.value if error_reason else None,
+            "updated_at": updated_at or datetime.now(UTC),
+        }
+
+        # Only update archive_key if provided
+        if archive_key is not None:
+            values["archive_key"] = archive_key
+
+        stmt = (
+            update(Workspace)
+            .where(
+                Workspace.id == workspace_id,
+                Workspace.operation == expected_operation.value,
+            )
+            .values(**values)
+            .returning(Workspace.id)
+        )
+        result = await self._conn.execute(stmt)
+        return result.rowcount > 0

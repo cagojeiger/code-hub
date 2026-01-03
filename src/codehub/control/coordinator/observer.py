@@ -6,9 +6,8 @@ Reference: docs/architecture_v2/wc-observer.md
 import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.control.coordinator.base import (
     Channel,
@@ -48,9 +47,14 @@ class BulkObserver:
             {workspace_id: {"container": {...}, "volume": {...}, "archive": {...}}, ...}
         """
         # 1. Bulk API calls (3회)
+        logger.debug("[BulkObserver] Starting observe_all with prefix=%s", self._prefix)
         containers = await self._ic.list_all(self._prefix)
         volumes = await self._sp.list_volumes(self._prefix)
         archives = await self._sp.list_archives(self._prefix)
+        logger.debug(
+            "[BulkObserver] API results: containers=%d, volumes=%d, archives=%d",
+            len(containers), len(volumes), len(archives)
+        )
 
         # 2. Index by workspace_id
         container_map: dict[str, ContainerInfo] = {c.workspace_id: c for c in containers}
@@ -104,47 +108,74 @@ class ObserverCoordinator(CoordinatorBase):
 
     async def tick(self) -> None:
         """Observe all resources and persist conditions to DB."""
+        logger.debug("[Observer] tick() started")
         now = datetime.now(UTC)
 
         # 1. Bulk observe all resources
         observed = await self._observer.observe_all()
-        logger.debug("Observed %d workspaces from infra", len(observed))
+        logger.debug("[Observer] Observed %d workspaces from infra", len(observed))
 
         if not observed:
+            logger.debug("[Observer] No observed resources, skipping DB update")
             return
 
         # 2. Load existing workspaces from DB
-        async with AsyncSession(bind=self._conn) as session:
-            result = await session.execute(
-                select(Workspace.id).where(Workspace.deleted_at.is_(None))
+        ws_ids = await self._load_workspace_ids()
+        logger.debug("[Observer] DB workspace IDs: %s", ws_ids)
+        logger.debug("[Observer] Observed workspace IDs: %s", set(observed.keys()))
+
+        # 3. Filter to existing workspaces only
+        updates_to_apply: list[tuple[str, dict, datetime]] = []
+        for ws_id, conditions in observed.items():
+            if ws_id not in ws_ids:
+                logger.warning("[Observer] Skipping orphan ws_id=%s (not in DB)", ws_id)
+                continue
+            updates_to_apply.append((ws_id, conditions, now))
+
+        logger.debug("[Observer] Updates to apply: %d", len(updates_to_apply))
+
+        # 4. Update conditions for each workspace
+        if updates_to_apply:
+            count = await self._bulk_update_conditions(updates_to_apply)
+            # Commit at connection level
+            await self._conn.commit()
+            logger.info("[Observer] Committed %d updates to DB", count)
+
+            # 5. Wake WC to process updated conditions
+            await self._publisher.wake_wc()
+        else:
+            logger.debug("[Observer] No updates to apply")
+
+    # =================================================================
+    # DB Operations (Observer-owned columns: conditions, observed_at)
+    # =================================================================
+
+    async def _load_workspace_ids(self) -> set[str]:
+        """Load all non-deleted workspace IDs."""
+        result = await self._conn.execute(
+            select(Workspace.id).where(Workspace.deleted_at.is_(None))
+        )
+        return {str(row[0]) for row in result.fetchall()}
+
+    async def _bulk_update_conditions(
+        self,
+        updates: list[tuple[str, dict, datetime]],
+    ) -> int:
+        """Bulk update conditions for multiple workspaces.
+
+        Args:
+            updates: List of (workspace_id, conditions, observed_at)
+
+        Returns:
+            Number of rows updated
+        """
+        count = 0
+        for ws_id, conditions, observed_at in updates:
+            stmt = (
+                update(Workspace)
+                .where(Workspace.id == ws_id)
+                .values(conditions=conditions, observed_at=observed_at)
             )
-            ws_ids = {str(row[0]) for row in result.fetchall()}
-
-            # 3. Build rows for bulk upsert (only if exists in DB)
-            rows = []
-            for ws_id, conditions in observed.items():
-                if ws_id not in ws_ids:
-                    continue
-
-                rows.append({
-                    "id": ws_id,
-                    "conditions": conditions,  # 이미 dict, 변환 불필요
-                    "observed_at": now,
-                })
-
-            # 4. Bulk upsert (1 query)
-            if rows:
-                stmt = insert(Workspace).values(rows)
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["id"],
-                    set_={
-                        "conditions": stmt.excluded.conditions,
-                        "observed_at": stmt.excluded.observed_at,
-                    },
-                )
-                await session.execute(stmt)
-                await session.commit()
-                logger.debug("Updated conditions for %d workspaces", len(rows))
-
-                # 5. Wake WC to process updated conditions
-                await self._publisher.wake_wc()
+            result = await self._conn.execute(stmt)
+            count += result.rowcount
+        return count
