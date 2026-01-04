@@ -37,7 +37,7 @@ from codehub.services.workspace_service import (
 
 from .activity import get_activity_buffer
 from .auth import get_user_id_from_session, get_workspace_for_user
-from .pages import archived_page, error_page, limit_exceeded_page, starting_page
+from .pages import error_page, limit_exceeded_page, restoring_page, starting_page
 from .client import (
     WS_HOP_BY_HOP_HEADERS,
     filter_headers,
@@ -126,8 +126,16 @@ async def proxy_http(
         # Return starting page (polling-based auto-refresh)
         return starting_page(workspace)
     elif workspace.phase == Phase.ARCHIVED.value:
-        # 502 + restore needed (no auto-wake)
-        return archived_page(workspace)
+        # Auto-wake (ARCHIVED) - restore + start
+        try:
+            await request_start(db, workspace_id, user_id)
+        except RunningLimitExceededError:
+            running_workspaces = await list_running_workspaces(db, user_id)
+            return limit_exceeded_page(
+                running_workspaces, _limits_config.max_running_per_user
+            )
+        # Return restoring page (polling-based auto-refresh)
+        return restoring_page(workspace)
     else:
         # PENDING, ERROR, DELETED, etc -> 502 + status page
         return error_page(workspace)

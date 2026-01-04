@@ -4,7 +4,31 @@
  */
 
 import { state, STATUS_ORDER, getStatusConfig, getDisplayStatus } from './state.js';
-import { escapeHtml, formatShortDate, formatDate } from './utils.js';
+import { escapeHtml, formatDate } from './utils.js';
+
+// TTL settings (should match backend TtlConfig)
+const TTL_STANDBY_SECONDS = 300;  // 5 minutes
+const TTL_ARCHIVE_SECONDS = 1800; // 30 minutes
+
+/**
+ * Calculate remaining TTL and format as string
+ * @param {string} baseTime - ISO timestamp to calculate from
+ * @param {number} ttlSeconds - Total TTL in seconds
+ * @returns {string|null} Formatted remaining time or null if expired
+ */
+function getRemainingTtl(baseTime, ttlSeconds) {
+  if (!baseTime) return null;
+  const baseDate = new Date(baseTime);
+  const now = new Date();
+  const elapsedSeconds = Math.floor((now - baseDate) / 1000);
+  const remainingSeconds = ttlSeconds - elapsedSeconds;
+
+  if (remainingSeconds <= 0) return null;
+
+  if (remainingSeconds < 60) return `${remainingSeconds}s`;
+  if (remainingSeconds < 3600) return `${Math.floor(remainingSeconds / 60)}m`;
+  return `${Math.floor(remainingSeconds / 3600)}h`;
+}
 
 /**
  * Render skeleton loading cards
@@ -80,6 +104,14 @@ export function renderWorkspaceCard(workspace, index) {
       </button>`;
   }
 
+  if (config.canRetry) {
+    buttonsHtml += `
+      <button data-action="start" data-id="${workspace.id}"
+              class="px-3 py-1.5 bg-vscode-accent hover:bg-blue-600 text-white text-sm rounded transition-colors">
+        Retry
+      </button>`;
+  }
+
   if (config.canDelete) {
     buttonsHtml += `
       <button data-action="delete" data-id="${workspace.id}" data-name="${escapeHtml(workspace.name)}"
@@ -89,6 +121,32 @@ export function renderWorkspaceCard(workspace, index) {
   }
 
   buttonsHtml += '</div>';
+
+  // Build info lines
+  let infoHtml = '';
+
+  // Line 1: Last active or Created
+  if (workspace.last_access_at) {
+    infoHtml += `<div class="text-xs text-gray-500">⚡ Last active ${formatDate(workspace.last_access_at)}</div>`;
+  } else {
+    infoHtml += `<div class="text-xs text-gray-500">Created ${formatDate(workspace.created_at)}</div>`;
+  }
+
+  // Line 2: TTL info (RUNNING/STANDBY) or Error reason (ERROR)
+  if (workspace.phase === 'RUNNING' && workspace.operation === 'NONE') {
+    const ttl = getRemainingTtl(workspace.last_access_at, TTL_STANDBY_SECONDS);
+    if (ttl) {
+      infoHtml += `<div class="text-xs text-gray-400">⏱ Auto-pause in ${ttl}</div>`;
+    }
+  } else if (workspace.phase === 'STANDBY' && workspace.operation === 'NONE') {
+    const ttl = getRemainingTtl(workspace.phase_changed_at, TTL_ARCHIVE_SECONDS);
+    if (ttl) {
+      infoHtml += `<div class="text-xs text-gray-400">⏱ Auto-archive in ${ttl}</div>`;
+    }
+  } else if (workspace.phase === 'ERROR' && workspace.error_reason) {
+    const retryInfo = workspace.error_count > 0 ? ` (retry ${workspace.error_count}/3)` : '';
+    infoHtml += `<div class="text-xs text-red-400">⚠ ${escapeHtml(workspace.error_reason)}${retryInfo}</div>`;
+  }
 
   return `
     <div data-workspace-id="${workspace.id}"
@@ -102,11 +160,7 @@ export function renderWorkspaceCard(workspace, index) {
         </span>
       </div>
       <p class="text-vscode-text text-sm truncate mb-1">${escapeHtml(workspace.description) || 'No description'}</p>
-      <div class="text-xs text-gray-500 flex gap-3">
-        <span title="Created: ${formatDate(workspace.created_at)}">+ ${formatShortDate(workspace.created_at)}</span>
-        <span title="Updated: ${formatDate(workspace.updated_at)}">~ ${formatShortDate(workspace.updated_at)}</span>
-        ${workspace.last_access_at ? `<span title="Last active: ${formatDate(workspace.last_access_at)}">⚡ ${formatShortDate(workspace.last_access_at)}</span>` : ''}
-      </div>
+      ${infoHtml}
       ${buttonsHtml}
     </div>
   `;

@@ -3,6 +3,16 @@
  * Uses polling to check workspace state
  */
 
+// Operation → User-friendly messages
+const OPERATION_MESSAGES = {
+  PROVISIONING: 'Creating volume...',
+  RESTORING: 'Restoring from archive...',
+  STARTING: 'Launching container...',
+  STOPPING: 'Pausing workspace...',
+  ARCHIVING: 'Archiving workspace...',
+  CREATE_EMPTY_ARCHIVE: 'Initializing workspace...',
+};
+
 const ProxyPage = {
   /**
    * Poll workspace status and redirect when RUNNING
@@ -14,7 +24,7 @@ const ProxyPage = {
     const statusEl = document.getElementById(statusElementId);
     if (!statusEl) return;
 
-    statusEl.textContent = 'Waiting for workspace to start...';
+    statusEl.textContent = 'Preparing...';
 
     const poll = async () => {
       try {
@@ -38,7 +48,9 @@ const ProxyPage = {
         } else if (ws.phase === 'ERROR') {
           statusEl.textContent = `Error: ${ws.error_reason || 'Unknown error'}`;
         } else {
-          // Still starting, continue polling
+          // Show operation-specific message
+          const message = OPERATION_MESSAGES[ws.operation] || 'Preparing...';
+          statusEl.textContent = message;
           setTimeout(poll, intervalMs);
         }
       } catch (err) {

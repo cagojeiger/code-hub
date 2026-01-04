@@ -22,11 +22,11 @@ export const state = {
 // M2 Phase + Operation → Display Status mapping
 export const STATUS_CONFIG = {
   // Stable states
-  PENDING: { color: 'text-vscode-text', bgColor: 'bg-gray-600', icon: '○', label: 'Pending', canStart: true, canPause: false, canArchive: false, canDelete: true },
-  ARCHIVED: { color: 'text-vscode-text', bgColor: 'bg-gray-600', icon: '◇', label: 'Archived', canStart: true, canPause: false, canArchive: false, canDelete: true },
-  STANDBY: { color: 'text-vscode-text', bgColor: 'bg-blue-600', icon: '◆', label: 'Standby', canStart: true, canPause: false, canArchive: true, canDelete: true },
-  RUNNING: { color: 'text-vscode-success', bgColor: 'bg-green-600', icon: '●', label: 'Running', canPause: true, canArchive: false, canOpen: true, canDelete: false },
-  ERROR: { color: 'text-vscode-error', bgColor: 'bg-red-600', icon: '✕', label: 'Error', canStart: true, canPause: false, canArchive: false, canDelete: true },
+  PENDING: { color: 'text-vscode-text', bgColor: 'bg-gray-600', icon: '○', label: 'Pending', canStart: true, canDelete: true },
+  ARCHIVED: { color: 'text-vscode-text', bgColor: 'bg-gray-600', icon: '◇', label: 'Archived', canOpen: true, canDelete: true },
+  STANDBY: { color: 'text-vscode-text', bgColor: 'bg-blue-600', icon: '◆', label: 'Standby', canOpen: true, canArchive: true, canDelete: true },
+  RUNNING: { color: 'text-vscode-success', bgColor: 'bg-green-600', icon: '●', label: 'Running', canOpen: true, canPause: true },
+  ERROR: { color: 'text-vscode-error', bgColor: 'bg-red-600', icon: '✕', label: 'Error', canRetry: true, canDelete: true },
   DELETING: { color: 'text-vscode-warning', bgColor: 'bg-yellow-600', icon: '◐', label: 'Deleting...', isTransition: true },
   DELETED: { color: 'text-gray-500', bgColor: 'bg-gray-800', icon: '○', label: 'Deleted' },
 

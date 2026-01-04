@@ -63,6 +63,7 @@ class WorkspaceResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     last_access_at: datetime | None  # 마지막 활동 시간
+    phase_changed_at: datetime | None  # phase 변경 시간 (TTL 계산용)
 
     model_config = {"from_attributes": True}
 

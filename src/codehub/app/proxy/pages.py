@@ -23,6 +23,15 @@ def starting_page(workspace: Workspace) -> RedirectResponse:
     )
 
 
+def restoring_page(workspace: Workspace) -> RedirectResponse:
+    """Redirect to restoring page for ARCHIVED workspace (auto-wake triggered)."""
+    params = f"id={workspace.id}&name={quote(workspace.name)}"
+    return RedirectResponse(
+        url=f"/static/proxy/restoring.html?{params}",
+        status_code=302,
+    )
+
+
 def archived_page(workspace: Workspace) -> RedirectResponse:
     """Redirect to archived page for ARCHIVED workspace."""
     params = f"name={quote(workspace.name)}"
