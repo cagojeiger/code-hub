@@ -528,6 +528,8 @@ class TestWCLoadWorkspaces:
         """WC-INT-007: operation != NONE 또는 phase != desired만 로드."""
         async with AsyncSession(test_db_engine) as session:
             # Converged workspace (should NOT be loaded)
+            # Note: RUNNING is always loaded (for external deletion check)
+            # So we use STANDBY to test true convergence
             ws1 = Workspace(
                 id="ws-converged",
                 owner_user_id=test_user.id,
@@ -536,9 +538,9 @@ class TestWCLoadWorkspaces:
                 instance_backend="docker",
                 storage_backend="s3",
                 home_store_key="codehub-ws-ws-converged-home",
-                phase="RUNNING",
+                phase="STANDBY",
                 operation="NONE",
-                desired_state="RUNNING",
+                desired_state="STANDBY",
                 conditions={},
                 created_at=datetime.now(UTC),
                 updated_at=datetime.now(UTC),
