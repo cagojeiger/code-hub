@@ -106,21 +106,25 @@ class TTLManager(CoordinatorBase):
 
         # Single bulk UPDATE using PostgreSQL unnest
         # Note: Use CAST() instead of :: to avoid conflict with SQLAlchemy named params
+        # RETURNING w.id: Only delete Redis keys for successfully updated workspaces
         result = await self._conn.execute(
             text("""
                 UPDATE workspaces AS w
                 SET last_access_at = v.ts
                 FROM unnest(CAST(:ids AS text[]), CAST(:timestamps AS timestamptz[])) AS v(id, ts)
                 WHERE w.id = v.id
+                RETURNING w.id
             """),
             {"ids": ws_ids, "timestamps": timestamps},
         )
 
-        # Delete Redis keys
-        await self._activity.delete(ws_ids)
+        # Only delete Redis keys for successfully updated workspaces
+        updated_ids = [row[0] for row in result.fetchall()]
+        if updated_ids:
+            await self._activity.delete(updated_ids)
 
-        logger.debug("[%s] Synced %d workspace activities to DB", self.name, len(activities))
-        return result.rowcount
+        logger.debug("[%s] Synced %d workspace activities to DB", self.name, len(updated_ids))
+        return len(updated_ids)
 
     async def _check_standby_ttl(self) -> int:
         """Check standby_ttl for RUNNING workspaces.

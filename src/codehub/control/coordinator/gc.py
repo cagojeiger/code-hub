@@ -161,8 +161,7 @@ class ArchiveGC(CoordinatorBase):
 
         Protection rules (Contract #9):
         1. Active workspaces: archive_key protected (deleted_at IS NULL)
-        2. ERROR state: protect both archive_key and op_id paths
-        3. Active workspaces: protect op_id paths (in-progress archiving)
+        2. Active workspaces: op_id path protected (includes ERROR state)
 
         Note: deleted_at != NULL -> archive_key, op_id 모두 보호 해제
         """
@@ -176,16 +175,7 @@ class ArchiveGC(CoordinatorBase):
 
                     UNION ALL
 
-                    -- ERROR state: op_id path protected
-                    SELECT :prefix || id || '/' || op_id || '/home.tar.zst' AS path
-                    FROM workspaces
-                    WHERE (conditions->'policy.healthy'->>'status') != 'True'
-                      AND op_id IS NOT NULL
-                      AND deleted_at IS NULL
-
-                    UNION ALL
-
-                    -- Active workspaces: op_id path protected (not deleted)
+                    -- Active workspaces: op_id path protected (includes ERROR state)
                     SELECT :prefix || id || '/' || op_id || '/home.tar.zst' AS path
                     FROM workspaces
                     WHERE deleted_at IS NULL

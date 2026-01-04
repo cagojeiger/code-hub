@@ -108,9 +108,9 @@ class TestSyncToDb:
         }
         mock_activity.scan_all.return_value = activities
 
-        # Mock bulk UPDATE result
+        # Mock bulk UPDATE result with RETURNING
         mock_result = MagicMock()
-        mock_result.rowcount = 2
+        mock_result.fetchall.return_value = [("ws-1",), ("ws-2",)]
         mock_conn.execute.return_value = mock_result
 
         count = await ttl_manager._sync_to_db()
@@ -118,7 +118,36 @@ class TestSyncToDb:
         assert count == 2
         # Should execute 1 bulk UPDATE statement (not N individual updates)
         assert mock_conn.execute.call_count == 1
-        # Should delete Redis keys
+        # Should delete Redis keys for updated workspaces only
+        mock_activity.delete.assert_called_once_with(["ws-1", "ws-2"])
+
+    async def test_partial_update_only_deletes_updated_ids(
+        self,
+        ttl_manager: TTLManager,
+        mock_conn: AsyncMock,
+        mock_activity: AsyncMock,
+    ):
+        """Only deletes Redis keys for successfully updated workspaces.
+
+        Scenario: ws-3 was modified by another coordinator (WC) between
+        Redis scan and DB update, so UPDATE doesn't match ws-3.
+        """
+        activities = {
+            "ws-1": 1704067200.0,
+            "ws-2": 1704067300.0,
+            "ws-3": 1704067400.0,  # This one will fail to update
+        }
+        mock_activity.scan_all.return_value = activities
+
+        # Mock: UPDATE only matches ws-1 and ws-2 (ws-3 was modified)
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("ws-1",), ("ws-2",)]
+        mock_conn.execute.return_value = mock_result
+
+        count = await ttl_manager._sync_to_db()
+
+        assert count == 2
+        # Should only delete successfully updated IDs (not ws-3)
         mock_activity.delete.assert_called_once_with(["ws-1", "ws-2"])
 
 

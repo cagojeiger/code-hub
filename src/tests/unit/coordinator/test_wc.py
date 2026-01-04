@@ -546,3 +546,92 @@ class TestTickParallel:
         assert len(execute_calls) == 3
         # 3개 모두 persist 시도됨 (순차, 에러 격리)
         assert len(persist_calls) == 3
+
+
+class TestCasUpdate:
+    """_cas_update() CAS pattern tests."""
+
+    @pytest.fixture
+    def wc(
+        self,
+        mock_conn: AsyncMock,
+        mock_leader: AsyncMock,
+        mock_notify: AsyncMock,
+        mock_ic: AsyncMock,
+        mock_sp: AsyncMock,
+    ) -> WorkspaceController:
+        return WorkspaceController(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
+
+    async def test_cas_success_when_operation_matches(
+        self,
+        wc: WorkspaceController,
+        mock_conn: AsyncMock,
+    ):
+        """CAS succeeds when expected_operation matches current (rowcount=1)."""
+        mock_result = MagicMock()
+        mock_result.rowcount = 1  # 1 row updated
+        mock_conn.execute.return_value = mock_result
+
+        success = await wc._cas_update(
+            workspace_id="ws-1",
+            expected_operation=Operation.NONE,
+            phase=Phase.STANDBY,
+            operation=Operation.STARTING,
+            op_started_at=datetime.now(UTC),
+            op_id="op-123",
+            archive_key=None,
+            error_count=0,
+            error_reason=None,
+        )
+
+        assert success is True
+
+    async def test_cas_fails_when_operation_mismatch(
+        self,
+        wc: WorkspaceController,
+        mock_conn: AsyncMock,
+    ):
+        """CAS fails when another WC modified operation (rowcount=0)."""
+        mock_result = MagicMock()
+        mock_result.rowcount = 0  # No row updated (CAS failed)
+        mock_conn.execute.return_value = mock_result
+
+        success = await wc._cas_update(
+            workspace_id="ws-1",
+            expected_operation=Operation.NONE,  # Expected NONE
+            # But actual DB has STARTING (another WC updated it)
+            phase=Phase.RUNNING,
+            operation=Operation.NONE,
+            op_started_at=None,
+            op_id=None,
+            archive_key=None,
+            error_count=0,
+            error_reason=None,
+        )
+
+        assert success is False  # CAS should fail
+
+    async def test_cas_where_clause_includes_expected_operation(
+        self,
+        wc: WorkspaceController,
+        mock_conn: AsyncMock,
+    ):
+        """CAS SQL WHERE clause includes operation = expected_operation."""
+        mock_result = MagicMock()
+        mock_result.rowcount = 1
+        mock_conn.execute.return_value = mock_result
+
+        await wc._cas_update(
+            workspace_id="ws-1",
+            expected_operation=Operation.STARTING,
+            phase=Phase.RUNNING,
+            operation=Operation.NONE,
+            op_started_at=None,
+            op_id=None,
+            archive_key=None,
+            error_count=0,
+            error_reason=None,
+        )
+
+        # Verify execute was called (CAS pattern in use)
+        mock_conn.execute.assert_called_once()

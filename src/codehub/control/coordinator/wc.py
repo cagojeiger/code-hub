@@ -89,7 +89,9 @@ class WorkspaceController(CoordinatorBase):
         - DB operations: Sequential (asyncpg single connection limit)
         - External operations (Docker/S3): Parallel for performance
         """
+        logger.info("[%s] tick() started", self.name)
         workspaces = await self._load_for_reconcile()  # DB (순차)
+        logger.info("[%s] loaded %d workspaces for reconcile", self.name, len(workspaces))
 
         # 1. Judge + Plan (순수 계산)
         plans: list[tuple[Workspace, PlanAction]] = []
@@ -103,7 +105,15 @@ class WorkspaceController(CoordinatorBase):
         ) -> tuple[Workspace, PlanAction]:
             if self._needs_execute(action, ws):
                 try:
-                    await self._execute(ws, action)
+                    await asyncio.wait_for(
+                        self._execute(ws, action),
+                        timeout=self.OPERATION_TIMEOUT,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "[%s] Operation %s timeout for ws=%s",
+                        self.name, action.operation, ws.id
+                    )
                 except Exception:
                     logger.exception("Failed to execute %s", ws.id)
             return (ws, action)

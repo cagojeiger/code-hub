@@ -19,10 +19,18 @@ class DockerJobRunner(JobRunner):
     - Network access to S3/MinIO
     """
 
-    def __init__(self, containers: ContainerAPI | None = None) -> None:
+    # Default timeout for container wait (5 minutes)
+    DEFAULT_TIMEOUT = 300
+
+    def __init__(
+        self,
+        containers: ContainerAPI | None = None,
+        timeout: int = DEFAULT_TIMEOUT,
+    ) -> None:
         settings = get_settings()
         self._config = settings.docker
         self._containers = containers or ContainerAPI()
+        self._timeout = timeout
 
     async def run_archive(
         self,
@@ -55,7 +63,7 @@ class DockerJobRunner(JobRunner):
             await self._containers.create(config)
             await self._containers.start(helper_name)
 
-            exit_code = await self._containers.wait(helper_name)
+            exit_code = await self._containers.wait(helper_name, timeout=self._timeout)
             logs = await self._containers.logs(helper_name)
 
             logger.info("Archive job %s completed with exit code %d", helper_name, exit_code)
@@ -95,7 +103,7 @@ class DockerJobRunner(JobRunner):
             await self._containers.create(config)
             await self._containers.start(helper_name)
 
-            exit_code = await self._containers.wait(helper_name)
+            exit_code = await self._containers.wait(helper_name, timeout=self._timeout)
             logs = await self._containers.logs(helper_name)
 
             logger.info("Restore job %s completed with exit code %d", helper_name, exit_code)

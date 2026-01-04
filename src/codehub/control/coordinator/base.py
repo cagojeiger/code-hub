@@ -177,7 +177,9 @@ class CoordinatorBase(ABC):
                 if not await self._ensure_leadership():
                     continue
                 await self._ensure_subscribed()
+                logger.info("[%s] run() loop: before _throttle()", self.name)
                 await self._throttle()
+                logger.info("[%s] run() loop: before _execute_tick()", self.name)
                 if not await self._execute_tick():
                     break
                 await self._wait_for_notify(self._get_interval())
@@ -219,6 +221,7 @@ class CoordinatorBase(ABC):
 
     async def _execute_tick(self) -> bool:
         """Execute tick. Returns False if cancelled."""
+        logger.info("[%s] _execute_tick() entering tick()", self.name)
         try:
             await self.tick()
             self._last_tick = time.time()
