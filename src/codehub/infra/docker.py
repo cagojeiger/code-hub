@@ -417,3 +417,66 @@ class VolumeAPI:
             return
         resp.raise_for_status()
         logger.info("Removed volume: %s", name)
+
+
+# =============================================================================
+# Image API
+# =============================================================================
+
+
+class ImageAPI:
+    """Docker Image API operations."""
+
+    def __init__(self, client: DockerClient | None = None) -> None:
+        self._docker = client or get_docker_client()
+
+    async def exists(self, image_ref: str) -> bool:
+        """Check if image exists locally.
+
+        Args:
+            image_ref: Image reference (e.g., "python:3.13-slim")
+
+        Returns:
+            True if image exists locally
+        """
+        client = await self._docker.get()
+        resp = await client.get(f"/images/{image_ref}/json")
+        return resp.status_code == 200
+
+    async def pull(self, image_ref: str) -> None:
+        """Pull image from registry.
+
+        Args:
+            image_ref: Image reference (e.g., "python:3.13-slim")
+
+        Note:
+            Uses streaming endpoint. Docker API returns chunked JSON progress.
+        """
+        client = await self._docker.get()
+
+        # Parse image:tag
+        if ":" in image_ref:
+            image, tag = image_ref.rsplit(":", 1)
+        else:
+            image, tag = image_ref, "latest"
+
+        logger.info("Pulling image: %s:%s", image, tag)
+
+        # POST /images/create?fromImage=xxx&tag=yyy
+        # This is a streaming endpoint, read until complete
+        resp = await client.post(
+            "/images/create",
+            params={"fromImage": image, "tag": tag},
+            timeout=600.0,  # 10 minutes for large images
+        )
+        resp.raise_for_status()
+        logger.info("Pulled image: %s:%s", image, tag)
+
+    async def ensure(self, image_ref: str) -> None:
+        """Ensure image exists locally, pull if not.
+
+        Args:
+            image_ref: Image reference (e.g., "python:3.13-slim")
+        """
+        if not await self.exists(image_ref):
+            await self.pull(image_ref)

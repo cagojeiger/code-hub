@@ -8,6 +8,7 @@ from codehub.infra.docker import (
     ContainerAPI,
     ContainerConfig,
     HostConfig,
+    ImageAPI,
 )
 
 logger = logging.getLogger(__name__)
@@ -19,10 +20,12 @@ class DockerInstanceController(InstanceController):
     def __init__(
         self,
         containers: ContainerAPI | None = None,
+        images: ImageAPI | None = None,
     ) -> None:
         settings = get_settings()
         self._config = settings.docker
         self._containers = containers or ContainerAPI()
+        self._images = images or ImageAPI()
 
     def _container_name(self, workspace_id: str) -> str:
         return f"{self._config.resource_prefix}{workspace_id}"
@@ -66,10 +69,14 @@ class DockerInstanceController(InstanceController):
             logger.info("Started existing container: %s", container_name)
             return
 
+        # Ensure image exists (auto-pull if not)
+        image = image_ref or self._config.default_image
+        await self._images.ensure(image)
+
         # Create new container with full configuration
         port = self._config.container_port
         config = ContainerConfig(
-            image=image_ref or self._config.default_image,
+            image=image,
             name=container_name,
             cmd=["--auth", "none", "--bind-addr", f"0.0.0.0:{port}"],
             user=f"{self._config.coder_uid}:{self._config.coder_gid}",

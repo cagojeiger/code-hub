@@ -48,6 +48,7 @@ class PlanAction(BaseModel):
     archive_key: str | None = None
     op_id: str | None = None
     complete: bool = False  # operation 완료 여부
+    restore_marker: str | None = None  # restore 완료 확인용 marker
 
 
 class WorkspaceController(CoordinatorBase):
@@ -249,6 +250,9 @@ class WorkspaceController(CoordinatorBase):
             case Operation.PROVISIONING:
                 return cond.volume_ready
             case Operation.RESTORING:
+                # Backward compatible: marker 있으면 추가 검증
+                if ws.home_ctx and ws.home_ctx.get("restore_marker"):
+                    return cond.volume_ready and ws.home_ctx["restore_marker"] == ws.archive_key
                 return cond.volume_ready
             case Operation.STARTING:
                 return cond.container_ready
@@ -337,6 +341,7 @@ class WorkspaceController(CoordinatorBase):
             case Operation.RESTORING:
                 if ws.archive_key:
                     await self._sp.restore(ws.id, ws.archive_key)
+                    action.restore_marker = ws.archive_key  # 완료 확인용 marker
 
             case Operation.STARTING:
                 await self._ic.start(ws.id, ws.image_ref)
@@ -392,6 +397,12 @@ class WorkspaceController(CoordinatorBase):
         else:
             error_count = ws.error_count
 
+        # home_ctx 업데이트 (restore_marker 저장)
+        home_ctx: dict | None = None
+        if action.restore_marker:
+            home_ctx = dict(ws.home_ctx) if ws.home_ctx else {}
+            home_ctx["restore_marker"] = action.restore_marker
+
         success = await self._cas_update(
             workspace_id=ws.id,
             expected_operation=Operation(ws_op),
@@ -402,6 +413,7 @@ class WorkspaceController(CoordinatorBase):
             archive_key=action.archive_key,
             error_count=error_count,
             error_reason=action.error_reason,
+            home_ctx=home_ctx,
             updated_at=now,
         )
         # Commit at connection level
@@ -452,6 +464,7 @@ class WorkspaceController(CoordinatorBase):
         archive_key: str | None,
         error_count: int,
         error_reason: ErrorReason | None,
+        home_ctx: dict | None = None,
         updated_at: datetime | None = None,
     ) -> bool:
         """CAS update for WC-owned columns.
@@ -476,6 +489,10 @@ class WorkspaceController(CoordinatorBase):
         # Only update archive_key if provided
         if archive_key is not None:
             values["archive_key"] = archive_key
+
+        # Only update home_ctx if provided (restore_marker 저장용)
+        if home_ctx is not None:
+            values["home_ctx"] = home_ctx
 
         stmt = (
             update(Workspace)
