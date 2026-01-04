@@ -168,9 +168,10 @@ async def _run_coordinators() -> None:
 
         Reference: docs/architecture_v2/ttl-manager.md
         """
+        ACTIVITY_FLUSH_INTERVAL_SEC = 30
         buffer = get_activity_buffer()
         while True:
-            await asyncio.sleep(30)
+            await asyncio.sleep(ACTIVITY_FLUSH_INTERVAL_SEC)
             try:
                 count = await buffer.flush(activity_store)
                 if count > 0:
@@ -183,7 +184,7 @@ async def _run_coordinators() -> None:
             make_runner(ObserverCoordinator, ic, sp)(),
             make_runner(WorkspaceController, ic, sp)(),
             make_runner(TTLManager, activity_store, wake_publisher)(),
-            make_runner(ArchiveGC)(),
+            make_runner(ArchiveGC, sp)(),
             event_listener_runner(),
             activity_buffer_flush_loop(),
         )

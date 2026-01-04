@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from codehub.app.config import get_settings
 from codehub.core.errors import TooManyRequestsError, UnauthorizedError
 from codehub.core.security import calculate_lockout_duration, verify_password
 from codehub.infra import get_session
@@ -21,6 +22,8 @@ from codehub.core.models import User
 from codehub.services.session_service import SessionService
 
 router = APIRouter(tags=["auth"])
+
+_settings = get_settings()
 
 
 class LoginRequest(BaseModel):
@@ -103,7 +106,7 @@ async def login(
         value=session.id,
         httponly=True,
         samesite="lax",
-        secure=False,  # TODO: Set to True in production
+        secure=_settings.cookie.secure,
         path="/",
         max_age=SessionService.DEFAULT_SESSION_TTL_SECONDS,
     )

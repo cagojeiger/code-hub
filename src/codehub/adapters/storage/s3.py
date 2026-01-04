@@ -8,6 +8,8 @@ Implements Spec-v2 Storage Job for archive/restore operations:
 
 import logging
 from collections import defaultdict
+from collections.abc import AsyncIterator
+from typing import Any
 
 from botocore.exceptions import ClientError
 
@@ -22,6 +24,23 @@ from codehub.core.interfaces import (
 from codehub.infra import get_s3_client
 
 logger = logging.getLogger(__name__)
+
+
+async def _paginate_objects(bucket: str, prefix: str) -> AsyncIterator[dict[str, Any]]:
+    """Paginate S3 list_objects_v2 and yield each object.
+
+    Args:
+        bucket: S3 bucket name
+        prefix: Object key prefix
+
+    Yields:
+        S3 object dicts with Key, LastModified, etc.
+    """
+    async with get_s3_client() as s3:
+        paginator = s3.get_paginator("list_objects_v2")
+        async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                yield obj
 
 
 class S3StorageProvider(StorageProvider):
@@ -93,36 +112,29 @@ class S3StorageProvider(StorageProvider):
         # workspace_id -> list of (archive_key, last_modified)
         workspace_archives: dict[str, list[tuple[str, str]]] = defaultdict(list)
 
-        async with get_s3_client() as s3:
-            try:
-                # 1 query: list all objects with prefix (paginated)
-                paginator = s3.get_paginator("list_objects_v2")
-                async for page in paginator.paginate(
-                    Bucket=settings.storage.bucket_name,
-                    Prefix=prefix,
-                ):
-                    for obj in page.get("Contents", []):
-                        key = obj.get("Key", "")
-                        # Filter for home.tar.zst files
-                        if not key.endswith("/home.tar.zst"):
-                            continue
+        try:
+            async for obj in _paginate_objects(settings.storage.bucket_name, prefix):
+                key = obj.get("Key", "")
+                # Filter for home.tar.zst files
+                if not key.endswith("/home.tar.zst"):
+                    continue
 
-                        # Extract workspace_id from key: ws-{workspace_id}/{op_id}/home.tar.zst
-                        parts = key.split("/")
-                        if len(parts) < 3:
-                            continue
+                # Extract workspace_id from key: ws-{workspace_id}/{op_id}/home.tar.zst
+                parts = key.split("/")
+                if len(parts) < 3:
+                    continue
 
-                        ws_prefix_part = parts[0]  # ws-{workspace_id}
-                        if not ws_prefix_part.startswith(prefix):
-                            continue
+                ws_prefix_part = parts[0]  # ws-{workspace_id}
+                if not ws_prefix_part.startswith(prefix):
+                    continue
 
-                        workspace_id = ws_prefix_part[len(prefix) :]
-                        last_modified = obj.get("LastModified", "")
-                        workspace_archives[workspace_id].append((key, last_modified))
+                workspace_id = ws_prefix_part[len(prefix) :]
+                last_modified = obj.get("LastModified", "")
+                workspace_archives[workspace_id].append((key, last_modified))
 
-            except ClientError as e:
-                logger.error("Failed to list archives: %s", e)
-                return results
+        except ClientError as e:
+            logger.error("Failed to list archives: %s", e)
+            return results
 
         # Find latest archive per workspace (in memory)
         for workspace_id, archives in workspace_archives.items():
@@ -143,6 +155,26 @@ class S3StorageProvider(StorageProvider):
             )
 
         return results
+
+    async def list_all_archive_keys(self, prefix: str) -> set[str]:
+        """List all archive keys with given prefix.
+
+        Returns all archive keys for GC (not just latest per workspace).
+        """
+        settings = get_settings()
+        archive_keys: set[str] = set()
+
+        try:
+            async for obj in _paginate_objects(settings.storage.bucket_name, prefix):
+                key = obj.get("Key", "")
+                # Filter for home.tar.zst files (not .meta)
+                if key.endswith("/home.tar.zst"):
+                    archive_keys.add(key)
+
+        except ClientError as e:
+            logger.error("Failed to list all archives: %s", e)
+
+        return archive_keys
 
     async def provision(self, workspace_id: str) -> None:
         """Create new volume for workspace."""
@@ -258,6 +290,34 @@ class S3StorageProvider(StorageProvider):
 
         logger.info("Created empty archive: %s", archive_key)
         return archive_key
+
+    async def delete_archive(self, archive_key: str) -> bool:
+        """Delete archive and meta file from S3.
+
+        Args:
+            archive_key: Full archive path (e.g., "ws-xxx/op-id/home.tar.zst")
+
+        Returns:
+            True if deleted successfully
+        """
+        settings = get_settings()
+
+        try:
+            async with get_s3_client() as s3:
+                await s3.delete_objects(
+                    Bucket=settings.storage.bucket_name,
+                    Delete={
+                        "Objects": [
+                            {"Key": archive_key},
+                            {"Key": f"{archive_key}.meta"},
+                        ],
+                    },
+                )
+            logger.debug("Deleted archive: %s", archive_key)
+            return True
+        except ClientError as e:
+            logger.warning("Failed to delete archive %s: %s", archive_key, e)
+            return False
 
     async def close(self) -> None:
         """Close is no-op (Docker client is singleton)."""

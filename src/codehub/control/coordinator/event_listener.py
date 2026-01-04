@@ -43,6 +43,9 @@ class EventListener:
     # Advisory lock key (consistent across all instances)
     LOCK_KEY = "event_listener"
 
+    # Interval for leader acquisition retry
+    LEADER_WAIT_INTERVAL_SEC = 5
+
     def __init__(
         self,
         database_url: str,
@@ -88,7 +91,7 @@ class EventListener:
         try:
             # Wait for leadership
             while self._running and not await leader.try_acquire():
-                await asyncio.sleep(5)
+                await asyncio.sleep(self.LEADER_WAIT_INTERVAL_SEC)
 
             if not self._running:
                 return

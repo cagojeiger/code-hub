@@ -65,25 +65,17 @@ _settings = get_settings()
 _docker_config = _settings.docker
 _limits_config = _settings.limits
 
-# Dummy mode for testing (set DUMMY_MODE=True to use dummy-codeserver)
-DUMMY_MODE = False
-DUMMY_HOSTNAME = "codehub-dummy-codeserver"
-
 
 def _get_container_hostname(workspace_id: str) -> str:
     """Get container hostname for workspace.
 
     TODO: InstanceController.resolve_upstream() 구현 후 대체
     """
-    if DUMMY_MODE:
-        return DUMMY_HOSTNAME
     return f"{_docker_config.resource_prefix}{workspace_id}"
 
 
-def _get_container_port(workspace_id: str) -> int:
+def _get_container_port() -> int:
     """Get container port for workspace."""
-    if DUMMY_MODE:
-        return _docker_config.container_port
     return _docker_config.container_port
 
 
@@ -115,34 +107,33 @@ async def proxy_http(
 ) -> StreamingResponse | RedirectResponse:
     """Proxy HTTP requests to workspace container."""
     # Authenticate user and verify workspace ownership
-    if not DUMMY_MODE:
-        user_id = await get_user_id_from_session(db, session)
-        workspace = await get_workspace_for_user(db, workspace_id, user_id)
+    user_id = await get_user_id_from_session(db, session)
+    workspace = await get_workspace_for_user(db, workspace_id, user_id)
 
-        # Phase check (spec_v2/02-states.md: Proxy behavior by phase)
-        if workspace.phase == Phase.RUNNING.value:
-            # Normal proxy - continue below
-            pass
-        elif workspace.phase == Phase.STANDBY.value:
-            # Auto-wake (STANDBY only)
-            if workspace.desired_state != DesiredState.RUNNING.value:
-                # Check running limit
-                running_count = await count_running_workspaces(db, user_id)
-                if running_count >= _limits_config.max_running_per_user:
-                    running_workspaces = await list_running_workspaces(db, user_id)
-                    return limit_exceeded_page(
-                        running_workspaces, _limits_config.max_running_per_user
-                    )
-                # Trigger wake (DB trigger -> EventListener -> Redis PUBLISH)
-                await set_desired_state(db, workspace_id, DesiredState.RUNNING)
-            # Return starting page (SSE-based auto-refresh)
-            return starting_page(workspace)
-        elif workspace.phase == Phase.ARCHIVED.value:
-            # 502 + restore needed (no auto-wake)
-            return archived_page(workspace)
-        else:
-            # PENDING, ERROR, DELETED, etc -> 502 + status page
-            return error_page(workspace)
+    # Phase check (spec_v2/02-states.md: Proxy behavior by phase)
+    if workspace.phase == Phase.RUNNING.value:
+        # Normal proxy - continue below
+        pass
+    elif workspace.phase == Phase.STANDBY.value:
+        # Auto-wake (STANDBY only)
+        if workspace.desired_state != DesiredState.RUNNING.value:
+            # Check running limit
+            running_count = await count_running_workspaces(db, user_id)
+            if running_count >= _limits_config.max_running_per_user:
+                running_workspaces = await list_running_workspaces(db, user_id)
+                return limit_exceeded_page(
+                    running_workspaces, _limits_config.max_running_per_user
+                )
+            # Trigger wake (DB trigger -> EventListener -> Redis PUBLISH)
+            await set_desired_state(db, workspace_id, DesiredState.RUNNING)
+        # Return starting page (SSE-based auto-refresh)
+        return starting_page(workspace)
+    elif workspace.phase == Phase.ARCHIVED.value:
+        # 502 + restore needed (no auto-wake)
+        return archived_page(workspace)
+    else:
+        # PENDING, ERROR, DELETED, etc -> 502 + status page
+        return error_page(workspace)
 
     # Record activity for TTL tracking
     get_activity_buffer().record(workspace_id)
@@ -150,7 +141,7 @@ async def proxy_http(
     # Resolve upstream
     # TODO: InstanceController 사용
     hostname = _get_container_hostname(workspace_id)
-    port = _get_container_port(workspace_id)
+    port = _get_container_port()
     upstream_url = f"http://{hostname}:{port}"
 
     # Build target URL
@@ -214,26 +205,25 @@ async def proxy_websocket(
 ) -> None:
     """Proxy WebSocket connections to workspace container."""
     # Authenticate user and verify workspace ownership
-    if not DUMMY_MODE:
-        session_cookie = websocket.cookies.get("session")
-        try:
-            user_id = await get_user_id_from_session(db, session_cookie)
-            workspace = await get_workspace_for_user(db, workspace_id, user_id)
-        except UnauthorizedError:
-            await websocket.close(code=1008, reason="Authentication required")
-            return
-        except ForbiddenError:
-            await websocket.close(code=1008, reason="Access denied")
-            return
-        except WorkspaceNotFoundError:
-            await websocket.close(code=1008, reason="Workspace not found")
-            return
+    session_cookie = websocket.cookies.get("session")
+    try:
+        user_id = await get_user_id_from_session(db, session_cookie)
+        workspace = await get_workspace_for_user(db, workspace_id, user_id)
+    except UnauthorizedError:
+        await websocket.close(code=1008, reason="Authentication required")
+        return
+    except ForbiddenError:
+        await websocket.close(code=1008, reason="Access denied")
+        return
+    except WorkspaceNotFoundError:
+        await websocket.close(code=1008, reason="Workspace not found")
+        return
 
-        # Phase check - WebSocket only works for RUNNING workspaces
-        # Non-RUNNING states are handled by HTTP endpoint (returns HTML pages)
-        if workspace.phase != Phase.RUNNING.value:
-            await websocket.close(code=1008, reason="Workspace not running")
-            return
+    # Phase check - WebSocket only works for RUNNING workspaces
+    # Non-RUNNING states are handled by HTTP endpoint (returns HTML pages)
+    if workspace.phase != Phase.RUNNING.value:
+        await websocket.close(code=1008, reason="Workspace not running")
+        return
 
     # Record activity for TTL tracking
     get_activity_buffer().record(workspace_id)
@@ -241,7 +231,7 @@ async def proxy_websocket(
     # Resolve upstream
     # TODO: InstanceController 사용
     hostname = _get_container_hostname(workspace_id)
-    port = _get_container_port(workspace_id)
+    port = _get_container_port()
 
     # Build WebSocket URI with query string
     target_path = f"/{path}" if path else "/"

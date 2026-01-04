@@ -155,6 +155,13 @@ class CoordinatorBase(ABC):
     def _get_interval(self) -> float:
         return self.ACTIVE_INTERVAL if self.is_active else self.IDLE_INTERVAL
 
+    async def _safe_rollback(self) -> None:
+        """Rollback transaction, logging any errors."""
+        try:
+            await self._conn.rollback()
+        except Exception as e:
+            logger.warning("[%s] Rollback failed: %s", self.name, e)
+
     @abstractmethod
     async def tick(self) -> None:
         """Execute one reconciliation cycle."""
@@ -187,11 +194,7 @@ class CoordinatorBase(ABC):
             acquired = await self._leader.try_acquire()
         except Exception as e:
             logger.warning("[%s] Error acquiring leadership: %s", self.name, e)
-            # Rollback to recover from failed transaction state
-            try:
-                await self._conn.rollback()
-            except Exception:
-                pass
+            await self._safe_rollback()
             acquired = False
 
         if not acquired:
@@ -224,11 +227,7 @@ class CoordinatorBase(ABC):
             return False
         except Exception as e:
             logger.exception("[%s] Error in tick: %s", self.name, e)
-            # Rollback to recover from failed transaction state (e.g., SQL error)
-            try:
-                await self._conn.rollback()
-            except Exception:
-                pass  # Ignore rollback error (connection may be dead)
+            await self._safe_rollback()
             self._last_tick = time.time()
             return True
 

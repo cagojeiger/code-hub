@@ -66,6 +66,14 @@ class LimitsConfig(BaseSettings):
     max_running_per_user: int = Field(default=2)
 
 
+class CookieConfig(BaseSettings):
+    """Cookie configuration for session management."""
+
+    model_config = SettingsConfigDict(env_prefix="COOKIE_")
+
+    secure: bool = Field(default=False)  # Set True in production (HTTPS)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CODEHUB_",
@@ -78,6 +86,7 @@ class Settings(BaseSettings):
     docker: DockerConfig = Field(default_factory=DockerConfig)
     ttl: TtlConfig = Field(default_factory=TtlConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
+    cookie: CookieConfig = Field(default_factory=CookieConfig)
 
 
 @lru_cache

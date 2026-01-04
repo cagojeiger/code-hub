@@ -136,11 +136,14 @@ async def _event_generator(
                         # Workspace updated - fetch full data
                         workspace = await _get_workspace_by_id(workspace_id)
                         if workspace:
-                            # Deduplication check
+                            # Deduplication check (includes metadata fields)
                             current_state = (
                                 workspace.phase,
                                 workspace.operation,
                                 workspace.error_reason,
+                                workspace.name,
+                                workspace.description,
+                                workspace.memo,
                             )
                             if last_sent_state.get(workspace_id) == current_state:
                                 continue
