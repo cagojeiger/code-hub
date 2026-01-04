@@ -21,6 +21,7 @@ import logging
 import psycopg
 import redis.asyncio as redis
 
+from codehub.control.coordinator.base import LeaderElection
 from codehub.infra.redis import NotifyPublisher, SSEStreamPublisher
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,7 @@ class EventListener:
 
         This method blocks until stop() is called or cancelled.
         Uses psycopg3's notifies() generator for native notification support.
-        Uses PostgreSQL Advisory Lock for leader election.
+        Uses unified LeaderElection for leader election.
         """
         self._running = True
 
@@ -81,19 +82,16 @@ class EventListener:
         )
         logger.info("[%s] Connected to PostgreSQL", self._log_prefix)
 
-        try:
-            # Leader election using PostgreSQL Advisory Lock
-            is_leader = await self._try_acquire_lock(aconn)
+        # Use unified LeaderElection (supports both SQLAlchemy and psycopg)
+        leader = LeaderElection(aconn, self.LOCK_KEY)
 
-            if not is_leader:
-                logger.info("[%s] Not leader, waiting...", self._log_prefix)
-                while self._running:
-                    await asyncio.sleep(5)
-                    if await self._try_acquire_lock(aconn):
-                        logger.info("[%s] Became leader", self._log_prefix)
-                        break
-                else:
-                    return
+        try:
+            # Wait for leadership
+            while self._running and not await leader.try_acquire():
+                await asyncio.sleep(5)
+
+            if not self._running:
+                return
 
             # Subscribe to channels using SQL LISTEN (leader only)
             await aconn.execute(f"LISTEN {self.CHANNEL_SSE}")
@@ -120,17 +118,6 @@ class EventListener:
         finally:
             await aconn.close()
             logger.info("[%s] Stopped", self._log_prefix)
-
-    async def _try_acquire_lock(self, aconn: psycopg.AsyncConnection) -> bool:
-        """Try to acquire PostgreSQL Advisory Lock.
-
-        Returns True if lock acquired (this instance is the leader).
-        """
-        result = await aconn.execute(
-            f"SELECT pg_try_advisory_lock(hashtext('{self.LOCK_KEY}'))"
-        )
-        row = await result.fetchone()
-        return row[0] if row else False
 
     async def _dispatch(self, channel: str, payload: str) -> None:
         """Dispatch event to appropriate handler."""

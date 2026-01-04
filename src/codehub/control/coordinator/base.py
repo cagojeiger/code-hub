@@ -6,12 +6,16 @@ import time
 from abc import ABC, abstractmethod
 from enum import StrEnum
 
+import psycopg
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from codehub.infra.redis import NotifySubscriber, WakeTarget
 
 logger = logging.getLogger(__name__)
+
+# Type alias for both connection types
+ConnType = SAConnection | psycopg.AsyncConnection
 
 
 class CoordinatorType(StrEnum):
@@ -24,11 +28,20 @@ class CoordinatorType(StrEnum):
 
 
 class LeaderElection:
-    """Leader election using PostgreSQL session-level advisory lock."""
+    """Leader election using PostgreSQL session-level advisory lock.
 
-    def __init__(self, conn: AsyncConnection, coordinator_type: CoordinatorType) -> None:
+    Supports both SQLAlchemy and psycopg3 connections.
+    """
+
+    def __init__(self, conn: ConnType, lock_key: str) -> None:
+        """Initialize leader election.
+
+        Args:
+            conn: SQLAlchemy AsyncConnection or psycopg3 AsyncConnection.
+            lock_key: Unique key for the advisory lock (e.g., coordinator type).
+        """
         self._conn = conn
-        self._coordinator_type = coordinator_type
+        self._lock_key = str(lock_key)  # Convert enum to str if needed
         self._is_leader = False
         self._was_leader = False
 
@@ -38,29 +51,41 @@ class LeaderElection:
 
     async def try_acquire(self) -> bool:
         """Try to acquire leadership (non-blocking). Logs only on state change."""
-        result = await self._conn.execute(
-            text("SELECT pg_try_advisory_lock(hashtext(:lock_name))"),
-            {"lock_name": str(self._coordinator_type)},
-        )
-        row = result.fetchone()
+        query = f"SELECT pg_try_advisory_lock(hashtext('{self._lock_key}'))"
+
+        if isinstance(self._conn, psycopg.AsyncConnection):
+            # psycopg3 path (async fetchone)
+            result = await self._conn.execute(query)
+            row = await result.fetchone()
+        else:
+            # SQLAlchemy path (sync fetchone)
+            result = await self._conn.execute(text(query))
+            row = result.fetchone()
+
         self._is_leader = row[0] if row else False
 
         if self._is_leader and not self._was_leader:
-            logger.info("Acquired leadership (coordinator=%s)", self._coordinator_type)
+            logger.info("Acquired leadership (lock=%s)", self._lock_key)
         elif not self._is_leader and self._was_leader:
-            logger.warning("Lost leadership (coordinator=%s)", self._coordinator_type)
+            logger.warning("Lost leadership (lock=%s)", self._lock_key)
 
         self._was_leader = self._is_leader
         return self._is_leader
 
     async def release(self) -> None:
-        if self._is_leader:
-            await self._conn.execute(
-                text("SELECT pg_advisory_unlock(hashtext(:lock_name))"),
-                {"lock_name": str(self._coordinator_type)},
-            )
-            self._is_leader = False
-            logger.info("Released leadership (coordinator=%s)", self._coordinator_type)
+        """Release leadership lock."""
+        if not self._is_leader:
+            return
+
+        query = f"SELECT pg_advisory_unlock(hashtext('{self._lock_key}'))"
+
+        if isinstance(self._conn, psycopg.AsyncConnection):
+            await self._conn.execute(query)
+        else:
+            await self._conn.execute(text(query))
+
+        self._is_leader = False
+        logger.info("Released leadership (lock=%s)", self._lock_key)
 
 
 class CoordinatorBase(ABC):
@@ -102,7 +127,7 @@ class CoordinatorBase(ABC):
 
     def __init__(
         self,
-        conn: AsyncConnection,
+        conn: SAConnection,
         leader: LeaderElection,
         notify: NotifySubscriber,
     ) -> None:
