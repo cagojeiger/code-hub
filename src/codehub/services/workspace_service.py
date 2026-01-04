@@ -15,6 +15,12 @@ from codehub.core.models import Workspace
 _settings = get_settings()
 
 
+class RunningLimitExceededError(Exception):
+    """사용자의 동시 실행 워크스페이스 한도 초과."""
+
+    pass
+
+
 async def create_workspace(
     db: AsyncSession,
     user_id: str,
@@ -55,6 +61,7 @@ async def create_workspace(
         desired_state=DesiredState.RUNNING.value,
         created_at=now,
         updated_at=now,
+        last_access_at=now,  # TTL 규칙 적용 위해 생성 시점 설정
     )
 
     db.add(workspace)
@@ -266,3 +273,61 @@ async def set_desired_state(
     workspace.updated_at = datetime.now(UTC)
 
     await db.commit()
+
+
+async def _can_start_workspace(db: AsyncSession, user_id: str) -> bool:
+    """Check if user can start a new workspace.
+
+    Args:
+        db: Database session
+        user_id: Owner user ID
+
+    Returns:
+        True if user hasn't exceeded running limit
+    """
+    count = await count_running_workspaces(db, user_id)
+    return count < _settings.limits.max_running_per_user
+
+
+async def request_start(
+    db: AsyncSession,
+    workspace_id: str,
+    user_id: str,
+) -> Workspace:
+    """Request to start a workspace - single entry point.
+
+    All start paths (API, Proxy) must go through this function.
+    - Idempotent: returns workspace if already starting
+    - Raises RunningLimitExceededError if limit exceeded
+
+    Args:
+        db: Database session
+        workspace_id: Workspace ID
+        user_id: Owner user ID (for verification)
+
+    Returns:
+        Workspace with desired_state=RUNNING
+
+    Raises:
+        WorkspaceNotFoundError: If workspace not found
+        ForbiddenError: If user doesn't own the workspace
+        RunningLimitExceededError: If running limit exceeded
+    """
+    workspace = await get_workspace(db, workspace_id, user_id)
+
+    # Idempotent: already starting
+    if workspace.desired_state == DesiredState.RUNNING.value:
+        return workspace
+
+    # Check running limit
+    if not await _can_start_workspace(db, user_id):
+        raise RunningLimitExceededError()
+
+    # Update desired_state
+    workspace.desired_state = DesiredState.RUNNING.value
+    workspace.updated_at = datetime.now(UTC)
+
+    await db.commit()
+    await db.refresh(workspace)
+
+    return workspace

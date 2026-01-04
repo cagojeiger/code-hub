@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from codehub.app.config import get_settings
-from codehub.core.domain import DesiredState, Phase
+from codehub.core.domain import Phase
 from codehub.core.errors import (
     ForbiddenError,
     UnauthorizedError,
@@ -30,9 +30,9 @@ from codehub.core.errors import (
 )
 from codehub.infra import get_session
 from codehub.services.workspace_service import (
-    count_running_workspaces,
     list_running_workspaces,
-    set_desired_state,
+    request_start,
+    RunningLimitExceededError,
 )
 
 from .activity import get_activity_buffer
@@ -115,18 +115,15 @@ async def proxy_http(
         # Normal proxy - continue below
         pass
     elif workspace.phase == Phase.STANDBY.value:
-        # Auto-wake (STANDBY only)
-        if workspace.desired_state != DesiredState.RUNNING.value:
-            # Check running limit
-            running_count = await count_running_workspaces(db, user_id)
-            if running_count >= _limits_config.max_running_per_user:
-                running_workspaces = await list_running_workspaces(db, user_id)
-                return limit_exceeded_page(
-                    running_workspaces, _limits_config.max_running_per_user
-                )
-            # Trigger wake (DB trigger -> EventListener -> Redis PUBLISH)
-            await set_desired_state(db, workspace_id, DesiredState.RUNNING)
-        # Return starting page (SSE-based auto-refresh)
+        # Auto-wake (STANDBY only) - use request_start() single entry point
+        try:
+            await request_start(db, workspace_id, user_id)
+        except RunningLimitExceededError:
+            running_workspaces = await list_running_workspaces(db, user_id)
+            return limit_exceeded_page(
+                running_workspaces, _limits_config.max_running_per_user
+            )
+        # Return starting page (polling-based auto-refresh)
         return starting_page(workspace)
     elif workspace.phase == Phase.ARCHIVED.value:
         # 502 + restore needed (no auto-wake)
