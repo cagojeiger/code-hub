@@ -215,7 +215,12 @@ export function getFilteredWorkspaces() {
       filtered.sort((a, b) => a.name.localeCompare(b.name));
       break;
     case 'recent':
-      filtered.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+      // Sort by last_access_at (fallback to updated_at)
+      filtered.sort((a, b) => {
+        const aTime = a.last_access_at || a.updated_at;
+        const bTime = b.last_access_at || b.updated_at;
+        return new Date(bTime) - new Date(aTime);
+      });
       break;
     case 'status':
     default:
