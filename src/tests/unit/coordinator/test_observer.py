@@ -1,9 +1,6 @@
-"""Tests for BulkObserver and ObserverCoordinator.
+"""Tests for Observer Coordinator."""
 
-Reference: docs/architecture_v2/wc-observer.md
-"""
-
-from datetime import UTC, datetime
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,12 +8,11 @@ import pytest
 from codehub.control.coordinator.base import LeaderElection, NotifySubscriber
 from codehub.control.coordinator.observer import BulkObserver, ObserverCoordinator
 from codehub.core.interfaces.instance import ContainerInfo, InstanceController
-from codehub.core.interfaces.storage import ArchiveInfo, StorageProvider, VolumeInfo
+from codehub.core.interfaces.storage import StorageProvider, VolumeInfo
 
 
 @pytest.fixture
 def mock_ic() -> AsyncMock:
-    """Mock InstanceController."""
     ic = AsyncMock(spec=InstanceController)
     ic.list_all = AsyncMock(return_value=[])
     return ic
@@ -24,267 +20,60 @@ def mock_ic() -> AsyncMock:
 
 @pytest.fixture
 def mock_sp() -> AsyncMock:
-    """Mock StorageProvider."""
     sp = AsyncMock(spec=StorageProvider)
     sp.list_volumes = AsyncMock(return_value=[])
     sp.list_archives = AsyncMock(return_value=[])
     return sp
 
 
-class TestBulkObserverObserveAll:
-    """BulkObserver.observe_all() 테스트."""
+class TestBulkObserver:
+    """병렬 API 호출 테스트."""
 
-    async def test_obs_001_empty_resources_returns_empty(
-        self, mock_ic: AsyncMock, mock_sp: AsyncMock
-    ):
-        """OBS-001: 빈 리소스 → 빈 dict."""
+    async def test_empty_returns_empty_dicts(self, mock_ic: AsyncMock, mock_sp: AsyncMock):
         observer = BulkObserver(mock_ic, mock_sp)
+        containers, volumes, archives = await observer.observe_all()
+        assert containers == {}
+        assert volumes == {}
+        assert archives == {}
 
-        result = await observer.observe_all()
-
-        assert result == {}
-
-    async def test_obs_002_container_only(
-        self, mock_ic: AsyncMock, mock_sp: AsyncMock
-    ):
-        """OBS-002: container만 존재 → volume/archive는 None."""
-        mock_ic.list_all.return_value = [
-            ContainerInfo(
-                workspace_id="ws-1",
-                running=True,
-                reason="Running",
-                message="Up 5 minutes",
-            )
-        ]
-        observer = BulkObserver(mock_ic, mock_sp)
-
-        result = await observer.observe_all()
-
-        assert "ws-1" in result
-        assert result["ws-1"]["container"]["running"] is True
-        assert result["ws-1"]["container"]["reason"] == "Running"
-        assert result["ws-1"]["volume"] is None
-        assert result["ws-1"]["archive"] is None
-
-    async def test_obs_003_volume_only(
-        self, mock_ic: AsyncMock, mock_sp: AsyncMock
-    ):
-        """OBS-003: volume만 존재."""
-        mock_sp.list_volumes.return_value = [
-            VolumeInfo(
-                workspace_id="ws-1",
-                exists=True,
-                reason="VolumeExists",
-                message="Volume ws-1-home exists",
-            )
-        ]
-        observer = BulkObserver(mock_ic, mock_sp)
-
-        result = await observer.observe_all()
-
-        assert "ws-1" in result
-        assert result["ws-1"]["container"] is None
-        assert result["ws-1"]["volume"]["exists"] is True
-        assert result["ws-1"]["archive"] is None
-
-    async def test_obs_004_archive_only(
-        self, mock_ic: AsyncMock, mock_sp: AsyncMock
-    ):
-        """OBS-004: archive만 존재."""
-        mock_sp.list_archives.return_value = [
-            ArchiveInfo(
-                workspace_id="ws-1",
-                archive_key="ws-1/op-123/home.tar.zst",
-                exists=True,
-                reason="ArchiveUploaded",
-                message="Archive uploaded",
-            )
-        ]
-        observer = BulkObserver(mock_ic, mock_sp)
-
-        result = await observer.observe_all()
-
-        assert "ws-1" in result
-        assert result["ws-1"]["container"] is None
-        assert result["ws-1"]["volume"] is None
-        assert result["ws-1"]["archive"]["exists"] is True
-        assert result["ws-1"]["archive"]["archive_key"] == "ws-1/op-123/home.tar.zst"
-
-    async def test_obs_005_full_resources(
-        self, mock_ic: AsyncMock, mock_sp: AsyncMock
-    ):
-        """OBS-005: 모든 리소스 존재."""
+    async def test_indexes_by_workspace_id(self, mock_ic: AsyncMock, mock_sp: AsyncMock):
         mock_ic.list_all.return_value = [
             ContainerInfo(workspace_id="ws-1", running=True, reason="Running", message="")
         ]
         mock_sp.list_volumes.return_value = [
             VolumeInfo(workspace_id="ws-1", exists=True, reason="VolumeExists", message="")
         ]
-        mock_sp.list_archives.return_value = [
-            ArchiveInfo(
-                workspace_id="ws-1",
-                archive_key="ws-1/op/home.tar.zst",
-                exists=True,
-                reason="ArchiveUploaded",
-                message="",
-            )
-        ]
         observer = BulkObserver(mock_ic, mock_sp)
 
-        result = await observer.observe_all()
+        containers, volumes, archives = await observer.observe_all()
 
-        assert "ws-1" in result
-        assert result["ws-1"]["container"]["running"] is True
-        assert result["ws-1"]["volume"]["exists"] is True
-        assert result["ws-1"]["archive"]["exists"] is True
+        assert containers["ws-1"].running is True
+        assert volumes["ws-1"].exists is True
+        assert archives == {}
 
-    async def test_obs_006_multiple_workspaces(
-        self, mock_ic: AsyncMock, mock_sp: AsyncMock
-    ):
-        """OBS-006: 여러 workspace 처리."""
-        mock_ic.list_all.return_value = [
-            ContainerInfo(workspace_id="ws-1", running=True, reason="Running", message=""),
-            ContainerInfo(workspace_id="ws-2", running=False, reason="Exited", message=""),
-        ]
-        mock_sp.list_volumes.return_value = [
-            VolumeInfo(workspace_id="ws-1", exists=True, reason="VolumeExists", message=""),
-            VolumeInfo(workspace_id="ws-3", exists=True, reason="VolumeExists", message=""),
-        ]
+    async def test_timeout_returns_none(self, mock_ic: AsyncMock, mock_sp: AsyncMock):
+        mock_ic.list_all = AsyncMock(side_effect=asyncio.TimeoutError())
         observer = BulkObserver(mock_ic, mock_sp)
 
-        result = await observer.observe_all()
+        containers, volumes, archives = await observer.observe_all()
 
-        # ws-1: container + volume
-        assert result["ws-1"]["container"]["running"] is True
-        assert result["ws-1"]["volume"]["exists"] is True
-        assert result["ws-1"]["archive"] is None
+        assert containers is None
+        assert volumes == {}
+        assert archives == {}
 
-        # ws-2: container only
-        assert result["ws-2"]["container"]["running"] is False
-        assert result["ws-2"]["volume"] is None
-
-        # ws-3: volume only
-        assert result["ws-3"]["volume"]["exists"] is True
-        assert result["ws-3"]["container"] is None
-
-    async def test_obs_007_stopped_container(
-        self, mock_ic: AsyncMock, mock_sp: AsyncMock
-    ):
-        """OBS-007: 정지된 container."""
-        mock_ic.list_all.return_value = [
-            ContainerInfo(
-                workspace_id="ws-1",
-                running=False,
-                reason="Exited",
-                message="Exited (0) 2 hours ago",
-            )
-        ]
+    async def test_exception_returns_none(self, mock_ic: AsyncMock, mock_sp: AsyncMock):
+        mock_sp.list_volumes = AsyncMock(side_effect=Exception("S3 error"))
         observer = BulkObserver(mock_ic, mock_sp)
 
-        result = await observer.observe_all()
+        containers, volumes, archives = await observer.observe_all()
 
-        assert result["ws-1"]["container"]["running"] is False
-        assert result["ws-1"]["container"]["reason"] == "Exited"
-
-    async def test_obs_008_archive_with_error_reason(
-        self, mock_ic: AsyncMock, mock_sp: AsyncMock
-    ):
-        """OBS-008: 오류 상태 archive."""
-        mock_sp.list_archives.return_value = [
-            ArchiveInfo(
-                workspace_id="ws-1",
-                archive_key=None,
-                exists=False,
-                reason="ArchiveCorrupted",
-                message="Checksum mismatch",
-            )
-        ]
-        observer = BulkObserver(mock_ic, mock_sp)
-
-        result = await observer.observe_all()
-
-        assert result["ws-1"]["archive"]["exists"] is False
-        assert result["ws-1"]["archive"]["reason"] == "ArchiveCorrupted"
-
-
-class TestBulkObserverModelDump:
-    """model_dump() 형식 검증."""
-
-    async def test_container_model_dump_format(
-        self, mock_ic: AsyncMock, mock_sp: AsyncMock
-    ):
-        """container가 올바른 형식으로 직렬화."""
-        mock_ic.list_all.return_value = [
-            ContainerInfo(workspace_id="ws-1", running=True, reason="Running", message="msg")
-        ]
-        observer = BulkObserver(mock_ic, mock_sp)
-
-        result = await observer.observe_all()
-        container = result["ws-1"]["container"]
-
-        # Pydantic model_dump() 결과 검증
-        assert isinstance(container, dict)
-        assert container == {
-            "workspace_id": "ws-1",
-            "running": True,
-            "reason": "Running",
-            "message": "msg",
-        }
-
-    async def test_volume_model_dump_format(
-        self, mock_ic: AsyncMock, mock_sp: AsyncMock
-    ):
-        """volume이 올바른 형식으로 직렬화."""
-        mock_sp.list_volumes.return_value = [
-            VolumeInfo(workspace_id="ws-1", exists=True, reason="VolumeExists", message="msg")
-        ]
-        observer = BulkObserver(mock_ic, mock_sp)
-
-        result = await observer.observe_all()
-        volume = result["ws-1"]["volume"]
-
-        assert volume == {
-            "workspace_id": "ws-1",
-            "exists": True,
-            "reason": "VolumeExists",
-            "message": "msg",
-        }
-
-    async def test_archive_model_dump_format(
-        self, mock_ic: AsyncMock, mock_sp: AsyncMock
-    ):
-        """archive가 올바른 형식으로 직렬화."""
-        mock_sp.list_archives.return_value = [
-            ArchiveInfo(
-                workspace_id="ws-1",
-                archive_key="ws-1/op/home.tar.zst",
-                exists=True,
-                reason="ArchiveUploaded",
-                message="msg",
-            )
-        ]
-        observer = BulkObserver(mock_ic, mock_sp)
-
-        result = await observer.observe_all()
-        archive = result["ws-1"]["archive"]
-
-        assert archive == {
-            "workspace_id": "ws-1",
-            "archive_key": "ws-1/op/home.tar.zst",
-            "exists": True,
-            "reason": "ArchiveUploaded",
-            "message": "msg",
-        }
-
-
-# =============================================================================
-# ObserverCoordinator._bulk_update_conditions() Tests
-# =============================================================================
+        assert containers == {}
+        assert volumes is None
+        assert archives == {}
 
 
 @pytest.fixture
 def mock_conn() -> MagicMock:
-    """Mock AsyncConnection."""
     conn = MagicMock()
     conn.execute = AsyncMock()
     conn.commit = AsyncMock()
@@ -293,118 +82,120 @@ def mock_conn() -> MagicMock:
 
 @pytest.fixture
 def mock_leader() -> MagicMock:
-    """Mock LeaderElection (always leader)."""
     leader = MagicMock(spec=LeaderElection)
     leader.is_leader = True
-    leader.try_acquire = MagicMock(return_value=True)
     return leader
 
 
 @pytest.fixture
 def mock_notify() -> MagicMock:
-    """Mock NotifySubscriber."""
     return MagicMock(spec=NotifySubscriber)
 
 
 @pytest.fixture
-def observer_coordinator(
+def coordinator(
     mock_conn: MagicMock,
     mock_leader: MagicMock,
     mock_notify: MagicMock,
     mock_ic: AsyncMock,
     mock_sp: AsyncMock,
 ) -> ObserverCoordinator:
-    """Create ObserverCoordinator with mocked dependencies."""
     return ObserverCoordinator(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
 
 
-class TestObserverCoordinatorBulkUpdate:
-    """_bulk_update_conditions() tests - PostgreSQL unnest bulk update."""
+class TestObserverTick:
+    """tick() 동작 테스트."""
 
-    async def test_empty_list_returns_zero(
-        self,
-        observer_coordinator: ObserverCoordinator,
-        mock_conn: MagicMock,
+    async def test_skip_when_any_observation_fails(
+        self, coordinator: ObserverCoordinator, mock_conn: MagicMock, mock_ic: AsyncMock
     ):
-        """Empty updates list returns 0 without DB call."""
-        result = await observer_coordinator._bulk_update_conditions([])
+        """하나라도 실패 → tick skip."""
+        mock_ws_result = MagicMock()
+        mock_ws_result.fetchall.return_value = [("ws-1",)]
+        mock_conn.execute.return_value = mock_ws_result
 
-        assert result == 0
-        mock_conn.execute.assert_not_called()
+        mock_ic.list_all = AsyncMock(side_effect=asyncio.TimeoutError())
 
-    async def test_uses_single_query(
-        self,
-        observer_coordinator: ObserverCoordinator,
-        mock_conn: MagicMock,
+        await coordinator.tick()
+
+        mock_conn.commit.assert_not_called()
+
+    async def test_updates_when_all_succeed(
+        self, coordinator: ObserverCoordinator, mock_conn: MagicMock, mock_ic: AsyncMock
     ):
-        """N updates use single execute() call (O(1) round-trips)."""
-        now = datetime.now(UTC)
-        updates = [
-            ("ws-1", {"container": None, "volume": None, "archive": None}, now),
-            ("ws-2", {"container": None, "volume": None, "archive": None}, now),
-            ("ws-3", {"container": None, "volume": None, "archive": None}, now),
+        """전체 성공 → DB 업데이트."""
+        mock_ws_result = MagicMock()
+        mock_ws_result.fetchall.return_value = [("ws-1",)]
+        mock_update_result = MagicMock()
+        mock_update_result.fetchall.return_value = [("ws-1",)]
+        mock_conn.execute.side_effect = [mock_ws_result, mock_update_result]
+
+        mock_ic.list_all.return_value = [
+            ContainerInfo(workspace_id="ws-1", running=True, reason="Running", message="")
         ]
 
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = [("ws-1",), ("ws-2",), ("ws-3",)]
-        mock_conn.execute.return_value = mock_result
+        await coordinator.tick()
 
-        result = await observer_coordinator._bulk_update_conditions(updates)
+        mock_conn.commit.assert_called_once()
 
-        assert result == 3
-        mock_conn.execute.assert_called_once()  # Single query!
 
-    async def test_returns_updated_count(
-        self,
-        observer_coordinator: ObserverCoordinator,
-        mock_conn: MagicMock,
-    ):
-        """Returns count of actually updated rows."""
-        now = datetime.now(UTC)
-        updates = [
-            ("ws-1", {"container": None}, now),
-            ("ws-2", {"container": None}, now),
-            ("ws-not-exists", {"container": None}, now),  # doesn't exist in DB
-        ]
+class TestBulkUpdateConditions:
+    """_bulk_update_conditions() 테스트."""
 
-        # Only 2 rows updated (ws-not-exists not found)
+    async def test_uses_single_query(self, coordinator: ObserverCoordinator, mock_conn: MagicMock):
+        """N개 workspace → 1회 쿼리."""
         mock_result = MagicMock()
         mock_result.fetchall.return_value = [("ws-1",), ("ws-2",)]
         mock_conn.execute.return_value = mock_result
 
-        result = await observer_coordinator._bulk_update_conditions(updates)
-
-        assert result == 2  # Only 2 actually updated
-
-    async def test_jsonb_serialization(
-        self,
-        observer_coordinator: ObserverCoordinator,
-        mock_conn: MagicMock,
-    ):
-        """conditions dict is JSON serialized for PostgreSQL."""
-        now = datetime.now(UTC)
-        conditions = {
-            "container": {"workspace_id": "ws-1", "running": True},
-            "volume": {"workspace_id": "ws-1", "exists": True},
-            "archive": None,
+        containers = {
+            "ws-1": ContainerInfo(workspace_id="ws-1", running=True, reason="Running", message=""),
+            "ws-2": ContainerInfo(workspace_id="ws-2", running=False, reason="Exited", message=""),
         }
-        updates = [("ws-1", conditions, now)]
 
+        result = await coordinator._bulk_update_conditions({"ws-1", "ws-2"}, containers, {}, {})
+
+        assert result == 2
+        mock_conn.execute.assert_called_once()
+
+    async def test_sets_null_for_missing_resources(
+        self, coordinator: ObserverCoordinator, mock_conn: MagicMock
+    ):
+        """리소스 없는 workspace → null로 설정 (삭제 감지 핵심 로직)."""
         mock_result = MagicMock()
         mock_result.fetchall.return_value = [("ws-1",)]
         mock_conn.execute.return_value = mock_result
 
-        await observer_coordinator._bulk_update_conditions(updates)
+        # ws-1은 DB에 있지만 관측된 리소스 없음 → null로 덮어써야 삭제 감지
+        await coordinator._bulk_update_conditions({"ws-1"}, {}, {}, {})
 
-        # Verify execute was called with proper parameters
         call_args = mock_conn.execute.call_args
-        params = call_args[0][1]  # Second positional arg is params dict
-
-        assert params["ids"] == ["ws-1"]
-        assert len(params["conditions"]) == 1
-        # conditions should be JSON string
+        params = call_args[0][1]
         import json
-        parsed = json.loads(params["conditions"][0])
-        assert parsed["container"]["running"] is True
-        assert parsed["volume"]["exists"] is True
-        assert parsed["archive"] is None
+        cond = json.loads(params["conds"][0])
+        assert cond == {"container": None, "volume": None, "archive": None}
+
+    async def test_overwrites_deleted_resource_with_null(
+        self, coordinator: ObserverCoordinator, mock_conn: MagicMock
+    ):
+        """이전에 container 있었다가 삭제 → null로 덮어씀."""
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("ws-1",), ("ws-2",)]
+        mock_conn.execute.return_value = mock_result
+
+        # ws-1만 container 있음, ws-2는 삭제됨
+        containers = {
+            "ws-1": ContainerInfo(workspace_id="ws-1", running=True, reason="Running", message="")
+        }
+
+        await coordinator._bulk_update_conditions({"ws-1", "ws-2"}, containers, {}, {})
+
+        call_args = mock_conn.execute.call_args
+        params = call_args[0][1]
+        import json
+
+        # ws-2의 container는 null (삭제됨)
+        ws_ids = params["ids"]
+        ws2_idx = ws_ids.index("ws-2")
+        cond = json.loads(params["conds"][ws2_idx])
+        assert cond["container"] is None

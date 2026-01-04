@@ -10,9 +10,9 @@ from unittest.mock import AsyncMock
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from codehub.control.coordinator.observer import BulkObserver, ObserverCoordinator
+from codehub.control.coordinator.observer import ObserverCoordinator
 from codehub.core.models import Workspace, User
-from codehub.core.interfaces.storage import VolumeInfo, ArchiveInfo
+from codehub.core.interfaces.storage import VolumeInfo
 from codehub.core.interfaces.instance import ContainerInfo
 
 
@@ -346,50 +346,6 @@ class TestObserverTick:
             assert ws.conditions is not None
             assert ws.conditions.get("volume") is not None
             assert ws.observed_at is not None
-
-
-class TestBulkObserverIntegration:
-    """BulkObserver integration test (mocked adapters)."""
-
-    async def test_observe_all_returns_correct_format(self):
-        """observe_all이 올바른 포맷으로 데이터 반환."""
-        mock_ic = AsyncMock()
-        mock_ic.list_all.return_value = [
-            ContainerInfo(
-                workspace_id="ws-1",
-                running=True,
-                reason="Running",
-                message="Up 5 minutes",
-            )
-        ]
-
-        mock_sp = AsyncMock()
-        mock_sp.list_volumes.return_value = [
-            VolumeInfo(
-                workspace_id="ws-1",
-                exists=True,
-                reason="VolumeExists",
-                message="Volume exists",
-            )
-        ]
-        mock_sp.list_archives.return_value = [
-            ArchiveInfo(
-                workspace_id="ws-1",
-                archive_key="ws-1/op-123/home.tar.zst",
-                exists=True,
-                reason="ArchiveUploaded",
-                message="Archive ready",
-            )
-        ]
-
-        observer = BulkObserver(mock_ic, mock_sp)
-        result = await observer.observe_all()
-
-        assert "ws-1" in result
-        assert result["ws-1"]["container"]["running"] is True
-        assert result["ws-1"]["volume"]["exists"] is True
-        assert result["ws-1"]["archive"]["exists"] is True
-        assert result["ws-1"]["archive"]["archive_key"] == "ws-1/op-123/home.tar.zst"
 
 
 class TestConcurrentCoordinators:

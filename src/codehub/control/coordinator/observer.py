@@ -1,11 +1,18 @@
 """Observer Coordinator - 리소스 관측 → conditions DB 저장.
 
-Reference: docs/architecture_v2/wc-observer.md
+Algorithm:
+1. 3개 API (containers, volumes, archives) 병렬 호출 with timeout
+2. 하나라도 실패 → tick skip (상태 일관성 보장)
+3. 전체 성공 → DB 기준 모든 workspace 업데이트
+   - 리소스 있음 → conditions에 상태 기록
+   - 리소스 없음 → null로 덮어씀 (삭제 감지 위해 필수)
 """
 
+import asyncio
 import json
 import logging
 from datetime import UTC, datetime
+from typing import Coroutine
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -23,72 +30,49 @@ from codehub.core.interfaces.storage import ArchiveInfo, StorageProvider, Volume
 from codehub.core.models import Workspace
 
 logger = logging.getLogger(__name__)
-
-# Load settings once at module level
 _settings = get_settings()
 
 
 class BulkObserver:
-    """Bulk observe all workspace resources.
+    """3개 API 병렬 호출로 리소스 관측."""
 
-    Performance: 3 API calls instead of N (where N = workspace count)
-    """
-
-    def __init__(
-        self,
-        instance_controller: InstanceController,
-        storage_provider: StorageProvider,
-    ) -> None:
-        self._ic = instance_controller
-        self._sp = storage_provider
+    def __init__(self, ic: InstanceController, sp: StorageProvider) -> None:
+        self._ic = ic
+        self._sp = sp
         self._prefix = _settings.docker.resource_prefix
-        self._log_prefix = self.__class__.__name__
+        self._timeout_s = _settings.observer.timeout_s
 
-    async def observe_all(self) -> dict[str, dict[str, dict | None]]:
-        """Observe all resources and return conditions by workspace_id.
+    async def _safe[T](self, coro: Coroutine[None, None, list[T]], name: str) -> list[T] | None:
+        try:
+            return await asyncio.wait_for(coro, timeout=self._timeout_s)
+        except asyncio.TimeoutError:
+            logger.warning("[BulkObserver] %s timeout (%.1fs)", name, self._timeout_s)
+            return None
+        except Exception:
+            logger.exception("[BulkObserver] %s failed", name)
+            return None
 
-        Returns:
-            {workspace_id: {"container": {...}, "volume": {...}, "archive": {...}}, ...}
-        """
-        # 1. Bulk API calls (3회)
-        logger.debug("[%s] Starting observe_all with prefix=%s", self._log_prefix, self._prefix)
-        containers = await self._ic.list_all(self._prefix)
-        volumes = await self._sp.list_volumes(self._prefix)
-        archives = await self._sp.list_archives(self._prefix)
-        logger.debug(
-            "[%s] API results: containers=%d, volumes=%d, archives=%d",
-            self._log_prefix, len(containers), len(volumes), len(archives)
+    async def observe_all(self) -> tuple[
+        dict[str, ContainerInfo] | None,
+        dict[str, VolumeInfo] | None,
+        dict[str, ArchiveInfo] | None,
+    ]:
+        results = await asyncio.gather(
+            self._safe(self._ic.list_all(self._prefix), "containers"),
+            self._safe(self._sp.list_volumes(self._prefix), "volumes"),
+            self._safe(self._sp.list_archives(self._prefix), "archives"),
         )
 
-        # 2. Index by workspace_id
-        container_map: dict[str, ContainerInfo] = {c.workspace_id: c for c in containers}
-        volume_map: dict[str, VolumeInfo] = {v.workspace_id: v for v in volumes}
-        archive_map: dict[str, ArchiveInfo] = {a.workspace_id: a for a in archives}
+        c_list, v_list, a_list = results
+        containers = {c.workspace_id: c for c in c_list} if c_list is not None else None
+        volumes = {v.workspace_id: v for v in v_list} if v_list is not None else None
+        archives = {a.workspace_id: a for a in a_list} if a_list is not None else None
 
-        # 3. Collect all workspace_ids
-        all_ws_ids = set(container_map) | set(volume_map) | set(archive_map)
-
-        # 4. Build conditions for each workspace (Pydantic model_dump 직접 사용)
-        result: dict[str, dict[str, dict | None]] = {}
-        for ws_id in all_ws_ids:
-            container = container_map.get(ws_id)
-            volume = volume_map.get(ws_id)
-            archive = archive_map.get(ws_id)
-
-            result[ws_id] = {
-                "container": container.model_dump() if container else None,
-                "volume": volume.model_dump() if volume else None,
-                "archive": archive.model_dump() if archive else None,
-            }
-
-        return result
+        return containers, volumes, archives
 
 
 class ObserverCoordinator(CoordinatorBase):
-    """Observer Coordinator - 리소스 관측 → conditions DB 저장.
-
-    Single Writer: conditions, observed_at 소유
-    """
+    """Observer - conditions, observed_at 컬럼 소유."""
 
     COORDINATOR_TYPE = CoordinatorType.OBSERVER
     WAKE_TARGET = WakeTarget.OB
@@ -98,65 +82,34 @@ class ObserverCoordinator(CoordinatorBase):
         conn: AsyncConnection,
         leader: LeaderElection,
         notify: NotifySubscriber,
-        instance_controller: InstanceController,
-        storage_provider: StorageProvider,
+        ic: InstanceController,
+        sp: StorageProvider,
     ) -> None:
         super().__init__(conn, leader, notify)
-        self._observer = BulkObserver(instance_controller, storage_provider)
+        self._observer = BulkObserver(ic, sp)
 
     async def tick(self) -> None:
-        """Observe all resources and persist conditions to DB.
-
-        DB-based iteration: 모든 워크스페이스를 업데이트 (리소스 유무 무관)
-        - 리소스가 있는 워크스페이스: 관측된 conditions
-        - 리소스가 없는 워크스페이스: empty conditions (container/volume/archive = None)
-        """
-        logger.debug("[%s] tick() started", self.name)
-        now = datetime.now(UTC)
-
-        # 1. Load ALL workspaces from DB first (DB-based iteration)
         ws_ids = await self._load_workspace_ids()
         if not ws_ids:
-            logger.debug("[%s] No workspaces in DB, skipping", self.name)
             return
 
-        # 2. Bulk observe resources (리소스가 있는 것만 반환)
-        observed = await self._observer.observe_all()
-        logger.debug(
-            "[%s] DB workspaces=%d, observed=%d",
-            self.name, len(ws_ids), len(observed)
-        )
+        containers, volumes, archives = await self._observer.observe_all()
 
-        # 3. Build updates for ALL workspaces (DB-based)
-        empty_conditions = {"container": None, "volume": None, "archive": None}
-        updates_to_apply: list[tuple[str, dict, datetime]] = []
+        # 하나라도 실패 → skip (상태 일관성 보장, 다음 tick에서 재시도)
+        if any(x is None for x in [containers, volumes, archives]):
+            logger.warning("[%s] Observation failed, skipping tick", self.name)
+            return
 
-        for ws_id in ws_ids:
-            if ws_id in observed:
-                updates_to_apply.append((ws_id, observed[ws_id], now))
-            else:
-                # 리소스 없는 워크스페이스 → empty conditions
-                updates_to_apply.append((ws_id, empty_conditions, now))
+        # Orphan 경고 (DB에 없는데 리소스 있음 → GC 대상)
+        observed_ws_ids = set(containers) | set(volumes) | set(archives)
+        for ws_id in observed_ws_ids - ws_ids:
+            logger.warning("[%s] Orphan ws_id=%s", self.name, ws_id)
 
-        # 4. Orphan warning (DB에 없는데 리소스는 있는 경우 - GC 대상)
-        orphan_ws_ids = set(observed.keys()) - ws_ids
-        for ws_id in orphan_ws_ids:
-            logger.warning("[%s] Orphan ws_id=%s (not in DB, GC target)", self.name, ws_id)
-
-        # 5. Bulk update conditions
-        if updates_to_apply:
-            count = await self._bulk_update_conditions(updates_to_apply)
-            await self._conn.commit()
-            logger.info("[%s] Committed %d updates to DB", self.name, count)
-        else:
-            logger.debug("[%s] No updates to apply", self.name)
-
-    # =================================================================
-    # DB Operations (Observer-owned columns: conditions, observed_at)
-    # =================================================================
+        count = await self._bulk_update_conditions(ws_ids, containers, volumes, archives)
+        await self._conn.commit()
+        logger.info("[%s] Updated %d workspaces", self.name, count)
 
     async def _load_workspace_ids(self) -> set[str]:
-        """Load all non-deleted workspace IDs."""
         result = await self._conn.execute(
             select(Workspace.id).where(Workspace.deleted_at.is_(None))
         )
@@ -164,42 +117,40 @@ class ObserverCoordinator(CoordinatorBase):
 
     async def _bulk_update_conditions(
         self,
-        updates: list[tuple[str, dict, datetime]],
+        ws_ids: set[str],
+        containers: dict[str, ContainerInfo],
+        volumes: dict[str, VolumeInfo],
+        archives: dict[str, ArchiveInfo],
     ) -> int:
-        """Bulk update conditions using PostgreSQL unnest.
+        """O(1) round-trip bulk UPDATE."""
+        now = datetime.now(UTC)
+        ws_id_list = list(ws_ids)
 
-        Complexity: O(1) DB round-trips (TTL Manager 패턴).
-
-        Args:
-            updates: List of (workspace_id, conditions, observed_at)
-
-        Returns:
-            Number of rows updated
-        """
-        if not updates:
-            return 0
-
-        # Prepare arrays for PostgreSQL unnest
-        ws_ids = [ws_id for ws_id, _, _ in updates]
-        conditions_json = [json.dumps(cond) for _, cond, _ in updates]
-        timestamps = [ts for _, _, ts in updates]
+        conditions_list = []
+        for ws_id in ws_id_list:
+            c, v, a = containers.get(ws_id), volumes.get(ws_id), archives.get(ws_id)
+            conditions_list.append({
+                "container": c.model_dump() if c else None,
+                "volume": v.model_dump() if v else None,
+                "archive": a.model_dump() if a else None,
+            })
 
         result = await self._conn.execute(
             text("""
                 UPDATE workspaces AS w
-                SET conditions = v.conditions::jsonb,
-                    observed_at = v.observed_at
+                SET conditions = v.cond::jsonb, observed_at = v.ts
                 FROM unnest(
                     CAST(:ids AS text[]),
-                    CAST(:conditions AS jsonb[]),
+                    CAST(:conds AS jsonb[]),
                     CAST(:timestamps AS timestamptz[])
-                ) AS v(id, conditions, observed_at)
+                ) AS v(id, cond, ts)
                 WHERE w.id = v.id
                 RETURNING w.id
             """),
-            {"ids": ws_ids, "conditions": conditions_json, "timestamps": timestamps},
+            {
+                "ids": ws_id_list,
+                "conds": [json.dumps(c) for c in conditions_list],
+                "timestamps": [now] * len(ws_id_list),
+            },
         )
-
-        updated_count = len(result.fetchall())
-        logger.debug("[%s] Bulk updated %d conditions", self.name, updated_count)
-        return updated_count
+        return len(result.fetchall())

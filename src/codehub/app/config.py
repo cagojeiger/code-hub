@@ -74,6 +74,14 @@ class CookieConfig(BaseSettings):
     secure: bool = Field(default=False)  # Set True in production (HTTPS)
 
 
+class ObserverConfig(BaseSettings):
+    """Observer coordinator configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="OBSERVER_")
+
+    timeout_s: float = Field(default=5.0)  # API call timeout per resource type
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CODEHUB_",
@@ -87,6 +95,7 @@ class Settings(BaseSettings):
     ttl: TtlConfig = Field(default_factory=TtlConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     cookie: CookieConfig = Field(default_factory=CookieConfig)
+    observer: ObserverConfig = Field(default_factory=ObserverConfig)
 
 
 @lru_cache
