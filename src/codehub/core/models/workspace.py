@@ -58,8 +58,6 @@ class Workspace(SQLModel, table=True):
     phase_changed_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True))
     )
-    standby_ttl_seconds: int = Field(default=300)
-    archive_ttl_seconds: int = Field(default=86400)
     error_reason: str | None = None  # ErrorReason enum value
     error_count: int = Field(default=0)
 

@@ -6,20 +6,17 @@ from unittest.mock import AsyncMock
 import pytest
 
 from codehub.control.coordinator.base import (
-    Channel,
     CoordinatorBase,
     CoordinatorType,
     LeaderElection,
-    NotifySubscriber,
-    WakeTarget,
 )
+from codehub.infra.redis import NotifySubscriber, WakeTarget
 
 
 class DummyCoordinator(CoordinatorBase):
     """Test용 더미 Coordinator."""
 
     COORDINATOR_TYPE = CoordinatorType.WC
-    CHANNELS = [Channel.WC_WAKE]
     WAKE_TARGET = WakeTarget.WC
 
     # 빠른 테스트를 위해 간격 축소

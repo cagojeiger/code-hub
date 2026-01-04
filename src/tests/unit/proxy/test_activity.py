@@ -1,4 +1,4 @@
-"""Tests for ActivityBuffer.
+"""Tests for ActivityBuffer and ActivityStore.
 
 Reference: docs/architecture_v2/ttl-manager.md
 """
@@ -9,13 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import redis.asyncio as redis
 
-from codehub.app.proxy.activity import (
-    REDIS_KEY_PREFIX,
-    ActivityBuffer,
-    delete_redis_activities,
-    get_activity_buffer,
-    scan_redis_activities,
-)
+from codehub.app.proxy.activity import ActivityBuffer, get_activity_buffer
+from codehub.infra.redis import ActivityStore
 
 
 class TestActivityBuffer:
@@ -73,53 +68,53 @@ class TestActivityBuffer:
     async def test_flush_empty_buffer(self):
         """flush() returns 0 for empty buffer."""
         buffer = ActivityBuffer()
-        mock_redis = AsyncMock(spec=redis.Redis)
+        mock_store = AsyncMock(spec=ActivityStore)
 
-        count = await buffer.flush(mock_redis)
+        count = await buffer.flush(mock_store)
 
         assert count == 0
-        mock_redis.mset.assert_not_called()
+        mock_store.mset.assert_not_called()
 
-    async def test_flush_sends_to_redis(self):
-        """flush() sends buffer to Redis via MSET."""
+    async def test_flush_sends_to_store(self):
+        """flush() sends buffer to ActivityStore via mset."""
         buffer = ActivityBuffer()
-        mock_redis = AsyncMock()
-        mock_redis.mset = AsyncMock()
+        mock_store = AsyncMock(spec=ActivityStore)
+        mock_store.mset = AsyncMock()
 
         buffer.record("ws-1")
         buffer.record("ws-2")
 
-        count = await buffer.flush(mock_redis)
+        count = await buffer.flush(mock_store)
 
         assert count == 2
-        mock_redis.mset.assert_called_once()
+        mock_store.mset.assert_called_once()
 
-        # Check MSET args contain correct keys
-        call_args = mock_redis.mset.call_args[0][0]
-        assert f"{REDIS_KEY_PREFIX}ws-1" in call_args
-        assert f"{REDIS_KEY_PREFIX}ws-2" in call_args
+        # Check mset receives ws_id -> timestamp mapping
+        call_args = mock_store.mset.call_args[0][0]
+        assert "ws-1" in call_args
+        assert "ws-2" in call_args
 
     async def test_flush_clears_buffer(self):
         """flush() clears buffer after successful send."""
         buffer = ActivityBuffer()
-        mock_redis = AsyncMock()
-        mock_redis.mset = AsyncMock()
+        mock_store = AsyncMock(spec=ActivityStore)
+        mock_store.mset = AsyncMock()
 
         buffer.record("ws-1")
-        await buffer.flush(mock_redis)
+        await buffer.flush(mock_store)
 
         assert buffer.pending_count == 0
 
     async def test_flush_restores_on_error(self):
         """flush() restores buffer on Redis error."""
         buffer = ActivityBuffer()
-        mock_redis = AsyncMock(spec=redis.Redis)
-        mock_redis.mset.side_effect = redis.RedisError("Connection failed")
+        mock_store = AsyncMock(spec=ActivityStore)
+        mock_store.mset.side_effect = redis.RedisError("Connection failed")
 
         buffer.record("ws-1")
         buffer.record("ws-2")
 
-        count = await buffer.flush(mock_redis)
+        count = await buffer.flush(mock_store)
 
         assert count == 0
         # Buffer should be restored
@@ -128,7 +123,7 @@ class TestActivityBuffer:
     async def test_flush_does_not_overwrite_new_records(self):
         """flush() does not overwrite new records on restore."""
         buffer = ActivityBuffer()
-        mock_redis = AsyncMock(spec=redis.Redis)
+        mock_store = AsyncMock(spec=ActivityStore)
 
         # Original records
         buffer.record("ws-1")
@@ -140,19 +135,42 @@ class TestActivityBuffer:
             buffer.record("ws-1")  # Update ws-1 with new timestamp
             raise redis.RedisError("Connection failed")
 
-        mock_redis.mset.side_effect = slow_mset
+        mock_store.mset.side_effect = slow_mset
 
-        await buffer.flush(mock_redis)
+        await buffer.flush(mock_store)
 
         # New timestamp should be preserved, not overwritten by old
         assert buffer._buffer["ws-1"] > old_ts
 
 
-class TestScanRedisActivities:
-    """scan_redis_activities() tests."""
+class TestActivityStore:
+    """ActivityStore unit tests."""
 
-    async def test_scan_empty(self):
-        """Returns empty dict when no keys."""
+    async def test_mset_empty(self):
+        """mset() does nothing for empty dict."""
+        mock_redis = AsyncMock(spec=redis.Redis)
+        store = ActivityStore(mock_redis)
+
+        await store.mset({})
+
+        mock_redis.mset.assert_not_called()
+
+    async def test_mset_with_data(self):
+        """mset() sets keys with prefix."""
+        mock_redis = AsyncMock(spec=redis.Redis)
+        mock_redis.mset = AsyncMock()
+        store = ActivityStore(mock_redis)
+
+        await store.mset({"ws-1": 1704067200.0, "ws-2": 1704067300.0})
+
+        mock_redis.mset.assert_called_once()
+        call_args = mock_redis.mset.call_args[0][0]
+        assert "last_access:ws-1" in call_args
+        assert "last_access:ws-2" in call_args
+        assert call_args["last_access:ws-1"] == "1704067200.0"
+
+    async def test_scan_all_empty(self):
+        """scan_all() returns empty dict when no keys."""
         mock_redis = AsyncMock(spec=redis.Redis)
 
         async def empty_scan(*args, **kwargs):
@@ -160,13 +178,14 @@ class TestScanRedisActivities:
             yield  # Make it an async generator that yields nothing
 
         mock_redis.scan_iter = MagicMock(return_value=empty_scan())
+        store = ActivityStore(mock_redis)
 
-        result = await scan_redis_activities(mock_redis)
+        result = await store.scan_all()
 
         assert result == {}
 
-    async def test_scan_with_keys(self):
-        """Returns workspace_id -> timestamp mapping."""
+    async def test_scan_all_with_keys(self):
+        """scan_all() returns workspace_id -> timestamp mapping."""
         mock_redis = AsyncMock(spec=redis.Redis)
 
         # Mock scan_iter to return keys
@@ -176,38 +195,37 @@ class TestScanRedisActivities:
 
         mock_redis.scan_iter = MagicMock(return_value=mock_scan())
         mock_redis.get = AsyncMock(side_effect=[b"1704067200.0", b"1704067300.0"])
+        store = ActivityStore(mock_redis)
 
-        result = await scan_redis_activities(mock_redis)
+        result = await store.scan_all()
 
         assert result == {
             "ws-1": 1704067200.0,
             "ws-2": 1704067300.0,
         }
 
-
-class TestDeleteRedisActivities:
-    """delete_redis_activities() tests."""
-
     async def test_delete_empty_list(self):
-        """Returns 0 for empty list."""
+        """delete() returns 0 for empty list."""
         mock_redis = AsyncMock(spec=redis.Redis)
+        store = ActivityStore(mock_redis)
 
-        count = await delete_redis_activities(mock_redis, [])
+        count = await store.delete([])
 
         assert count == 0
         mock_redis.delete.assert_not_called()
 
     async def test_delete_keys(self):
-        """Deletes keys with prefix."""
+        """delete() deletes keys with prefix."""
         mock_redis = AsyncMock(spec=redis.Redis)
         mock_redis.delete = AsyncMock(return_value=2)
+        store = ActivityStore(mock_redis)
 
-        count = await delete_redis_activities(mock_redis, ["ws-1", "ws-2"])
+        count = await store.delete(["ws-1", "ws-2"])
 
         assert count == 2
         mock_redis.delete.assert_called_once_with(
-            f"{REDIS_KEY_PREFIX}ws-1",
-            f"{REDIS_KEY_PREFIX}ws-2",
+            "last_access:ws-1",
+            "last_access:ws-2",
         )
 
 

@@ -1,4 +1,4 @@
-"""EventListener - PG NOTIFY to Redis Streams (CDC).
+"""EventListener - PG NOTIFY to Redis (CDC).
 
 Reference: docs/architecture_v2/event-listener.md
 
@@ -6,11 +6,11 @@ Uses psycopg3 AsyncConnection for native LISTEN/NOTIFY support.
 No keep-alive needed - notifies() generator handles idle connections.
 
 Listens to 3 PostgreSQL NOTIFY channels:
-- ws_sse: phase/operation changes -> XADD events:{user_id}
-- ws_wake: desired_state changes -> XADD stream:wake
-- ws_deleted: soft deletes -> XADD events:{user_id}
+- ws_sse: phase/operation changes -> SSEStreamPublisher.publish_update()
+- ws_wake: desired_state changes -> PUBLISH ob:wake, wc:wake (PUB/SUB)
+- ws_deleted: soft deletes -> SSEStreamPublisher.publish_deleted()
 
-Note: Requires leader election - only 1 EventListener should XADD to prevent duplicates.
+Note: Requires leader election - only 1 EventListener should write to prevent duplicates.
 Uses PostgreSQL Advisory Lock for leader election.
 """
 
@@ -21,11 +21,9 @@ import logging
 import psycopg
 import redis.asyncio as redis
 
-logger = logging.getLogger(__name__)
+from codehub.infra.redis import NotifyPublisher, SSEStreamPublisher
 
-# Redis Streams constants
-STREAM_MAXLEN = 1000  # Max messages per user stream
-WAKE_STREAM_MAXLEN = 100  # Max wake messages
+logger = logging.getLogger(__name__)
 
 
 class EventListener:
@@ -44,22 +42,26 @@ class EventListener:
     # Advisory lock key (consistent across all instances)
     LOCK_KEY = "event_listener"
 
-    # Redis Streams keys
-    STREAM_WAKE = "stream:wake"
-
     def __init__(
         self,
         database_url: str,
         redis_client: redis.Redis,
+        sse_publisher: SSEStreamPublisher | None = None,
+        wake_publisher: NotifyPublisher | None = None,
     ) -> None:
         """Initialize EventListener.
 
         Args:
             database_url: PostgreSQL connection URL (psycopg format).
-            redis_client: Redis client for XADD operations.
+            redis_client: Redis client (fallback for creating publishers).
+            sse_publisher: SSEStreamPublisher for Streams operations.
+                          If None, creates one from redis_client.
+            wake_publisher: NotifyPublisher for wake notifications.
+                           If None, creates one from redis_client.
         """
         self._database_url = database_url
-        self._redis = redis_client
+        self._sse = sse_publisher or SSEStreamPublisher(redis_client)
+        self._wake = wake_publisher or NotifyPublisher(redis_client)
         self._running = False
         self._log_prefix = self.__class__.__name__
 
@@ -147,10 +149,10 @@ class EventListener:
         self._running = False
 
     async def _handle_sse(self, payload: str) -> None:
-        """Handle SSE event - XADD to user-specific stream.
+        """Handle SSE event - publish to user-specific stream.
 
         Payload: {"id": "...", "owner_user_id": "..."}
-        Adds to: events:{owner_user_id}
+        Publishes to: events:{owner_user_id}
         """
         try:
             data = json.loads(payload)
@@ -163,13 +165,8 @@ class EventListener:
                 )
                 return
 
-            stream_key = f"events:{user_id}"
-            await self._redis.xadd(
-                stream_key,
-                {"data": payload},
-                maxlen=STREAM_MAXLEN,
-            )
-            logger.debug("[%s] SSE -> XADD %s", self._log_prefix, stream_key)
+            await self._sse.publish_update(user_id, payload)
+            logger.debug("[%s] SSE -> publish_update user=%s", self._log_prefix, user_id)
         except json.JSONDecodeError as e:
             logger.warning(
                 "[%s] Invalid SSE payload: %s (%s)", self._log_prefix, payload, e
@@ -178,51 +175,36 @@ class EventListener:
             logger.exception("[%s] SSE error: %s", self._log_prefix, e)
 
     async def _handle_wake(self) -> None:
-        """Handle wake event - XADD to wake stream.
+        """Handle wake event - PUBLISH to wake channels.
 
-        Adds to: stream:wake with target="ob" and target="wc"
+        Uses NotifyPublisher.wake_ob_wc() for parallel execution (1 RTT).
         """
         try:
-            await self._redis.xadd(
-                self.STREAM_WAKE,
-                {"target": "ob"},
-                maxlen=WAKE_STREAM_MAXLEN,
-            )
-            await self._redis.xadd(
-                self.STREAM_WAKE,
-                {"target": "wc"},
-                maxlen=WAKE_STREAM_MAXLEN,
-            )
-            logger.debug("[%s] Wake -> XADD %s", self._log_prefix, self.STREAM_WAKE)
+            await self._wake.wake_ob_wc()
+            logger.debug("[%s] Wake -> wake_ob_wc()", self._log_prefix)
         except Exception as e:
             logger.exception("[%s] Wake error: %s", self._log_prefix, e)
 
     async def _handle_deleted(self, payload: str) -> None:
-        """Handle delete event - XADD to user stream with deleted flag.
+        """Handle delete event - publish deleted event to user stream.
 
         Payload: {"id": "...", "owner_user_id": "..."}
-        Adds to: events:{owner_user_id} with deleted=true
+        Publishes to: events:{owner_user_id} with deleted=true
         """
         try:
             data = json.loads(payload)
             user_id = data.get("owner_user_id")
-            if not user_id:
+            workspace_id = data.get("id")
+            if not user_id or not workspace_id:
                 logger.warning(
-                    "[%s] Deleted payload missing owner_user_id: %s",
+                    "[%s] Deleted payload missing owner_user_id or id: %s",
                     self._log_prefix,
                     payload,
                 )
                 return
 
-            # Add deleted flag
-            data["deleted"] = True
-            stream_key = f"events:{user_id}"
-            await self._redis.xadd(
-                stream_key,
-                {"data": json.dumps(data)},
-                maxlen=STREAM_MAXLEN,
-            )
-            logger.debug("[%s] Deleted -> XADD %s", self._log_prefix, stream_key)
+            await self._sse.publish_deleted(user_id, workspace_id)
+            logger.debug("[%s] Deleted -> publish_deleted user=%s ws=%s", self._log_prefix, user_id, workspace_id)
         except json.JSONDecodeError as e:
             logger.warning(
                 "[%s] Invalid deleted payload: %s (%s)", self._log_prefix, payload, e

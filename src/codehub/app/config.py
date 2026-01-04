@@ -49,6 +49,15 @@ class DockerConfig(BaseSettings):
     storage_job_image: str = Field(default="codehub/storage-job:latest")
 
 
+class TtlConfig(BaseSettings):
+    """TTL configuration for workspace lifecycle."""
+
+    model_config = SettingsConfigDict(env_prefix="TTL_")
+
+    standby_seconds: int = Field(default=300)  # 5분 (테스트용), 프로덕션: 10800 (3시간)
+    archive_seconds: int = Field(default=1800)  # 30분 (테스트용), 프로덕션: 86400 (24시간)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CODEHUB_",
@@ -59,6 +68,7 @@ class Settings(BaseSettings):
     redis: RedisConfig = Field(default_factory=RedisConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     docker: DockerConfig = Field(default_factory=DockerConfig)
+    ttl: TtlConfig = Field(default_factory=TtlConfig)
 
 
 @lru_cache

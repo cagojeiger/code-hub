@@ -4,40 +4,42 @@ TTL Manager는 두 가지 TTL을 관리:
 1. standby_ttl: RUNNING → STANDBY (last_access_at 기준)
 2. archive_ttl: STANDBY → ARCHIVED (phase_changed_at 기준)
 
+Optimized with bulk operations:
+- Single UPDATE + RETURNING instead of SELECT + N UPDATEs
+- PostgreSQL unnest for bulk activity sync
+
 Reference: docs/architecture_v2/ttl-manager.md
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
-import redis.asyncio as redis
-from sqlalchemy import text, update
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from codehub.app.proxy.activity import (
-    delete_redis_activities,
-    scan_redis_activities,
-)
+from codehub.app.config import get_settings
 from codehub.control.coordinator.base import (
     CoordinatorBase,
     CoordinatorType,
     LeaderElection,
-    NotifyPublisher,
     NotifySubscriber,
 )
 from codehub.core.domain.workspace import DesiredState, Operation, Phase
-from codehub.core.models import Workspace
+from codehub.infra.redis import ActivityStore, NotifyPublisher
 
 logger = logging.getLogger(__name__)
+
+# Module-level settings cache (consistent with Observer pattern)
+_settings = get_settings()
 
 
 class TTLManager(CoordinatorBase):
     """비활성 워크스페이스 desired_state 강등.
 
-    tick()에서 세 가지 작업:
-    1. _sync_to_db(): Redis → DB 동기화
-    2. _check_standby_ttl(): RUNNING 상태 체크 → STANDBY 요청
-    3. _check_archive_ttl(): STANDBY 상태 체크 → ARCHIVED 요청
+    tick()에서 세 가지 작업 (모두 O(1) DB 왕복):
+    1. _sync_to_db(): Redis → DB 동기화 (unnest bulk UPDATE)
+    2. _check_standby_ttl(): RUNNING → STANDBY (single UPDATE + RETURNING)
+    3. _check_archive_ttl(): STANDBY → ARCHIVED (single UPDATE + RETURNING)
     """
 
     COORDINATOR_TYPE = CoordinatorType.TTL
@@ -50,15 +52,19 @@ class TTLManager(CoordinatorBase):
         conn: AsyncConnection,
         leader: LeaderElection,
         notify: NotifySubscriber,
-        redis_client: redis.Redis,
+        activity_store: ActivityStore,
         wake_publisher: NotifyPublisher,
     ) -> None:
         super().__init__(conn, leader, notify)
-        self._redis = redis_client
+        self._activity = activity_store
         self._wake = wake_publisher
 
+        # Use module-level cached settings
+        self._standby_ttl = _settings.ttl.standby_seconds
+        self._archive_ttl = _settings.ttl.archive_seconds
+
     async def tick(self) -> None:
-        """TTL check loop."""
+        """TTL check loop - all bulk operations."""
         # 1. Redis → DB 동기화
         await self._sync_to_db()
 
@@ -72,7 +78,8 @@ class TTLManager(CoordinatorBase):
         if standby_expired or archive_expired:
             await self._wake.wake_wc()
             logger.info(
-                "TTL expired: standby=%d, archive=%d",
+                "[%s] TTL expired: standby=%d, archive=%d",
+                self.name,
                 standby_expired,
                 archive_expired,
             )
@@ -82,115 +89,106 @@ class TTLManager(CoordinatorBase):
     async def _sync_to_db(self) -> int:
         """Sync Redis last_access:* to DB last_access_at.
 
+        Uses PostgreSQL unnest for O(1) bulk update regardless of N workspaces.
+
         Returns:
             Number of workspaces synced.
         """
-        # 1. Scan Redis for last_access:* keys
-        activities = await scan_redis_activities(self._redis)
+        activities = await self._activity.scan_all()
         if not activities:
             return 0
 
-        # 2. Bulk update DB
-        # Use PostgreSQL VALUES for efficient bulk update
-        for ws_id, ts in activities.items():
-            dt = datetime.fromtimestamp(ts)
-            stmt = (
-                update(Workspace)
-                .where(Workspace.id == ws_id)
-                .values(last_access_at=dt)
-            )
-            await self._conn.execute(stmt)
+        # Prepare arrays for PostgreSQL unnest
+        ws_ids = list(activities.keys())
+        timestamps = [
+            datetime.fromtimestamp(ts, tz=timezone.utc) for ts in activities.values()
+        ]
 
-        # 3. Delete Redis keys
-        await delete_redis_activities(self._redis, list(activities.keys()))
+        # Single bulk UPDATE using PostgreSQL unnest
+        result = await self._conn.execute(
+            text("""
+                UPDATE workspaces AS w
+                SET last_access_at = v.ts
+                FROM unnest(:ids::text[], :timestamps::timestamptz[]) AS v(id, ts)
+                WHERE w.id = v.id
+            """),
+            {"ids": ws_ids, "timestamps": timestamps},
+        )
 
-        logger.debug("Synced %d workspace activities to DB", len(activities))
-        return len(activities)
+        # Delete Redis keys
+        await self._activity.delete(ws_ids)
+
+        logger.debug("[%s] Synced %d workspace activities to DB", self.name, len(activities))
+        return result.rowcount
 
     async def _check_standby_ttl(self) -> int:
         """Check standby_ttl for RUNNING workspaces.
 
-        Condition: NOW() - last_access_at > standby_ttl_seconds
+        Uses single UPDATE + RETURNING instead of SELECT + N UPDATEs.
+        Complexity: O(1) DB round-trips.
+
+        Condition: NOW() - last_access_at > standby_ttl (from config)
 
         Returns:
             Number of workspaces transitioned.
         """
-        # Query for expired RUNNING workspaces
+        # Single UPDATE with RETURNING - no separate SELECT needed
         result = await self._conn.execute(
             text("""
-                SELECT id FROM workspaces
+                UPDATE workspaces
+                SET desired_state = :desired_state
                 WHERE phase = :phase
                   AND operation = :operation
                   AND deleted_at IS NULL
                   AND last_access_at IS NOT NULL
-                  AND NOW() - last_access_at > make_interval(secs := standby_ttl_seconds)
+                  AND NOW() - last_access_at > make_interval(secs := :standby_ttl)
+                RETURNING id
             """),
             {
                 "phase": Phase.RUNNING.value,
                 "operation": Operation.NONE.value,
+                "standby_ttl": self._standby_ttl,
+                "desired_state": DesiredState.STANDBY.value,
             },
         )
-        expired_ids = [row[0] for row in result.fetchall()]
+        updated_ids = [row[0] for row in result.fetchall()]
 
-        if not expired_ids:
-            return 0
-
-        # Update desired_state to STANDBY
-        for ws_id in expired_ids:
-            stmt = (
-                update(Workspace)
-                .where(
-                    Workspace.id == ws_id,
-                    Workspace.phase == Phase.RUNNING.value,
-                    Workspace.operation == Operation.NONE.value,
-                )
-                .values(desired_state=DesiredState.STANDBY.value)
-            )
-            await self._conn.execute(stmt)
-
-        logger.info("standby_ttl expired for %d workspaces", len(expired_ids))
-        return len(expired_ids)
+        if updated_ids:
+            logger.info("[%s] standby_ttl expired for %d workspaces", self.name, len(updated_ids))
+        return len(updated_ids)
 
     async def _check_archive_ttl(self) -> int:
         """Check archive_ttl for STANDBY workspaces.
 
-        Condition: NOW() - phase_changed_at > archive_ttl_seconds
+        Uses single UPDATE + RETURNING instead of SELECT + N UPDATEs.
+        Complexity: O(1) DB round-trips.
+
+        Condition: NOW() - phase_changed_at > archive_ttl (from config)
 
         Returns:
             Number of workspaces transitioned.
         """
-        # Query for expired STANDBY workspaces
+        # Single UPDATE with RETURNING - no separate SELECT needed
         result = await self._conn.execute(
             text("""
-                SELECT id FROM workspaces
+                UPDATE workspaces
+                SET desired_state = :desired_state
                 WHERE phase = :phase
                   AND operation = :operation
                   AND deleted_at IS NULL
                   AND phase_changed_at IS NOT NULL
-                  AND NOW() - phase_changed_at > make_interval(secs := archive_ttl_seconds)
+                  AND NOW() - phase_changed_at > make_interval(secs := :archive_ttl)
+                RETURNING id
             """),
             {
                 "phase": Phase.STANDBY.value,
                 "operation": Operation.NONE.value,
+                "archive_ttl": self._archive_ttl,
+                "desired_state": DesiredState.ARCHIVED.value,
             },
         )
-        expired_ids = [row[0] for row in result.fetchall()]
+        updated_ids = [row[0] for row in result.fetchall()]
 
-        if not expired_ids:
-            return 0
-
-        # Update desired_state to ARCHIVED
-        for ws_id in expired_ids:
-            stmt = (
-                update(Workspace)
-                .where(
-                    Workspace.id == ws_id,
-                    Workspace.phase == Phase.STANDBY.value,
-                    Workspace.operation == Operation.NONE.value,
-                )
-                .values(desired_state=DesiredState.ARCHIVED.value)
-            )
-            await self._conn.execute(stmt)
-
-        logger.info("archive_ttl expired for %d workspaces", len(expired_ids))
-        return len(expired_ids)
+        if updated_ids:
+            logger.info("[%s] archive_ttl expired for %d workspaces", self.name, len(updated_ids))
+        return len(updated_ids)

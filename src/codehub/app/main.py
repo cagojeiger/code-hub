@@ -32,16 +32,13 @@ from codehub.control.coordinator import (
     TTLManager,
     WorkspaceController,
 )
-from codehub.control.coordinator.base import (
-    LeaderElection,
-    NotifyPublisher,
-    NotifySubscriber,
-)
+from codehub.control.coordinator.base import LeaderElection
 from codehub.infra import (
     close_db,
     close_docker,
     close_redis,
     close_storage,
+    get_activity_store,
     get_engine,
     get_redis,
     get_s3_client,
@@ -50,6 +47,7 @@ from codehub.infra import (
     init_redis,
     init_storage,
 )
+from codehub.infra.redis import NotifyPublisher, NotifySubscriber
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -132,21 +130,20 @@ async def _run_coordinators() -> None:
     ic = DockerInstanceController()
     sp = S3StorageProvider()
 
-    # NotifyPublisher for wake signals
+    # Redis wrappers
     wake_publisher = NotifyPublisher(redis_client)
+    activity_store = get_activity_store()
 
     def make_runner(coordinator_cls: type, *args) -> callable:
         """Factory for coordinator runner coroutines.
 
         Uses coordinator_cls.COORDINATOR_TYPE to create LeaderElection.
-        Consumer name includes PID for unique identification in Redis Streams.
+        Uses Redis PUB/SUB for wake notifications (broadcasting to all coordinators).
         """
         async def runner() -> None:
             async with engine.connect() as conn:
                 leader = LeaderElection(conn, coordinator_cls.COORDINATOR_TYPE)
-                # consumer_name: {coordinator_type}-{pid} for unique identification
-                consumer_name = f"{coordinator_cls.COORDINATOR_TYPE}-{os.getpid()}"
-                notify = NotifySubscriber(redis_client, consumer_name)
+                notify = NotifySubscriber(redis_client)
                 coordinator = coordinator_cls(conn, leader, notify, *args)
                 await coordinator.run()
         return runner
@@ -160,7 +157,7 @@ async def _run_coordinators() -> None:
         settings = get_settings()
         # Convert SQLAlchemy URL to asyncpg URL (remove +asyncpg suffix)
         db_url = settings.database.url.replace("+asyncpg", "")
-        listener = EventListener(db_url, redis_client)
+        listener = EventListener(db_url, redis_client, wake_publisher=wake_publisher)
         await listener.run()
 
     async def activity_buffer_flush_loop() -> None:
@@ -175,7 +172,7 @@ async def _run_coordinators() -> None:
         while True:
             await asyncio.sleep(30)
             try:
-                count = await buffer.flush(redis_client)
+                count = await buffer.flush(activity_store)
                 if count > 0:
                     logger.debug("Flushed %d activities to Redis", count)
             except Exception as e:
@@ -185,7 +182,7 @@ async def _run_coordinators() -> None:
         await asyncio.gather(
             make_runner(ObserverCoordinator, ic, sp)(),
             make_runner(WorkspaceController, ic, sp)(),
-            make_runner(TTLManager, redis_client, wake_publisher)(),
+            make_runner(TTLManager, activity_store, wake_publisher)(),
             make_runner(ArchiveGC)(),
             event_listener_runner(),
             activity_buffer_flush_loop(),

@@ -1,7 +1,7 @@
 """SSE Events API endpoint.
 
 Provides real-time workspace updates via Server-Sent Events.
-Uses Redis Streams (XREAD) for reliable message delivery.
+Uses SSEStreamReader (Redis Streams) for reliable message delivery.
 
 Reference: docs/architecture_v2/event-listener.md
 """
@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from codehub.app.proxy.auth import get_user_id_from_session
 from codehub.core.models import Workspace
 from codehub.infra import get_redis, get_session, get_session_factory
+from codehub.infra.redis import SSEStreamReader
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +29,6 @@ DbSession = Annotated[AsyncSession, Depends(get_session)]
 
 # Constants
 HEARTBEAT_INTERVAL_SEC = 30.0
-XREAD_BLOCK_MS = 1000
-XREAD_TIMEOUT_SEC = 2.0
-XREAD_COUNT = 10
 
 # SSE payload fields (subset of Workspace)
 SSE_WORKSPACE_FIELDS = {
@@ -85,18 +83,14 @@ async def _event_generator(
 ) -> AsyncGenerator[str, None]:
     """Generate SSE events for a user.
 
-    Uses Redis Streams XREAD to read from 'events:{user_id}' and yields:
+    Uses SSEStreamReader to read from 'events:{user_id}' and yields:
     - workspace_updated: when phase/operation changes
     - workspace_deleted: when workspace is soft-deleted
     - heartbeat: every 30 seconds
 
     Includes deduplication to filter consecutive identical events.
     """
-    redis_client = get_redis()
-    stream_key = f"events:{user_id}"
-
-    # Start from current stream end (new messages only)
-    last_id = "$"
+    reader = SSEStreamReader(get_redis(), user_id)
 
     # Deduplication: track last sent state per workspace
     # Key: workspace_id, Value: (phase, operation, error_reason)
@@ -113,61 +107,43 @@ async def _event_generator(
             if await request.is_disconnected():
                 break
 
-            # XREAD: read messages after last_id
-            try:
-                messages = await asyncio.wait_for(
-                    redis_client.xread(
-                        {stream_key: last_id},
-                        block=XREAD_BLOCK_MS,
-                        count=XREAD_COUNT,
-                    ),
-                    timeout=XREAD_TIMEOUT_SEC,
-                )
-            except asyncio.TimeoutError:
-                messages = None
+            # Read messages using SSEStreamReader
+            messages = await reader.read()
 
-            if messages:
-                for _stream, entries in messages:
-                    for msg_id, fields in entries:
-                        # Update last_id for next read
-                        if isinstance(msg_id, bytes):
-                            last_id = msg_id.decode()
-                        else:
-                            last_id = msg_id
+            for _msg_id, fields in messages:
+                try:
+                    # Get data field (may be bytes)
+                    data_raw = fields.get(b"data") or fields.get("data")
+                    if isinstance(data_raw, bytes):
+                        data_raw = data_raw.decode()
 
-                        try:
-                            # Get data field (may be bytes)
-                            data_raw = fields.get(b"data") or fields.get("data")
-                            if isinstance(data_raw, bytes):
-                                data_raw = data_raw.decode()
+                    data = json.loads(data_raw)
+                    workspace_id = data.get("id")
 
-                            data = json.loads(data_raw)
-                            workspace_id = data.get("id")
+                    if data.get("deleted"):
+                        # Workspace deleted event
+                        last_sent_state.pop(workspace_id, None)
+                        yield f"event: workspace_deleted\ndata: {json.dumps({'id': workspace_id})}\n\n"
+                    else:
+                        # Workspace updated - fetch full data
+                        workspace = await _get_workspace_by_id(workspace_id)
+                        if workspace:
+                            # Deduplication check
+                            current_state = (
+                                workspace.phase,
+                                workspace.operation,
+                                workspace.error_reason,
+                            )
+                            if last_sent_state.get(workspace_id) == current_state:
+                                continue
 
-                            if data.get("deleted"):
-                                # Workspace deleted event
-                                last_sent_state.pop(workspace_id, None)
-                                yield f"event: workspace_deleted\ndata: {json.dumps({'id': workspace_id})}\n\n"
-                            else:
-                                # Workspace updated - fetch full data
-                                workspace = await _get_workspace_by_id(workspace_id)
-                                if workspace:
-                                    # Deduplication check
-                                    current_state = (
-                                        workspace.phase,
-                                        workspace.operation,
-                                        workspace.error_reason,
-                                    )
-                                    if last_sent_state.get(workspace_id) == current_state:
-                                        continue
+                            # Update cache and send
+                            last_sent_state[workspace_id] = current_state
+                            ws_data = _workspace_to_dict(workspace)
+                            yield f"event: workspace_updated\ndata: {json.dumps(ws_data)}\n\n"
 
-                                    # Update cache and send
-                                    last_sent_state[workspace_id] = current_state
-                                    ws_data = _workspace_to_dict(workspace)
-                                    yield f"event: workspace_updated\ndata: {json.dumps(ws_data)}\n\n"
-
-                        except json.JSONDecodeError as e:
-                            logger.warning("[SSE] Invalid JSON in message: %s", e)
+                except json.JSONDecodeError as e:
+                    logger.warning("[SSE] Invalid JSON in message: %s", e)
 
             # Send heartbeat
             now = loop.time()

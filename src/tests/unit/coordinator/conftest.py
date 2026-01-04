@@ -4,10 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from codehub.control.coordinator.base import (
-    LeaderElection,
-    NotifySubscriber,
-)
+from codehub.control.coordinator.base import LeaderElection
+from codehub.infra.redis import NotifySubscriber
 
 
 @pytest.fixture

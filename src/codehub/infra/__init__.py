@@ -11,9 +11,17 @@ from codehub.infra.postgresql import (
     init_db,
 )
 from codehub.infra.redis import (
+    ActivityStore,
+    NotifyPublisher,
+    NotifySubscriber,
+    SSEStreamPublisher,
+    SSEStreamReader,
+    WakeTarget,
     close_redis,
+    get_activity_store,
     get_publisher,
     get_redis,
+    get_sse_publisher,
     init_publisher,
     init_redis,
 )
@@ -27,12 +35,21 @@ __all__ = [
     "get_session_factory",
     # Models
     "Workspace",
-    # Redis
+    # Redis - client
     "init_redis",
     "close_redis",
     "get_redis",
     "init_publisher",
     "get_publisher",
+    "get_sse_publisher",
+    "get_activity_store",
+    # Redis - classes
+    "WakeTarget",
+    "NotifyPublisher",
+    "NotifySubscriber",
+    "SSEStreamPublisher",
+    "SSEStreamReader",
+    "ActivityStore",
     # Storage
     "init_storage",
     "close_storage",
