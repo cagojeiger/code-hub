@@ -83,23 +83,45 @@ class WorkspaceController(CoordinatorBase):
         self._sp = sp
 
     async def tick(self) -> None:
-        """Reconcile loop: Load → Judge → Plan → Execute → Persist."""
-        workspaces = await self._load_for_reconcile()
+        """Reconcile loop: Load → Judge → Plan → Execute → Persist.
 
-        # 병렬 실행 (return_exceptions=True로 한 ws 실패해도 나머지 계속)
+        Hybrid execution strategy (ADR-012):
+        - DB operations: Sequential (asyncpg single connection limit)
+        - External operations (Docker/S3): Parallel for performance
+        """
+        workspaces = await self._load_for_reconcile()  # DB (순차)
+
+        # 1. Judge + Plan (순수 계산)
+        plans: list[tuple[Workspace, PlanAction]] = []
+        for ws in workspaces:
+            action = self._judge_and_plan(ws)
+            plans.append((ws, action))
+
+        # 2. Execute 병렬 (Docker/S3 - DB 미사용!)
+        async def execute_one(
+            ws: Workspace, action: PlanAction
+        ) -> tuple[Workspace, PlanAction]:
+            if self._needs_execute(action, ws):
+                try:
+                    await self._execute(ws, action)
+                except Exception:
+                    logger.exception("Failed to execute %s", ws.id)
+            return (ws, action)
+
         results = await asyncio.gather(
-            *[self._reconcile_one(ws) for ws in workspaces],
-            return_exceptions=True,
+            *[execute_one(ws, action) for ws, action in plans],
+            return_exceptions=False,  # 개별 예외 처리됨
         )
 
-        # 에러 로깅
-        for ws, result in zip(workspaces, results):
-            if isinstance(result, Exception):
-                logger.exception("Failed to reconcile %s: %s", ws.id, result)
+        # 3. Persist 순차 (DB - ADR-012 준수)
+        for ws, action in results:
+            try:
+                await self._persist(ws, action)
+            except Exception:
+                logger.exception("Failed to persist %s", ws.id)
 
-    async def _reconcile_one(self, ws: Workspace) -> None:
-        """Reconcile single workspace."""
-        # 1. Judge
+    def _judge_and_plan(self, ws: Workspace) -> PlanAction:
+        """Judge + Plan (순수 계산, DB 미사용)."""
         cond_input = ConditionInput.from_conditions(ws.conditions or {})
         judge_input = JudgeInput(
             conditions=cond_input,
@@ -107,18 +129,14 @@ class WorkspaceController(CoordinatorBase):
             archive_key=ws.archive_key,
         )
         judge_output = judge(judge_input)
+        return self._plan(ws, judge_output)
 
-        # 2. Plan
-        action = self._plan(ws, judge_output)
-
-        # 3. Execute (operation 시작 시에만)
-        if action.operation != Operation.NONE and not action.complete:
-            # 새 operation 시작 또는 재시도
-            if ws.operation == Operation.NONE or ws.operation == action.operation:
-                await self._execute(ws, action)
-
-        # 4. Persist (CAS)
-        await self._persist(ws, action)
+    def _needs_execute(self, action: PlanAction, ws: Workspace) -> bool:
+        """Execute 필요 여부 판단."""
+        if action.operation == Operation.NONE or action.complete:
+            return False
+        # 새 operation 시작 또는 재시도
+        return ws.operation == Operation.NONE or ws.operation == action.operation
 
     def _plan(self, ws: Workspace, judge_output: JudgeOutput) -> PlanAction:
         """operation 결정 로직.
@@ -366,7 +384,7 @@ class WorkspaceController(CoordinatorBase):
 
         success = await self._cas_update(
             workspace_id=ws.id,
-            expected_operation=ws_op,
+            expected_operation=Operation(ws_op),
             phase=action.phase,
             operation=action.operation,
             op_started_at=op_started_at,

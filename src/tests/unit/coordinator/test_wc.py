@@ -48,7 +48,13 @@ def mock_sp() -> AsyncMock:
 @pytest.fixture
 def mock_conn() -> AsyncMock:
     """Mock AsyncConnection."""
-    return AsyncMock()
+    conn = AsyncMock()
+    # Mock execute() to return result with rowcount (for CAS updates)
+    mock_result = MagicMock()
+    mock_result.rowcount = 1
+    mock_result.mappings.return_value.all.return_value = []
+    conn.execute.return_value = mock_result
+    return conn
 
 
 @pytest.fixture
@@ -510,25 +516,33 @@ class TestTickParallel:
         mock_ic: AsyncMock,
         mock_sp: AsyncMock,
     ):
-        """한 ws 실패해도 나머지 계속."""
+        """한 ws Execute 실패해도 나머지 계속 처리됨."""
         wc = WorkspaceController(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
 
-        ws1 = make_workspace(id="ws-1")
-        ws2 = make_workspace(id="ws-2")
-        ws3 = make_workspace(id="ws-3")
+        # PENDING -> RUNNING 워크스페이스 (PROVISIONING 필요)
+        ws1 = make_workspace(id="ws-1", phase=Phase.PENDING, desired_state=DesiredState.RUNNING)
+        ws2 = make_workspace(id="ws-2", phase=Phase.PENDING, desired_state=DesiredState.RUNNING)
+        ws3 = make_workspace(id="ws-3", phase=Phase.PENDING, desired_state=DesiredState.RUNNING)
 
-        call_count = {"count": 0}
+        execute_calls = []
+        persist_calls = []
 
-        async def mock_reconcile(ws):
-            call_count["count"] += 1
+        async def mock_execute(ws, _action):
+            execute_calls.append(ws.id)
             if ws.id == "ws-2":
                 raise RuntimeError("ws-2 failed")
 
+        async def mock_persist(ws, _action):
+            persist_calls.append(ws.id)
+
         wc._load_for_reconcile = AsyncMock(return_value=[ws1, ws2, ws3])
-        wc._reconcile_one = mock_reconcile
+        wc._execute = mock_execute
+        wc._persist = mock_persist
 
         # 에러가 발생해도 다른 ws는 처리됨
         await wc.tick()
 
-        # 3개 모두 reconcile 시도됨
-        assert call_count["count"] == 3
+        # 3개 모두 execute 시도됨 (병렬)
+        assert len(execute_calls) == 3
+        # 3개 모두 persist 시도됨 (순차, 에러 격리)
+        assert len(persist_calls) == 3
