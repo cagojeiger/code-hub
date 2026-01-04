@@ -23,8 +23,6 @@ from codehub.infra import get_s3_client
 
 logger = logging.getLogger(__name__)
 
-VOLUME_PREFIX = "codehub-ws-"
-
 
 class S3StorageProvider(StorageProvider):
     """S3-based storage provider using Docker volumes and S3.
@@ -38,6 +36,9 @@ class S3StorageProvider(StorageProvider):
         volumes: VolumeProvider | None = None,
         job_runner: JobRunner | None = None,
     ) -> None:
+        settings = get_settings()
+        self._resource_prefix = settings.docker.resource_prefix
+
         # Lazy imports to avoid circular dependencies
         if volumes is None:
             from codehub.adapters.volume.docker import DockerVolumeProvider
@@ -52,7 +53,7 @@ class S3StorageProvider(StorageProvider):
         self._job_runner = job_runner
 
     def _volume_name(self, workspace_id: str) -> str:
-        return f"{VOLUME_PREFIX}{workspace_id}-home"
+        return f"{self._resource_prefix}{workspace_id}-home"
 
     async def list_volumes(self, prefix: str) -> list[VolumeInfo]:
         """List all volumes with given prefix."""
@@ -168,7 +169,7 @@ class S3StorageProvider(StorageProvider):
             RuntimeError: If archive job fails
         """
         settings = get_settings()
-        archive_key = f"{VOLUME_PREFIX}{workspace_id}/{op_id}/home.tar.zst"
+        archive_key = f"{self._resource_prefix}{workspace_id}/{op_id}/home.tar.zst"
         archive_url = f"s3://{settings.storage.bucket_name}/{archive_key}"
         volume_name = self._volume_name(workspace_id)
 
@@ -239,7 +240,7 @@ class S3StorageProvider(StorageProvider):
     async def create_empty_archive(self, workspace_id: str, op_id: str) -> str:
         """Create empty archive and return archive_key."""
         settings = get_settings()
-        archive_key = f"{VOLUME_PREFIX}{workspace_id}/{op_id}/home.tar.zst"
+        archive_key = f"{self._resource_prefix}{workspace_id}/{op_id}/home.tar.zst"
 
         # Create an empty tar.zst file
         import zstandard as zstd

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Cookie, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from codehub.app.config import get_settings
 from codehub.app.proxy.auth import get_user_id_from_session
 from codehub.control.coordinator.base import NotifyPublisher
 from codehub.core.domain import DesiredState
@@ -16,6 +17,10 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 Publisher = Annotated[NotifyPublisher, Depends(get_publisher)]
+
+# Default image from settings
+_settings = get_settings()
+_default_image = _settings.docker.default_image
 
 
 # =============================================================================
@@ -28,7 +33,7 @@ class CreateWorkspaceRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=500)
-    image_ref: str = Field(default="cagojeiger/code-server:4.107.0", max_length=512)
+    image_ref: str = Field(default=_default_image, max_length=512)
 
 
 class UpdateWorkspaceRequest(BaseModel):

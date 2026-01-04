@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from codehub.app.config import get_settings
 from codehub.control.coordinator.base import (
     Channel,
     CoordinatorBase,
@@ -22,6 +23,9 @@ from codehub.core.models import Workspace
 
 logger = logging.getLogger(__name__)
 
+# Load settings once at module level
+_settings = get_settings()
+
 
 class BulkObserver:
     """Bulk observe all workspace resources.
@@ -33,11 +37,11 @@ class BulkObserver:
         self,
         instance_controller: InstanceController,
         storage_provider: StorageProvider,
-        prefix: str = "codehub-ws-",
     ) -> None:
         self._ic = instance_controller
         self._sp = storage_provider
-        self._prefix = prefix
+        self._prefix = _settings.docker.resource_prefix
+        self._log_prefix = self.__class__.__name__
 
     async def observe_all(self) -> dict[str, dict[str, dict | None]]:
         """Observe all resources and return conditions by workspace_id.
@@ -46,13 +50,13 @@ class BulkObserver:
             {workspace_id: {"container": {...}, "volume": {...}, "archive": {...}}, ...}
         """
         # 1. Bulk API calls (3회)
-        logger.debug("[BulkObserver] Starting observe_all with prefix=%s", self._prefix)
+        logger.debug("[%s] Starting observe_all with prefix=%s", self._log_prefix, self._prefix)
         containers = await self._ic.list_all(self._prefix)
         volumes = await self._sp.list_volumes(self._prefix)
         archives = await self._sp.list_archives(self._prefix)
         logger.debug(
-            "[BulkObserver] API results: containers=%d, volumes=%d, archives=%d",
-            len(containers), len(volumes), len(archives)
+            "[%s] API results: containers=%d, volumes=%d, archives=%d",
+            self._log_prefix, len(containers), len(volumes), len(archives)
         )
 
         # 2. Index by workspace_id
@@ -95,47 +99,46 @@ class ObserverCoordinator(CoordinatorBase):
         notify: NotifySubscriber,
         instance_controller: InstanceController,
         storage_provider: StorageProvider,
-        prefix: str = "codehub-ws-",
     ) -> None:
         super().__init__(conn, leader, notify)
-        self._observer = BulkObserver(instance_controller, storage_provider, prefix)
+        self._observer = BulkObserver(instance_controller, storage_provider)
 
     async def tick(self) -> None:
         """Observe all resources and persist conditions to DB."""
-        logger.debug("[Observer] tick() started")
+        logger.debug("[%s] tick() started", self.name)
         now = datetime.now(UTC)
 
         # 1. Bulk observe all resources
         observed = await self._observer.observe_all()
-        logger.debug("[Observer] Observed %d workspaces from infra", len(observed))
+        logger.debug("[%s] Observed %d workspaces from infra", self.name, len(observed))
 
         if not observed:
-            logger.debug("[Observer] No observed resources, skipping DB update")
+            logger.debug("[%s] No observed resources, skipping DB update", self.name)
             return
 
         # 2. Load existing workspaces from DB
         ws_ids = await self._load_workspace_ids()
-        logger.debug("[Observer] DB workspace IDs: %s", ws_ids)
-        logger.debug("[Observer] Observed workspace IDs: %s", set(observed.keys()))
+        logger.debug("[%s] DB workspace IDs: %s", self.name, ws_ids)
+        logger.debug("[%s] Observed workspace IDs: %s", self.name, set(observed.keys()))
 
         # 3. Filter to existing workspaces only
         updates_to_apply: list[tuple[str, dict, datetime]] = []
         for ws_id, conditions in observed.items():
             if ws_id not in ws_ids:
-                logger.warning("[Observer] Skipping orphan ws_id=%s (not in DB)", ws_id)
+                logger.warning("[%s] Skipping orphan ws_id=%s (not in DB)", self.name, ws_id)
                 continue
             updates_to_apply.append((ws_id, conditions, now))
 
-        logger.debug("[Observer] Updates to apply: %d", len(updates_to_apply))
+        logger.debug("[%s] Updates to apply: %d", self.name, len(updates_to_apply))
 
         # 4. Update conditions for each workspace
         if updates_to_apply:
             count = await self._bulk_update_conditions(updates_to_apply)
             # Commit at connection level
             await self._conn.commit()
-            logger.info("[Observer] Committed %d updates to DB", count)
+            logger.info("[%s] Committed %d updates to DB", self.name, count)
         else:
-            logger.debug("[Observer] No updates to apply")
+            logger.debug("[%s] No updates to apply", self.name)
 
     # =================================================================
     # DB Operations (Observer-owned columns: conditions, observed_at)

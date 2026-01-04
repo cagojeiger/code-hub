@@ -2,6 +2,7 @@
 
 import logging
 
+from codehub.app.config import get_settings
 from codehub.core.interfaces import ContainerInfo, InstanceController
 from codehub.infra.docker import (
     ContainerAPI,
@@ -11,27 +12,20 @@ from codehub.infra.docker import (
 
 logger = logging.getLogger(__name__)
 
-# Container configuration
-CONTAINER_PREFIX = "codehub-ws-"
-CONTAINER_PORT = 8080
-NETWORK_NAME = "codehub-net"
-CODER_UID = 1000
-CODER_GID = 1000
-
 
 class DockerInstanceController(InstanceController):
     """Docker-based instance controller using ContainerAPI."""
 
     def __init__(
         self,
-        image_ref: str = "cagojeiger/code-server:4.107.0",
         containers: ContainerAPI | None = None,
     ) -> None:
-        self._image_ref = image_ref
+        settings = get_settings()
+        self._config = settings.docker
         self._containers = containers or ContainerAPI()
 
     def _container_name(self, workspace_id: str) -> str:
-        return f"{CONTAINER_PREFIX}{workspace_id}"
+        return f"{self._config.resource_prefix}{workspace_id}"
 
     async def list_all(self, prefix: str) -> list[ContainerInfo]:
         """List all containers with given prefix."""
@@ -73,16 +67,17 @@ class DockerInstanceController(InstanceController):
             return
 
         # Create new container with full configuration
+        port = self._config.container_port
         config = ContainerConfig(
-            image=image_ref or self._image_ref,
+            image=image_ref or self._config.default_image,
             name=container_name,
-            cmd=["--auth", "none", "--bind-addr", "0.0.0.0:8080"],
-            user=f"{CODER_UID}:{CODER_GID}",
+            cmd=["--auth", "none", "--bind-addr", f"0.0.0.0:{port}"],
+            user=f"{self._config.coder_uid}:{self._config.coder_gid}",
             env=["HOME=/home/coder"],
-            exposed_ports={"8080/tcp": {}},
+            exposed_ports={f"{port}/tcp": {}},
             host_config=HostConfig(
-                network_mode=NETWORK_NAME,
-                binds=[f"codehub-ws-{workspace_id}-home:/home/coder"],
+                network_mode=self._config.network_name,
+                binds=[f"{self._config.resource_prefix}{workspace_id}-home:/home/coder"],
             ),
         )
 

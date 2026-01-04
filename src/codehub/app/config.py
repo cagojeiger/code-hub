@@ -35,6 +35,20 @@ class StorageConfig(BaseSettings):
     bucket_name: str = Field(default="codehub-archives", validation_alias="S3_BUCKET")
 
 
+class DockerConfig(BaseSettings):
+    """Docker-related configuration for workspace containers."""
+
+    model_config = SettingsConfigDict(env_prefix="DOCKER_")
+
+    resource_prefix: str = Field(default="codehub-ws-")
+    network_name: str = Field(default="codehub-net")
+    container_port: int = Field(default=8080)
+    coder_uid: int = Field(default=1000)
+    coder_gid: int = Field(default=1000)
+    default_image: str = Field(default="cagojeiger/code-server:4.107.0")
+    storage_job_image: str = Field(default="codehub/storage-job:latest")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CODEHUB_",
@@ -44,6 +58,7 @@ class Settings(BaseSettings):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
+    docker: DockerConfig = Field(default_factory=DockerConfig)
 
 
 @lru_cache

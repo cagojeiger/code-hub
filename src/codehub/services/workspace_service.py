@@ -6,9 +6,13 @@ from uuid import uuid4
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from codehub.app.config import get_settings
 from codehub.core.domain import DesiredState, Operation, Phase
 from codehub.core.errors import ForbiddenError, WorkspaceNotFoundError
 from codehub.core.models import Workspace
+
+# Load settings once at module level
+_settings = get_settings()
 
 
 async def create_workspace(
@@ -16,7 +20,7 @@ async def create_workspace(
     user_id: str,
     name: str,
     description: str | None = None,
-    image_ref: str = "cagojeiger/code-server:4.107.0",
+    image_ref: str | None = None,
 ) -> Workspace:
     """Create a new workspace.
 
@@ -33,15 +37,19 @@ async def create_workspace(
     workspace_id = str(uuid4())
     now = datetime.now(UTC)
 
+    # Use default image if not provided
+    final_image_ref = image_ref or _settings.docker.default_image
+    resource_prefix = _settings.docker.resource_prefix
+
     workspace = Workspace(
         id=workspace_id,
         owner_user_id=user_id,
         name=name,
         description=description,
-        image_ref=image_ref,
+        image_ref=final_image_ref,
         instance_backend="local-docker",
         storage_backend="minio",
-        home_store_key=f"codehub-ws-{workspace_id}-home",
+        home_store_key=f"{resource_prefix}{workspace_id}-home",
         phase=Phase.PENDING.value,
         operation=Operation.NONE.value,
         desired_state=DesiredState.RUNNING.value,
@@ -169,7 +177,11 @@ async def delete_workspace(
     workspace_id: str,
     user_id: str,
 ) -> None:
-    """Soft delete workspace (sets desired_state to DELETED).
+    """Soft delete workspace.
+
+    Sets deleted_at and desired_state to DELETED.
+    - deleted_at: Immediately excludes from list queries
+    - desired_state: Triggers reconciler to cleanup resources
 
     Args:
         db: Database session
@@ -178,8 +190,9 @@ async def delete_workspace(
     """
     workspace = await get_workspace(db, workspace_id, user_id)
 
-    # Set desired_state to DELETED, reconciler will handle cleanup
+    now = datetime.now(UTC)
+    workspace.deleted_at = now  # Soft delete (spec: API sets deleted_at)
     workspace.desired_state = DesiredState.DELETED.value
-    workspace.updated_at = datetime.now(UTC)
+    workspace.updated_at = now
 
     await db.commit()

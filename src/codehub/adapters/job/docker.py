@@ -3,12 +3,11 @@
 import logging
 import uuid
 
+from codehub.app.config import get_settings
 from codehub.core.interfaces import JobResult, JobRunner
 from codehub.infra.docker import ContainerAPI, ContainerConfig, HostConfig
 
 logger = logging.getLogger(__name__)
-
-STORAGE_JOB_IMAGE = "codehub/storage-job:latest"
 
 
 class DockerJobRunner(JobRunner):
@@ -21,6 +20,8 @@ class DockerJobRunner(JobRunner):
     """
 
     def __init__(self, containers: ContainerAPI | None = None) -> None:
+        settings = get_settings()
+        self._config = settings.docker
         self._containers = containers or ContainerAPI()
 
     async def run_archive(
@@ -37,7 +38,7 @@ class DockerJobRunner(JobRunner):
 
         try:
             config = ContainerConfig(
-                image=STORAGE_JOB_IMAGE,
+                image=self._config.storage_job_image,
                 name=helper_name,
                 cmd=["-c", "/usr/local/bin/archive"],
                 env=[
@@ -47,7 +48,7 @@ class DockerJobRunner(JobRunner):
                     f"AWS_SECRET_ACCESS_KEY={s3_secret_key}",
                 ],
                 host_config=HostConfig(
-                    network_mode="codehub-net",
+                    network_mode=self._config.network_name,
                     binds=[f"{volume_name}:/data:ro"],
                 ),
             )
@@ -77,7 +78,7 @@ class DockerJobRunner(JobRunner):
 
         try:
             config = ContainerConfig(
-                image=STORAGE_JOB_IMAGE,
+                image=self._config.storage_job_image,
                 name=helper_name,
                 cmd=["-c", "/usr/local/bin/restore"],
                 env=[
@@ -87,7 +88,7 @@ class DockerJobRunner(JobRunner):
                     f"AWS_SECRET_ACCESS_KEY={s3_secret_key}",
                 ],
                 host_config=HostConfig(
-                    network_mode="codehub-net",
+                    network_mode=self._config.network_name,
                     binds=[f"{volume_name}:/data"],
                 ),
             )

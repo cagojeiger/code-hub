@@ -26,6 +26,7 @@ from codehub.core.errors import (
     UpstreamUnavailableError,
     WorkspaceNotFoundError,
 )
+from codehub.app.config import get_settings
 from codehub.infra import get_session
 
 from .auth import get_user_id_from_session, get_workspace_for_user
@@ -50,15 +51,14 @@ DbSession = Annotated[AsyncSession, Depends(get_session)]
 # Instance = Annotated[InstanceController, Depends(get_instance_controller)]
 
 # =============================================================================
-# Dummy code-server for testing (하드코딩)
+# Settings-based configuration
 # =============================================================================
-# docker-compose의 dummy-codeserver 컨테이너로 프록시
-DUMMY_MODE = False  # Dynamic code-server containers enabled
-DUMMY_HOSTNAME = "codehub-dummy-codeserver"
-DUMMY_PORT = 8080
+_settings = get_settings()
+_docker_config = _settings.docker
 
-# Placeholder for container port
-CONTAINER_PORT = 8080
+# Dummy mode for testing (set DUMMY_MODE=True to use dummy-codeserver)
+DUMMY_MODE = False
+DUMMY_HOSTNAME = "codehub-dummy-codeserver"
 
 
 def _get_container_hostname(workspace_id: str) -> str:
@@ -68,14 +68,14 @@ def _get_container_hostname(workspace_id: str) -> str:
     """
     if DUMMY_MODE:
         return DUMMY_HOSTNAME
-    return f"codehub-ws-{workspace_id}"
+    return f"{_docker_config.resource_prefix}{workspace_id}"
 
 
 def _get_container_port(workspace_id: str) -> int:
     """Get container port for workspace."""
     if DUMMY_MODE:
-        return DUMMY_PORT
-    return CONTAINER_PORT
+        return _docker_config.container_port
+    return _docker_config.container_port
 
 
 # =============================================================================
