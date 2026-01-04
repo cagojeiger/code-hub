@@ -104,37 +104,47 @@ class ObserverCoordinator(CoordinatorBase):
         self._observer = BulkObserver(instance_controller, storage_provider)
 
     async def tick(self) -> None:
-        """Observe all resources and persist conditions to DB."""
+        """Observe all resources and persist conditions to DB.
+
+        DB-based iteration: 모든 워크스페이스를 업데이트 (리소스 유무 무관)
+        - 리소스가 있는 워크스페이스: 관측된 conditions
+        - 리소스가 없는 워크스페이스: empty conditions (container/volume/archive = None)
+        """
         logger.debug("[%s] tick() started", self.name)
         now = datetime.now(UTC)
 
-        # 1. Bulk observe all resources
-        observed = await self._observer.observe_all()
-        logger.debug("[%s] Observed %d workspaces from infra", self.name, len(observed))
-
-        if not observed:
-            logger.debug("[%s] No observed resources, skipping DB update", self.name)
+        # 1. Load ALL workspaces from DB first (DB-based iteration)
+        ws_ids = await self._load_workspace_ids()
+        if not ws_ids:
+            logger.debug("[%s] No workspaces in DB, skipping", self.name)
             return
 
-        # 2. Load existing workspaces from DB
-        ws_ids = await self._load_workspace_ids()
-        logger.debug("[%s] DB workspace IDs: %s", self.name, ws_ids)
-        logger.debug("[%s] Observed workspace IDs: %s", self.name, set(observed.keys()))
+        # 2. Bulk observe resources (리소스가 있는 것만 반환)
+        observed = await self._observer.observe_all()
+        logger.debug(
+            "[%s] DB workspaces=%d, observed=%d",
+            self.name, len(ws_ids), len(observed)
+        )
 
-        # 3. Filter to existing workspaces only
+        # 3. Build updates for ALL workspaces (DB-based)
+        empty_conditions = {"container": None, "volume": None, "archive": None}
         updates_to_apply: list[tuple[str, dict, datetime]] = []
-        for ws_id, conditions in observed.items():
-            if ws_id not in ws_ids:
-                logger.warning("[%s] Skipping orphan ws_id=%s (not in DB)", self.name, ws_id)
-                continue
-            updates_to_apply.append((ws_id, conditions, now))
 
-        logger.debug("[%s] Updates to apply: %d", self.name, len(updates_to_apply))
+        for ws_id in ws_ids:
+            if ws_id in observed:
+                updates_to_apply.append((ws_id, observed[ws_id], now))
+            else:
+                # 리소스 없는 워크스페이스 → empty conditions
+                updates_to_apply.append((ws_id, empty_conditions, now))
 
-        # 4. Update conditions for each workspace
+        # 4. Orphan warning (DB에 없는데 리소스는 있는 경우 - GC 대상)
+        orphan_ws_ids = set(observed.keys()) - ws_ids
+        for ws_id in orphan_ws_ids:
+            logger.warning("[%s] Orphan ws_id=%s (not in DB, GC target)", self.name, ws_id)
+
+        # 5. Bulk update conditions
         if updates_to_apply:
             count = await self._bulk_update_conditions(updates_to_apply)
-            # Commit at connection level
             await self._conn.commit()
             logger.info("[%s] Committed %d updates to DB", self.name, count)
         else:

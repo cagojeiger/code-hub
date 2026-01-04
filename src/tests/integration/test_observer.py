@@ -259,10 +259,56 @@ class TestObserverTick:
             # conditions는 여전히 빈 상태여야 함
             assert ws.conditions == {}
 
+    async def test_tick_updates_workspace_without_resources(
+        self, test_db_engine: AsyncEngine, test_workspace: Workspace
+    ):
+        """OBS-INT-005: 리소스가 없는 워크스페이스도 conditions/observed_at 업데이트.
+
+        Bug fix: Observer가 리소스 기준이 아닌 DB 기준으로 iterate하여
+        리소스가 없는 워크스페이스도 empty conditions로 업데이트.
+        """
+        ws_id = test_workspace.id
+
+        # Mock: 모든 리소스가 비어있음 (컨테이너, 볼륨, 아카이브 없음)
+        mock_ic = AsyncMock()
+        mock_ic.list_all.return_value = []
+
+        mock_sp = AsyncMock()
+        mock_sp.list_volumes.return_value = []
+        mock_sp.list_archives.return_value = []
+
+        mock_leader = AsyncMock()
+        mock_notify = AsyncMock()
+
+        async with test_db_engine.connect() as conn:
+            observer = ObserverCoordinator(
+                conn,
+                mock_leader,
+                mock_notify,
+                mock_ic,
+                mock_sp,
+            )
+            await observer.tick()
+
+        # Assert: 리소스 없는 워크스페이스도 conditions가 업데이트됨
+        async with AsyncSession(test_db_engine) as session:
+            result = await session.execute(
+                select(Workspace).where(Workspace.id == ws_id)
+            )
+            ws = result.scalar_one()
+
+            # empty conditions가 설정됨 (None들로 구성)
+            assert ws.conditions is not None
+            assert ws.conditions.get("container") is None
+            assert ws.conditions.get("volume") is None
+            assert ws.conditions.get("archive") is None
+            # observed_at이 업데이트됨 (stale이 아님)
+            assert ws.observed_at is not None
+
     async def test_tick_commits_db_changes(
         self, test_db_engine: AsyncEngine, test_workspace: Workspace
     ):
-        """OBS-INT-005: conditions 업데이트가 DB에 커밋되는지 검증."""
+        """OBS-INT-006: conditions 업데이트가 DB에 커밋되는지 검증."""
         ws_id = test_workspace.id
 
         mock_ic = AsyncMock()
