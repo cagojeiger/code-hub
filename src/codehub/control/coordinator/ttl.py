@@ -105,11 +105,12 @@ class TTLManager(CoordinatorBase):
         ]
 
         # Single bulk UPDATE using PostgreSQL unnest
+        # Note: Use CAST() instead of :: to avoid conflict with SQLAlchemy named params
         result = await self._conn.execute(
             text("""
                 UPDATE workspaces AS w
                 SET last_access_at = v.ts
-                FROM unnest(:ids::text[], :timestamps::timestamptz[]) AS v(id, ts)
+                FROM unnest(CAST(:ids AS text[]), CAST(:timestamps AS timestamptz[])) AS v(id, ts)
                 WHERE w.id = v.id
             """),
             {"ids": ws_ids, "timestamps": timestamps},
