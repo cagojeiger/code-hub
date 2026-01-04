@@ -239,9 +239,10 @@ async function init() {
   // Connect SSE for real-time updates
   connectSSE(loadWorkspaces);
 
-  // Update footer date
+  // Update footer date and card times (30s intervals)
   updateFooterDate();
-  setInterval(updateFooterDate, 60000);
+  setInterval(updateFooterDate, 30000);
+  setInterval(renderFilteredWorkspaces, 30000);
 
   // Event listeners
   document.getElementById('logout-btn').addEventListener('click', logout);

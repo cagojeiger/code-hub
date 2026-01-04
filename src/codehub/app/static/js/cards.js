@@ -7,7 +7,7 @@ import { state, STATUS_ORDER, getStatusConfig, getDisplayStatus } from './state.
 import { escapeHtml, formatDate } from './utils.js';
 
 // TTL settings (should match backend TtlConfig)
-const TTL_STANDBY_SECONDS = 300;  // 5 minutes
+const TTL_STANDBY_SECONDS = 600;  // 10 minutes
 const TTL_ARCHIVE_SECONDS = 1800; // 30 minutes
 
 /**
@@ -25,7 +25,7 @@ function getRemainingTtl(baseTime, ttlSeconds) {
 
   if (remainingSeconds <= 0) return null;
 
-  if (remainingSeconds < 60) return `${remainingSeconds}s`;
+  if (remainingSeconds < 60) return '< 1m';
   if (remainingSeconds < 3600) return `${Math.floor(remainingSeconds / 60)}m`;
   return `${Math.floor(remainingSeconds / 3600)}h`;
 }

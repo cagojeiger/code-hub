@@ -54,7 +54,7 @@ class TtlConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="TTL_")
 
-    standby_seconds: int = Field(default=300)  # 5분 (테스트용), 프로덕션: 10800 (3시간)
+    standby_seconds: int = Field(default=600)  # 10분 (테스트용), 프로덕션: 10800 (3시간)
     archive_seconds: int = Field(default=1800)  # 30분 (테스트용), 프로덕션: 86400 (24시간)
 
 
