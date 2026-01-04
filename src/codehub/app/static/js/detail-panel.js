@@ -70,11 +70,19 @@ export function renderDetailPanel(workspace) {
       </button>`;
   }
 
-  if (config.canStop) {
+  if (config.canPause) {
     actionsHtml += `
-      <button data-action="stop" data-id="${workspace.id}"
+      <button data-action="pause" data-id="${workspace.id}"
               class="px-4 py-2 bg-vscode-hover border border-vscode-border text-white rounded transition-colors">
-        Stop
+        Pause
+      </button>`;
+  }
+
+  if (config.canArchive) {
+    actionsHtml += `
+      <button data-action="archive" data-id="${workspace.id}"
+              class="px-4 py-2 bg-vscode-hover border border-vscode-border text-white rounded transition-colors hover:border-vscode-warning hover:text-vscode-warning">
+        Archive
       </button>`;
   }
 

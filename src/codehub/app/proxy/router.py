@@ -29,6 +29,7 @@ from codehub.core.errors import (
 from codehub.app.config import get_settings
 from codehub.infra import get_session
 
+from .activity import get_activity_buffer
 from .auth import get_user_id_from_session, get_workspace_for_user
 from .client import (
     WS_HOP_BY_HOP_HEADERS,
@@ -108,6 +109,9 @@ async def proxy_http(
     if not DUMMY_MODE:
         user_id = await get_user_id_from_session(db, session)
         await get_workspace_for_user(db, workspace_id, user_id)
+
+    # Record activity for TTL tracking
+    get_activity_buffer().record(workspace_id)
 
     # Resolve upstream
     # TODO: InstanceController 사용
@@ -191,6 +195,9 @@ async def proxy_websocket(
             await websocket.close(code=1008, reason="Workspace not found")
             return
 
+    # Record activity for TTL tracking
+    get_activity_buffer().record(workspace_id)
+
     # Resolve upstream
     # TODO: InstanceController 사용
     hostname = _get_container_hostname(workspace_id)
@@ -235,8 +242,8 @@ async def proxy_websocket(
             # Use TaskGroup for proper exception handling (Python 3.11+)
             try:
                 async with asyncio.TaskGroup() as tg:
-                    tg.create_task(relay_client_to_backend(websocket, backend_ws))
-                    tg.create_task(relay_backend_to_client(websocket, backend_ws))
+                    tg.create_task(relay_client_to_backend(websocket, backend_ws, workspace_id))
+                    tg.create_task(relay_backend_to_client(websocket, backend_ws, workspace_id))
             except* WebSocketDisconnect:
                 pass  # Normal client disconnect
             except* websockets.ConnectionClosed:

@@ -15,22 +15,26 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codehub.adapters.instance import DockerInstanceController
+from codehub.adapters.storage import S3StorageProvider
+from codehub.app.api.v1 import auth_router, events_router, workspaces_router
+from codehub.app.config import get_settings
+from codehub.app.logging import setup_logging
 from codehub.core.errors import CodeHubError
 from codehub.core.models import User
 from codehub.core.security import hash_password
-from codehub.adapters.storage import S3StorageProvider
-from codehub.app.api.v1 import auth_router, workspaces_router
-from codehub.app.logging import setup_logging
 from codehub.app.proxy import router as proxy_router
+from codehub.app.proxy.activity import get_activity_buffer
 from codehub.app.proxy.client import close_http_client
 from codehub.control.coordinator import (
     ArchiveGC,
+    EventListener,
     ObserverCoordinator,
     TTLManager,
     WorkspaceController,
 )
 from codehub.control.coordinator.base import (
     LeaderElection,
+    NotifyPublisher,
     NotifySubscriber,
 )
 from codehub.infra import (
@@ -128,25 +132,63 @@ async def _run_coordinators() -> None:
     ic = DockerInstanceController()
     sp = S3StorageProvider()
 
+    # NotifyPublisher for wake signals
+    wake_publisher = NotifyPublisher(redis_client)
+
     def make_runner(coordinator_cls: type, *args) -> callable:
         """Factory for coordinator runner coroutines.
 
         Uses coordinator_cls.COORDINATOR_TYPE to create LeaderElection.
+        Consumer name includes PID for unique identification in Redis Streams.
         """
         async def runner() -> None:
             async with engine.connect() as conn:
                 leader = LeaderElection(conn, coordinator_cls.COORDINATOR_TYPE)
-                notify = NotifySubscriber(redis_client)
+                # consumer_name: {coordinator_type}-{pid} for unique identification
+                consumer_name = f"{coordinator_cls.COORDINATOR_TYPE}-{os.getpid()}"
+                notify = NotifySubscriber(redis_client, consumer_name)
                 coordinator = coordinator_cls(conn, leader, notify, *args)
                 await coordinator.run()
         return runner
+
+    async def event_listener_runner() -> None:
+        """Run EventListener.
+
+        Uses direct psycopg connection (not SQLAlchemy) for PG LISTEN support.
+        Uses PostgreSQL Advisory Lock for leader election (only 1 instance writes).
+        """
+        settings = get_settings()
+        # Convert SQLAlchemy URL to asyncpg URL (remove +asyncpg suffix)
+        db_url = settings.database.url.replace("+asyncpg", "")
+        listener = EventListener(db_url, redis_client)
+        await listener.run()
+
+    async def activity_buffer_flush_loop() -> None:
+        """Flush activity buffer to Redis periodically.
+
+        Runs every 30 seconds to batch memory buffer to Redis.
+        TTL Manager then syncs Redis to DB every 60 seconds.
+
+        Reference: docs/architecture_v2/ttl-manager.md
+        """
+        buffer = get_activity_buffer()
+        while True:
+            await asyncio.sleep(30)
+            try:
+                count = await buffer.flush(redis_client)
+                if count > 0:
+                    logger.debug("Flushed %d activities to Redis", count)
+            except Exception as e:
+                logger.warning("Activity buffer flush error: %s", e)
 
     try:
         await asyncio.gather(
             make_runner(ObserverCoordinator, ic, sp)(),
             make_runner(WorkspaceController, ic, sp)(),
-            make_runner(TTLManager)(),
+            make_runner(TTLManager, redis_client, wake_publisher)(),
             make_runner(ArchiveGC)(),
+            event_listener_runner(),
+            activity_buffer_flush_loop(),
         )
     except asyncio.CancelledError:
         logger.info("[main] Coordinators cancelled")
@@ -172,6 +214,7 @@ async def codehub_error_handler(request: Request, exc: CodeHubError) -> JSONResp
 
 # Register routers
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(events_router, prefix="/api/v1")
 app.include_router(workspaces_router, prefix="/api/v1")
 app.include_router(proxy_router)
 

@@ -13,8 +13,17 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 logger = logging.getLogger(__name__)
 
 
+class WakeTarget(StrEnum):
+    """Wake target identifiers for Redis Streams."""
+
+    OB = "ob"
+    WC = "wc"
+    GC = "gc"
+
+
+# Legacy Channel names (kept for backwards compatibility)
 class Channel(StrEnum):
-    """Notify channel names."""
+    """Notify channel names (legacy, for backwards compatibility)."""
 
     OB_WAKE = "ob:wake"
     WC_WAKE = "wc:wake"
@@ -30,55 +39,149 @@ class CoordinatorType(StrEnum):
     TTL = "ttl"
 
 
+# Redis Streams constants
+STREAM_WAKE = "stream:wake"
+CONSUMER_GROUP = "coordinators"
+STREAM_MAXLEN = 100
+
+
 class NotifyPublisher:
-    """Publishes notifications to wake up Coordinators."""
+    """Publishes notifications to wake up Coordinators via Redis Streams.
+
+    Uses XADD to add wake messages to stream:wake.
+    """
 
     def __init__(self, client: redis.Redis) -> None:
         self._client = client
 
-    async def publish(self, channel: Channel, message: str = "wake") -> int:
-        count = await self._client.publish(channel, message)
-        logger.debug("Published notify to %s (receivers=%d)", channel, count)
-        return count
+    async def publish(self, target: WakeTarget) -> str:
+        """Publish wake message to stream.
 
-    async def wake_ob(self) -> int:
-        return await self.publish(Channel.OB_WAKE)
+        Returns the message ID.
+        """
+        msg_id = await self._client.xadd(
+            STREAM_WAKE,
+            {"target": str(target)},
+            maxlen=STREAM_MAXLEN,
+        )
+        logger.debug("Published wake to %s (target=%s, id=%s)", STREAM_WAKE, target, msg_id)
+        return msg_id
 
-    async def wake_wc(self) -> int:
-        return await self.publish(Channel.WC_WAKE)
+    async def wake_ob(self) -> str:
+        return await self.publish(WakeTarget.OB)
 
-    async def wake_gc(self) -> int:
-        return await self.publish(Channel.GC_WAKE)
+    async def wake_wc(self) -> str:
+        return await self.publish(WakeTarget.WC)
+
+    async def wake_gc(self) -> str:
+        return await self.publish(WakeTarget.GC)
 
 
 class NotifySubscriber:
-    """Subscribes to notify channels for Coordinator wakeup."""
+    """Subscribes to wake stream using Redis Streams XREADGROUP.
 
-    def __init__(self, client: redis.Redis) -> None:
+    Uses consumer groups for exactly-once message delivery.
+    Each coordinator instance is a separate consumer in the group.
+    """
+
+    def __init__(self, client: redis.Redis, consumer_name: str) -> None:
+        """Initialize subscriber.
+
+        Args:
+            client: Redis client.
+            consumer_name: Unique consumer name (e.g., "observer-12345").
+        """
         self._client = client
-        self._pubsub: redis.client.PubSub | None = None
+        self._consumer_name = consumer_name
+        self._target: WakeTarget | None = None
+        self._initialized = False
 
-    async def subscribe(self, *channels: Channel) -> None:
-        self._pubsub = self._client.pubsub()
-        await self._pubsub.subscribe(*[str(c) for c in channels])
-        logger.info("Subscribed to channels: %s", [str(c) for c in channels])
+    async def subscribe(self, target: WakeTarget) -> None:
+        """Subscribe to wake stream for a specific target.
+
+        Creates consumer group if it doesn't exist.
+        """
+        self._target = target
+        await self._ensure_group()
+        logger.info(
+            "Subscribed to %s (consumer=%s, target=%s)",
+            STREAM_WAKE,
+            self._consumer_name,
+            target,
+        )
+
+    async def _ensure_group(self) -> None:
+        """Create consumer group if it doesn't exist."""
+        if self._initialized:
+            return
+
+        try:
+            await self._client.xgroup_create(
+                STREAM_WAKE,
+                CONSUMER_GROUP,
+                id="$",  # Start from new messages
+                mkstream=True,  # Create stream if not exists
+            )
+            logger.info("Created consumer group %s on %s", CONSUMER_GROUP, STREAM_WAKE)
+        except redis.ResponseError as e:
+            if "BUSYGROUP" not in str(e):
+                raise
+            # Group already exists, that's fine
+
+        self._initialized = True
 
     async def unsubscribe(self) -> None:
-        if self._pubsub:
-            await self._pubsub.unsubscribe()
-            await self._pubsub.aclose()
-            self._pubsub = None
+        """Unsubscribe (no-op for streams, kept for interface compatibility)."""
+        self._target = None
 
     async def get_message(self, timeout: float = 0.0) -> str | None:
-        if not self._pubsub:
+        """Read wake message from stream.
+
+        Returns the target if a matching message was received, None otherwise.
+        Automatically ACKs processed messages.
+        """
+        if not self._target:
             return None
 
-        message = await self._pubsub.get_message(
-            ignore_subscribe_messages=True, timeout=timeout
-        )
-        if message and message["type"] == "message":
-            return message["channel"]
-        return None
+        await self._ensure_group()
+
+        try:
+            # XREADGROUP: read new messages for this consumer
+            messages = await self._client.xreadgroup(
+                CONSUMER_GROUP,
+                self._consumer_name,
+                {STREAM_WAKE: ">"},  # Only new messages
+                block=int(timeout * 1000) if timeout > 0 else None,
+                count=10,  # Process up to 10 messages at once
+            )
+
+            if not messages:
+                return None
+
+            for stream, entries in messages:
+                for msg_id, fields in entries:
+                    # Get target from message
+                    target_raw = fields.get(b"target") or fields.get("target")
+                    if isinstance(target_raw, bytes):
+                        target_raw = target_raw.decode()
+
+                    # ACK the message
+                    await self._client.xack(STREAM_WAKE, CONSUMER_GROUP, msg_id)
+
+                    # Check if this message is for us
+                    if target_raw == str(self._target):
+                        logger.debug(
+                            "Received wake (consumer=%s, target=%s)",
+                            self._consumer_name,
+                            target_raw,
+                        )
+                        return target_raw
+
+            return None
+
+        except Exception as e:
+            logger.warning("Error reading from stream: %s", e)
+            return None
 
 
 class LeaderElection:
@@ -156,7 +259,7 @@ class CoordinatorBase(ABC):
     ACTIVE_DURATION: float = 30.0
 
     COORDINATOR_TYPE: CoordinatorType
-    CHANNELS: list[Channel] = []
+    WAKE_TARGET: WakeTarget | None = None  # Set to receive wake messages
 
     def __init__(
         self,
@@ -231,9 +334,9 @@ class CoordinatorBase(ABC):
         return True
 
     async def _ensure_subscribed(self) -> None:
-        """Subscribe to notify channels if not already subscribed."""
-        if not self._subscribed and self.CHANNELS:
-            await self._notify.subscribe(*self.CHANNELS)
+        """Subscribe to wake stream if not already subscribed."""
+        if not self._subscribed and self.WAKE_TARGET:
+            await self._notify.subscribe(self.WAKE_TARGET)
             self._subscribed = True
 
     async def _throttle(self) -> None:
@@ -257,7 +360,7 @@ class CoordinatorBase(ABC):
 
     async def _wait_for_notify(self, interval: float) -> None:
         """Wait for interval or until notification received."""
-        if not self.CHANNELS:
+        if not self.WAKE_TARGET:
             await asyncio.sleep(interval)
             return
 
@@ -273,7 +376,7 @@ class CoordinatorBase(ABC):
 
     async def _release_subscription(self) -> None:
         """Release notify subscription."""
-        if self._subscribed and self.CHANNELS:
+        if self._subscribed and self.WAKE_TARGET:
             try:
                 await self._notify.unsubscribe()
             except Exception as e:

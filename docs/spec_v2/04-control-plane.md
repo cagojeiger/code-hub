@@ -253,20 +253,16 @@ TTL Manager는 비활성 워크스페이스의 TTL을 체크하고 desired_state
 
 ### TTL 종류
 
-| TTL | 대상 Phase | 트리거 | 동작 |
-|-----|-----------|--------|------|
-| standby_ttl | RUNNING | WebSocket 종료 + idle 타이머 만료 | desired_state = STANDBY |
-| archive_ttl | STANDBY | last_access_at 기준 경과 | desired_state = **ARCHIVED** |
-
-> **ARCHIVED로 변경**: 기존 PENDING 대신 ARCHIVED로 설정하여 Archive 보존
+| TTL | 대상 Phase | 기준 컬럼 | 기본값 | 동작 |
+|-----|-----------|----------|--------|------|
+| standby_ttl | RUNNING | last_access_at | 3시간 | desired_state = STANDBY |
+| archive_ttl | STANDBY | phase_changed_at | 24시간 | desired_state = ARCHIVED |
 
 ### 입출력
 
-**읽기**: DB (phase, operation, TTL 컬럼, last_access_at), Redis (ws_conn, idle_timer)
+**읽기**: DB (phase, operation, last_access_at, phase_changed_at, TTL 컬럼), Redis (last_access:*)
 
-**쓰기**: (없음 - 내부 서비스 레이어를 통해 API 호출)
-
-> **계약 #3 준수**: TTL Manager는 desired_state를 직접 변경하지 않고, 내부 서비스 레이어를 통해 API 호출
+**쓰기**: DB (last_access_at - Redis 동기화), DB (desired_state - TTL 만료 시)
 
 ### Standby TTL 체크 규칙
 
@@ -274,9 +270,8 @@ TTL Manager는 비활성 워크스페이스의 TTL을 체크하고 desired_state
 |------|------|
 | phase != RUNNING | skip |
 | operation != NONE | skip |
-| ws_conn > 0 | skip (활성 연결) |
-| idle_timer 존재 | skip (5분 대기 중) |
-| 위 조건 모두 통과 | API 호출: desired_state = STANDBY |
+| NOW() - last_access_at <= standby_ttl_seconds | skip |
+| 위 조건 모두 통과 | desired_state = STANDBY |
 
 ### Archive TTL 체크 규칙
 
@@ -284,66 +279,81 @@ TTL Manager는 비활성 워크스페이스의 TTL을 체크하고 desired_state
 |------|------|
 | phase != STANDBY | skip |
 | operation != NONE | skip |
-| NOW() - last_access_at <= archive_ttl_seconds | skip |
-| 위 조건 모두 통과 | API 호출: desired_state = **ARCHIVED** |
+| NOW() - phase_changed_at <= archive_ttl_seconds | skip |
+| 위 조건 모두 통과 | desired_state = ARCHIVED |
 
-> **ARCHIVED 유지**: desired_state=ARCHIVED로 설정되므로 Archive 보존 (M1 해결)
+> **phase_changed_at**: STANDBY 전환 시점 기준 (WC가 phase 변경 시 자동 갱신)
 
 ---
 
 ## Activity
 
-WebSocket 연결 기반으로 워크스페이스 활동을 추적합니다.
+프록시를 통한 모든 WebSocket/HTTP 트래픽을 활동으로 기록합니다.
 
-### Redis 키
-
-| 키 | 타입 | 설명 |
-|----|------|------|
-| `ws_conn:{workspace_id}` | Integer | WebSocket 연결 수 |
-| `idle_timer:{workspace_id}` | String (TTL 5분) | idle 타이머 |
-
-### Proxy 동작
-
-| 이벤트 | 동작 |
-|--------|------|
-| WebSocket Connect | INCR ws_conn, DEL idle_timer |
-| WebSocket Disconnect | DECR ws_conn, count=0이면 SETEX idle_timer 300 |
-
-### Idle 타이머 흐름
+### 활동 기록 흐름
 
 ```mermaid
 sequenceDiagram
     participant B as Browser
     participant P as Proxy
+    participant M as Memory Buffer
     participant R as Redis
+    participant D as DB
     participant T as TTL Manager
 
-    B->>P: WebSocket Connect
-    P->>R: INCR ws_conn:{id}
-    P->>R: DEL idle_timer:{id}
+    B->>P: WebSocket 메시지/HTTP 요청
+    P->>M: record(workspace_id)
+    Note over M: 즉시 (dict 덮어쓰기)
 
-    Note over B,P: 사용 중...
+    loop 30초마다
+        M->>R: MSET last_access:*
+        Note over M: 버퍼 비우기
+    end
 
-    B->>P: WebSocket Close
-    P->>R: DECR ws_conn:{id}
-    Note over P,R: count == 0
-    P->>R: SETEX idle_timer 300
-
-    Note over R: 5분 후 자동 만료
-
-    T->>R: TTL Manager 체크
-    R-->>T: ws_conn=0, no timer
-    Note over T: desired_state = STANDBY
+    loop 60초마다
+        T->>R: SCAN last_access:*
+        R-->>T: {ws_id: timestamp}
+        T->>D: UPDATE last_access_at
+        T->>R: DEL last_access:*
+    end
 ```
 
-### last_access_at 갱신
+### 3단계 버퍼링
 
-| 시점 | 주체 | 값 |
-|------|------|---|
-| workspace 생성 | API | NOW() |
-| 프록시 접속 | API (via Proxy) | NOW() |
+| 단계 | 주기 | 동작 |
+|------|------|------|
+| 1. 메모리 | 즉시 | WebSocket 메시지/HTTP 요청 시 record() |
+| 2. Redis | 30초 | 메모리 → Redis MSET |
+| 3. DB | 60초 | Redis → DB last_access_at UPDATE |
 
-> **계약 #3 준수**: last_access_at은 API 소유 컬럼 (Single Writer)
+### 활동으로 감지되는 행동
+
+| 행동 | 통신 유형 | 감지 |
+|------|----------|------|
+| 타이핑 | WebSocket 메시지 | ✅ |
+| 터미널 출력 | WebSocket 메시지 | ✅ |
+| 파일 저장 | WebSocket/HTTP | ✅ |
+| 코드 자동완성 | WebSocket (LSP) | ✅ |
+| 탭만 열어둠 | 없음 | ❌ |
+
+### TTL 기본값
+
+| TTL | 기본값 | 의미 |
+|-----|--------|------|
+| standby_ttl | 3시간 | 마지막 활동 후 STANDBY 전환 |
+| archive_ttl | 24시간 | STANDBY 후 ARCHIVED 전환 |
+
+### 설계 결정
+
+**ws_conn 방식 대신 last_access_at 방식을 선택한 이유:**
+
+| 항목 | ws_conn (연결 수) | last_access_at (timestamp) |
+|------|------------------|---------------------------|
+| Redis 재시작 | 데이터 손실 위험 | DB에 영속 보장 |
+| 복잡도 | INCR/DECR + idle timer | 단순 덮어쓰기 |
+| 정확도 | 실시간 | 최대 90초 지연 |
+
+> **선택**: 안정성과 단순함을 위해 last_access_at 방식 채택
 
 ---
 
@@ -351,52 +361,56 @@ sequenceDiagram
 
 상태 변경 시 UI에 실시간 알림을 전달합니다 (CDC 패턴).
 
+> **상세 아키텍처**: [docs/architecture_v2/event-listener.md](../architecture_v2/event-listener.md)
+
 ### 이벤트 전달 흐름
 
 ```mermaid
 sequenceDiagram
-    participant W as Writer (API, Reconciler, ...)
+    participant W as Writer (API, WC, ...)
     participant DB as PostgreSQL
-    participant C as Coordinator (EventListener)
+    participant EL as EventListener
     participant Redis as Redis Pub/Sub
-    participant API as Control Plane
+    participant SSE as SSE Endpoint
     participant UI as Dashboard
 
     W->>DB: UPDATE workspaces SET ...
     Note over DB: Trigger 실행
-    DB-->>C: NOTIFY workspace_changes
-    C->>Redis: PUBLISH workspace:{id}
-    Redis-->>API: 메시지 수신
-    API-->>UI: SSE event
+    DB-->>EL: pg_notify('ws_sse', ...)
+    EL->>Redis: PUBLISH events:{user_id}
+    Redis-->>SSE: 메시지 수신
+    SSE-->>UI: workspace_updated
 ```
 
-### 이벤트 발행 구조
+### 이벤트 분리
 
-| 구분 | 값 |
-|------|---|
-| 트리거 대상 | workspaces 테이블 UPDATE |
-| 감시 컬럼 | phase, operation, error_reason |
-| 발행 | pg_notify('workspace_changes', payload) |
+| 채널 | 트리거 칼럼 | 목적 | Redis 채널 |
+|------|------------|------|-----------|
+| ws_sse | phase, operation, error_reason | UI 실시간 업데이트 | events:{user_id} |
+| ws_wake | desired_state | Coordinator 즉시 깨우기 | ob:wake, wc:wake |
+| ws_deleted | deleted_at (NULL→NOT NULL) | 삭제 알림 | events:{user_id} |
 
 ### SSE 엔드포인트
 
 ```
-GET /api/v1/workspaces/{id}/events
+GET /api/v1/events
 Accept: text/event-stream
+Cookie: session=xxx
 ```
 
 | 항목 | 설명 |
 |------|------|
-| Heartbeat | 주기적 전송 (구체 값은 코드 정의) |
+| 범위 | 현재 사용자 소유 워크스페이스 전체 |
+| Heartbeat | 30초마다 |
 | 재연결 | 클라이언트 자동 재연결 |
 
 ### 이벤트 타입
 
-| 타입 | 발행 시점 |
-|------|----------|
-| state_changed | operation 시작/완료 |
-| error | 에러 발생 |
-| heartbeat | 30초마다 |
+| 타입 | 발행 시점 | 페이로드 |
+|------|----------|---------|
+| workspace_updated | phase/operation 변경 | 전체 workspace 객체 |
+| workspace_deleted | soft delete | `{id: string}` |
+| heartbeat | 30초마다 | `{}` |
 
 ---
 

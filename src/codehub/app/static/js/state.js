@@ -22,11 +22,11 @@ export const state = {
 // M2 Phase + Operation → Display Status mapping
 export const STATUS_CONFIG = {
   // Stable states
-  PENDING: { color: 'text-vscode-text', bgColor: 'bg-gray-600', icon: '○', label: 'Pending', canStart: true, canDelete: true },
-  ARCHIVED: { color: 'text-vscode-text', bgColor: 'bg-gray-600', icon: '◇', label: 'Archived', canStart: true, canDelete: true },
-  STANDBY: { color: 'text-vscode-text', bgColor: 'bg-blue-600', icon: '◆', label: 'Standby', canStart: true, canStop: true, canDelete: true },
-  RUNNING: { color: 'text-vscode-success', bgColor: 'bg-green-600', icon: '●', label: 'Running', canStop: true, canOpen: true },
-  ERROR: { color: 'text-vscode-error', bgColor: 'bg-red-600', icon: '✕', label: 'Error', canStart: true, canStop: true, canDelete: true },
+  PENDING: { color: 'text-vscode-text', bgColor: 'bg-gray-600', icon: '○', label: 'Pending', canStart: true, canPause: false, canArchive: false, canDelete: true },
+  ARCHIVED: { color: 'text-vscode-text', bgColor: 'bg-gray-600', icon: '◇', label: 'Archived', canStart: true, canPause: false, canArchive: false, canDelete: true },
+  STANDBY: { color: 'text-vscode-text', bgColor: 'bg-blue-600', icon: '◆', label: 'Standby', canStart: true, canPause: false, canArchive: true, canDelete: true },
+  RUNNING: { color: 'text-vscode-success', bgColor: 'bg-green-600', icon: '●', label: 'Running', canPause: true, canArchive: false, canOpen: true, canDelete: false },
+  ERROR: { color: 'text-vscode-error', bgColor: 'bg-red-600', icon: '✕', label: 'Error', canStart: true, canPause: false, canArchive: false, canDelete: true },
   DELETING: { color: 'text-vscode-warning', bgColor: 'bg-yellow-600', icon: '◐', label: 'Deleting...', isTransition: true },
   DELETED: { color: 'text-gray-500', bgColor: 'bg-gray-800', icon: '○', label: 'Deleted' },
 
@@ -34,7 +34,7 @@ export const STATUS_CONFIG = {
   PROVISIONING: { color: 'text-vscode-warning', bgColor: 'bg-yellow-600', icon: '◐', label: 'Provisioning...', isTransition: true },
   RESTORING: { color: 'text-vscode-warning', bgColor: 'bg-yellow-600', icon: '◐', label: 'Restoring...', isTransition: true },
   STARTING: { color: 'text-vscode-warning', bgColor: 'bg-yellow-600', icon: '◐', label: 'Starting...', isTransition: true },
-  STOPPING: { color: 'text-vscode-warning', bgColor: 'bg-yellow-600', icon: '◐', label: 'Stopping...', isTransition: true },
+  STOPPING: { color: 'text-vscode-warning', bgColor: 'bg-yellow-600', icon: '◐', label: 'Pausing...', isTransition: true },
   ARCHIVING: { color: 'text-vscode-warning', bgColor: 'bg-yellow-600', icon: '◐', label: 'Archiving...', isTransition: true },
   CREATE_EMPTY_ARCHIVE: { color: 'text-vscode-warning', bgColor: 'bg-yellow-600', icon: '◐', label: 'Creating...', isTransition: true },
 };

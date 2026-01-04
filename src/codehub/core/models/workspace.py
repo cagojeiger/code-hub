@@ -55,6 +55,9 @@ class Workspace(SQLModel, table=True):
     last_access_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True))
     )
+    phase_changed_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True))
+    )
     standby_ttl_seconds: int = Field(default=300)
     archive_ttl_seconds: int = Field(default=86400)
     error_reason: str | None = None  # ErrorReason enum value

@@ -3,11 +3,11 @@
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.control.coordinator.base import (
-    Channel,
     CoordinatorBase,
     CoordinatorType,
     LeaderElection,
     NotifySubscriber,
+    WakeTarget,
 )
 
 
@@ -15,7 +15,7 @@ class ArchiveGC(CoordinatorBase):
     """Orphan archive 정리."""
 
     COORDINATOR_TYPE = CoordinatorType.GC
-    CHANNELS = [Channel.GC_WAKE]
+    WAKE_TARGET = WakeTarget.GC
 
     IDLE_INTERVAL = 3600.0
 

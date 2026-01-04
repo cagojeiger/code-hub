@@ -13,7 +13,7 @@ import {
   openDeleteModal, closeDeleteModal, handleDeleteConfirmInput, handleConfirmDelete,
   openShortcutsModal, closeShortcutsModal, closeAllModals
 } from './modals.js';
-import { createKeyboardHandler, openWorkspace, handleStart, handleStop, selectWorkspace } from './keyboard.js';
+import { createKeyboardHandler, openWorkspace, handleStart, handlePause, handleArchive, selectWorkspace } from './keyboard.js';
 import { connectSSE, setupVisibilityHandler } from './sse.js';
 
 /**
@@ -166,8 +166,11 @@ function setupEventDelegation() {
         case 'start':
           handleStart(id);
           break;
-        case 'stop':
-          handleStop(id);
+        case 'pause':
+          handlePause(id);
+          break;
+        case 'archive':
+          handleArchive(id);
           break;
         case 'delete':
           openDeleteModal(id, name);
@@ -267,7 +270,7 @@ async function init() {
   document.getElementById('close-delete-modal-btn').addEventListener('click', closeDeleteModal);
   document.getElementById('cancel-delete-btn').addEventListener('click', closeDeleteModal);
   document.getElementById('delete-confirm-input').addEventListener('input', handleDeleteConfirmInput);
-  document.getElementById('confirm-delete-btn').addEventListener('click', handleConfirmDelete);
+  document.getElementById('confirm-delete-btn').addEventListener('click', () => handleConfirmDelete(loadWorkspaces));
 
   // Shortcuts modal
   document.getElementById('close-shortcuts-modal-btn').addEventListener('click', closeShortcutsModal);

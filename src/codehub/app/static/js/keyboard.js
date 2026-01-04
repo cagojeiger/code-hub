@@ -4,7 +4,7 @@
  */
 
 import { state, getStatusConfig } from './state.js';
-import { startWorkspace, stopWorkspace } from './api.js';
+import { startWorkspace, pauseWorkspace, archiveWorkspace } from './api.js';
 import { showToast } from './utils.js';
 import { getFilteredWorkspaces, renderFilteredWorkspaces, scrollToCard } from './cards.js';
 import { closeDetailPanel, saveMemo } from './detail-panel.js';
@@ -14,10 +14,8 @@ import { openCreateModal, openShortcutsModal, closeAllModals, isModalOpen } from
  * Open workspace in new tab
  */
 export function openWorkspace(id) {
-  const workspace = state.cache[id];
-  if (workspace && workspace.path) {
-    window.open(workspace.path, '_blank');
-  }
+  if (!id) return;
+  window.open(`/w/${id}/`, '_blank');
 }
 
 /**
@@ -40,9 +38,14 @@ async function handleWorkspaceAction(id, apiCall, successMsg) {
 export const handleStart = (id) => handleWorkspaceAction(id, startWorkspace, 'Workspace starting...');
 
 /**
- * Handle workspace stop action
+ * Handle workspace pause action (RUNNING → STANDBY)
  */
-export const handleStop = (id) => handleWorkspaceAction(id, stopWorkspace, 'Workspace stopping...');
+export const handlePause = (id) => handleWorkspaceAction(id, pauseWorkspace, 'Workspace pausing...');
+
+/**
+ * Handle workspace archive action (STANDBY → ARCHIVED)
+ */
+export const handleArchive = (id) => handleWorkspaceAction(id, archiveWorkspace, 'Workspace archiving...');
 
 /**
  * Select a workspace by ID
@@ -157,12 +160,22 @@ export function createKeyboardHandler() {
         }
         break;
 
-      case 'x':
-      case 'X':
+      case 'p':
+      case 'P':
         if (state.selectedWorkspaceId) {
           const ws = state.cache[state.selectedWorkspaceId];
-          if (ws && getStatusConfig(ws).canStop) {
-            handleStop(state.selectedWorkspaceId);
+          if (ws && getStatusConfig(ws).canPause) {
+            handlePause(state.selectedWorkspaceId);
+          }
+        }
+        break;
+
+      case 'a':
+      case 'A':
+        if (state.selectedWorkspaceId) {
+          const ws = state.cache[state.selectedWorkspaceId];
+          if (ws && getStatusConfig(ws).canArchive) {
+            handleArchive(state.selectedWorkspaceId);
           }
         }
         break;

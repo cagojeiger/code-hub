@@ -11,7 +11,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from codehub.control.coordinator.observer import BulkObserver, ObserverCoordinator
-from codehub.control.coordinator.base import NotifyPublisher
 from codehub.core.models import Workspace, User
 from codehub.core.interfaces.storage import VolumeInfo, ArchiveInfo
 from codehub.core.interfaces.instance import ContainerInfo
@@ -82,7 +81,6 @@ class TestObserverTick:
         ]
         mock_sp.list_archives.return_value = []
 
-        mock_publisher = AsyncMock(spec=NotifyPublisher)
         mock_leader = AsyncMock()
         mock_notify = AsyncMock()
 
@@ -94,8 +92,6 @@ class TestObserverTick:
                 mock_notify,
                 mock_ic,
                 mock_sp,
-                mock_publisher,
-                prefix="codehub-ws-",
             )
             await observer.tick()
 
@@ -142,7 +138,6 @@ class TestObserverTick:
         ]
         mock_sp.list_archives.return_value = []
 
-        mock_publisher = AsyncMock(spec=NotifyPublisher)
         mock_leader = AsyncMock()
         mock_notify = AsyncMock()
 
@@ -153,8 +148,6 @@ class TestObserverTick:
                 mock_notify,
                 mock_ic,
                 mock_sp,
-                mock_publisher,
-                prefix="codehub-ws-",
             )
             await observer.tick()
 
@@ -186,7 +179,6 @@ class TestObserverTick:
 
         mock_ic = AsyncMock()
         mock_ic.list_all.return_value = []
-        mock_publisher = AsyncMock()
         mock_leader = AsyncMock()
         mock_notify = AsyncMock()
 
@@ -197,8 +189,6 @@ class TestObserverTick:
                 mock_notify,
                 mock_ic,
                 mock_sp,
-                mock_publisher,
-                prefix="codehub-ws-",
             )
             await observer.tick()
 
@@ -247,7 +237,6 @@ class TestObserverTick:
         ]
         mock_sp.list_archives.return_value = []
 
-        mock_publisher = AsyncMock()
         mock_leader = AsyncMock()
         mock_notify = AsyncMock()
 
@@ -258,8 +247,6 @@ class TestObserverTick:
                 mock_notify,
                 mock_ic,
                 mock_sp,
-                mock_publisher,
-                prefix="codehub-ws-",
             )
             await observer.tick()
 
@@ -272,10 +259,10 @@ class TestObserverTick:
             # conditions는 여전히 빈 상태여야 함
             assert ws.conditions == {}
 
-    async def test_tick_wakes_wc(
+    async def test_tick_commits_db_changes(
         self, test_db_engine: AsyncEngine, test_workspace: Workspace
     ):
-        """OBS-INT-005: conditions 업데이트 후 WC wake 호출."""
+        """OBS-INT-005: conditions 업데이트가 DB에 커밋되는지 검증."""
         ws_id = test_workspace.id
 
         mock_ic = AsyncMock()
@@ -291,7 +278,6 @@ class TestObserverTick:
         ]
         mock_sp.list_archives.return_value = []
 
-        mock_publisher = AsyncMock(spec=NotifyPublisher)
         mock_leader = AsyncMock()
         mock_notify = AsyncMock()
 
@@ -302,13 +288,18 @@ class TestObserverTick:
                 mock_notify,
                 mock_ic,
                 mock_sp,
-                mock_publisher,
-                prefix="codehub-ws-",
             )
             await observer.tick()
 
-        # wake_wc가 호출되었어야 함
-        mock_publisher.wake_wc.assert_called_once()
+        # DB에 conditions가 저장되었는지 확인
+        async with AsyncSession(test_db_engine) as session:
+            result = await session.execute(
+                select(Workspace).where(Workspace.id == ws_id)
+            )
+            ws = result.scalar_one()
+            assert ws.conditions is not None
+            assert ws.conditions.get("volume") is not None
+            assert ws.observed_at is not None
 
 
 class TestBulkObserverIntegration:
@@ -456,7 +447,6 @@ class TestConcurrentCoordinators:
         ]
         mock_sp_obs.list_archives.return_value = []
 
-        mock_publisher = AsyncMock(spec=NotifyPublisher)
         mock_leader_obs = AsyncMock()
         mock_notify_obs = AsyncMock()
 
@@ -480,8 +470,6 @@ class TestConcurrentCoordinators:
                     mock_notify_obs,
                     mock_ic_obs,
                     mock_sp_obs,
-                    mock_publisher,
-                    prefix="codehub-ws-",
                 )
                 await observer.tick()
                 observer_done = True
@@ -572,7 +560,6 @@ class TestConcurrentCoordinators:
         ]
         mock_sp.list_archives.return_value = []
 
-        mock_publisher = AsyncMock(spec=NotifyPublisher)
         mock_leader = AsyncMock()
         mock_notify = AsyncMock()
 
@@ -584,8 +571,6 @@ class TestConcurrentCoordinators:
                 mock_notify,
                 mock_ic,
                 mock_sp,
-                mock_publisher,
-                prefix="codehub-ws-",
             )
 
             for i in range(3):
@@ -604,110 +589,3 @@ class TestConcurrentCoordinators:
             assert ws.conditions is not None
             assert ws.conditions.get("container") is not None
             assert ws.observed_at is not None
-
-
-class TestRedisPubSub:
-    """Redis pub/sub integration test for Coordinator wake mechanism."""
-
-    async def test_wake_wc_pubsub_works(self):
-        """PUBSUB-001: NotifyPublisher.wake_wc()가 실제로 Redis pub/sub로 메시지를 전송.
-
-        검증:
-        1. NotifySubscriber가 WC_WAKE 채널 구독
-        2. NotifyPublisher가 wake_wc() 호출
-        3. Subscriber가 메시지 수신
-        """
-        import asyncio
-        import redis.asyncio as aioredis
-        from codehub.control.coordinator.base import (
-            Channel,
-            NotifyPublisher,
-            NotifySubscriber,
-        )
-
-        # Use separate clients for pub and sub (Redis best practice)
-        pub_client = aioredis.Redis(host="redis", port=6379, decode_responses=True)
-        sub_client = aioredis.Redis(host="redis", port=6379, decode_responses=True)
-
-        try:
-            publisher = NotifyPublisher(pub_client)
-            subscriber = NotifySubscriber(sub_client)
-
-            # Subscribe to WC_WAKE channel
-            await subscriber.subscribe(Channel.WC_WAKE)
-
-            # Give Redis time to register subscription
-            await asyncio.sleep(0.1)
-
-            # Publish wake signal
-            receivers = await publisher.wake_wc()
-
-            # At least 1 receiver (our subscriber)
-            assert receivers >= 1, f"Expected at least 1 receiver, got {receivers}"
-
-            # Subscriber should receive the message (may need a few polls)
-            message = None
-            for _ in range(10):
-                message = await subscriber.get_message(timeout=0.2)
-                if message is not None:
-                    break
-            assert message is not None, "Subscriber did not receive wake message"
-            assert message == str(Channel.WC_WAKE), f"Wrong channel: {message}"
-
-            # Cleanup
-            await subscriber.unsubscribe()
-        finally:
-            await pub_client.aclose()
-            await sub_client.aclose()
-
-    async def test_multiple_subscribers_receive_wake(self):
-        """PUBSUB-002: 여러 Subscriber가 동일한 wake 메시지를 수신.
-
-        실제 운영에서 여러 WC 인스턴스가 구동될 수 있음.
-        """
-        import asyncio
-        import redis.asyncio as aioredis
-        from codehub.control.coordinator.base import (
-            Channel,
-            NotifyPublisher,
-            NotifySubscriber,
-        )
-
-        # Publisher uses separate client
-        pub_client = aioredis.Redis(host="redis", port=6379, decode_responses=True)
-
-        # Each subscriber gets its own client (simulating separate processes)
-        sub_clients = [
-            aioredis.Redis(host="redis", port=6379, decode_responses=True)
-            for _ in range(3)
-        ]
-
-        try:
-            publisher = NotifyPublisher(pub_client)
-            subscribers = [NotifySubscriber(client) for client in sub_clients]
-
-            for sub in subscribers:
-                await sub.subscribe(Channel.WC_WAKE)
-
-            await asyncio.sleep(0.1)
-
-            # Publish wake signal
-            receivers = await publisher.wake_wc()
-            assert receivers >= 3, f"Expected at least 3 receivers, got {receivers}"
-
-            # All subscribers should receive (may need a few polls each)
-            for i, sub in enumerate(subscribers):
-                message = None
-                for _ in range(10):
-                    message = await sub.get_message(timeout=0.2)
-                    if message is not None:
-                        break
-                assert message is not None, f"Subscriber {i} did not receive message"
-
-            # Cleanup
-            for sub in subscribers:
-                await sub.unsubscribe()
-        finally:
-            await pub_client.aclose()
-            for client in sub_clients:
-                await client.aclose()

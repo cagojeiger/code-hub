@@ -11,11 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
 from codehub.control.coordinator.base import (
-    Channel,
     CoordinatorBase,
     CoordinatorType,
     LeaderElection,
     NotifySubscriber,
+    WakeTarget,
 )
 from codehub.core.interfaces.instance import ContainerInfo, InstanceController
 from codehub.core.interfaces.storage import ArchiveInfo, StorageProvider, VolumeInfo
@@ -90,7 +90,7 @@ class ObserverCoordinator(CoordinatorBase):
     """
 
     COORDINATOR_TYPE = CoordinatorType.OBSERVER
-    CHANNELS = [Channel.OB_WAKE]
+    WAKE_TARGET = WakeTarget.OB
 
     def __init__(
         self,

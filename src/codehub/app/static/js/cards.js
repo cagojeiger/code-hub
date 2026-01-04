@@ -64,11 +64,19 @@ export function renderWorkspaceCard(workspace, index) {
       </button>`;
   }
 
-  if (config.canStop) {
+  if (config.canPause) {
     buttonsHtml += `
-      <button data-action="stop" data-id="${workspace.id}"
+      <button data-action="pause" data-id="${workspace.id}"
               class="px-3 py-1.5 bg-vscode-hover border border-vscode-border text-white text-sm rounded transition-colors hover:border-vscode-text">
-        Stop
+        Pause
+      </button>`;
+  }
+
+  if (config.canArchive) {
+    buttonsHtml += `
+      <button data-action="archive" data-id="${workspace.id}"
+              class="px-3 py-1.5 bg-vscode-hover border border-vscode-border text-white text-sm rounded transition-colors hover:border-vscode-warning hover:text-vscode-warning">
+        Archive
       </button>`;
   }
 
@@ -128,8 +136,14 @@ export function getFilteredWorkspaces() {
       case 'running':
         filtered = filtered.filter(ws => ws.phase === 'RUNNING' && ws.operation === 'NONE');
         break;
-      case 'stopped':
-        filtered = filtered.filter(ws => ['ARCHIVED', 'STANDBY', 'PENDING'].includes(ws.phase) && ws.operation === 'NONE');
+      case 'standby':
+        filtered = filtered.filter(ws => ws.phase === 'STANDBY' && ws.operation === 'NONE');
+        break;
+      case 'archived':
+        filtered = filtered.filter(ws => ws.phase === 'ARCHIVED' && ws.operation === 'NONE');
+        break;
+      case 'pending':
+        filtered = filtered.filter(ws => ws.phase === 'PENDING' && ws.operation === 'NONE');
         break;
       case 'error':
         filtered = filtered.filter(ws => ws.phase === 'ERROR');

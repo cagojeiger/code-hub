@@ -14,15 +14,15 @@ from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel
-from sqlalchemy import or_, select, update
+from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.control.coordinator.base import (
-    Channel,
     CoordinatorBase,
     CoordinatorType,
     LeaderElection,
     NotifySubscriber,
+    WakeTarget,
 )
 from codehub.control.coordinator.judge import JudgeInput, JudgeOutput, judge
 from codehub.core.domain.conditions import ConditionInput
@@ -62,7 +62,7 @@ class WorkspaceController(CoordinatorBase):
     """
 
     COORDINATOR_TYPE = CoordinatorType.WC
-    CHANNELS = [Channel.WC_WAKE]
+    WAKE_TARGET = WakeTarget.WC
 
     IDLE_INTERVAL = 15.0
     ACTIVE_INTERVAL = 1.0
@@ -436,6 +436,11 @@ class WorkspaceController(CoordinatorBase):
             "error_count": error_count,
             "error_reason": error_reason.value if error_reason else None,
             "updated_at": updated_at or datetime.now(UTC),
+            # phase_changed_at: only update when phase actually changes
+            "phase_changed_at": case(
+                (Workspace.phase != phase.value, func.now()),
+                else_=Workspace.phase_changed_at,
+            ),
         }
 
         # Only update archive_key if provided

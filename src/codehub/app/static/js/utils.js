@@ -85,9 +85,11 @@ export function formatShortDate(dateString) {
  */
 export function updateFooterStats(workspaces) {
   const total = workspaces.length;
-  const running = workspaces.filter(w => w.status === 'RUNNING').length;
-  const stopped = workspaces.filter(w => ['STOPPED', 'CREATED'].includes(w.status)).length;
-  const error = workspaces.filter(w => w.status === 'ERROR').length;
+  const running = workspaces.filter(w => w.phase === 'RUNNING' && w.operation === 'NONE').length;
+  const stopped = workspaces.filter(w =>
+    ['ARCHIVED', 'STANDBY', 'PENDING'].includes(w.phase) && w.operation === 'NONE'
+  ).length;
+  const error = workspaces.filter(w => w.phase === 'ERROR').length;
 
   document.getElementById('stat-total').textContent = total;
   document.getElementById('stat-running').textContent = running;

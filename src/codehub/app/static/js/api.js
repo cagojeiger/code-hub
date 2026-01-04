@@ -105,9 +105,18 @@ export async function startWorkspace(id) {
 }
 
 /**
- * Stop a workspace (M2: set desired_state to ARCHIVED)
+ * Pause a workspace (M2: set desired_state to STANDBY)
+ * Preserves volume for quick restart
  */
-export async function stopWorkspace(id) {
+export async function pauseWorkspace(id) {
+  return updateWorkspace(id, { desired_state: 'STANDBY' });
+}
+
+/**
+ * Archive a workspace (M2: set desired_state to ARCHIVED)
+ * Moves volume to S3, deletes local volume
+ */
+export async function archiveWorkspace(id) {
   return updateWorkspace(id, { desired_state: 'ARCHIVED' });
 }
 

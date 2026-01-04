@@ -10,6 +10,7 @@ dependencies = [
     # Database
     "sqlmodel>=0.0.22",
     "asyncpg>=0.30.0",
+    "psycopg[binary]>=3.1.0",  # EventListener (PG LISTEN/NOTIFY)
     "greenlet>=3.0.0",
     # Redis
     "redis[hiredis]>=5.0.0",

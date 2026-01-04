@@ -108,13 +108,15 @@ export function handleDeleteConfirmInput() {
 /**
  * Handle confirmed delete
  */
-export async function handleConfirmDelete() {
+export async function handleConfirmDelete(loadWorkspacesCallback) {
   const id = document.getElementById('delete-workspace-id').value;
 
   try {
     await deleteWorkspace(id);
     showToast('Workspace deleted', 'success');
     closeDeleteModal();
+    state.selectedWorkspaceId = null;
+    await loadWorkspacesCallback(0);
   } catch (error) {
     if (error.message !== 'Session expired') {
       showToast(error.message, 'error');

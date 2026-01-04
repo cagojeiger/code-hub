@@ -8,6 +8,7 @@ from codehub.control.coordinator.base import (
     NotifyPublisher,
     NotifySubscriber,
 )
+from codehub.control.coordinator.event_listener import EventListener
 from codehub.control.coordinator.gc import ArchiveGC
 from codehub.control.coordinator.observer import ObserverCoordinator
 from codehub.control.coordinator.ttl import TTLManager
@@ -17,6 +18,7 @@ __all__ = [
     "Channel",
     "CoordinatorBase",
     "CoordinatorType",
+    "EventListener",
     "LeaderElection",
     "NotifyPublisher",
     "NotifySubscriber",
