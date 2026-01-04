@@ -1,12 +1,15 @@
-"""Tests for BulkObserver - 리소스 관측 로직.
+"""Tests for BulkObserver and ObserverCoordinator.
 
 Reference: docs/architecture_v2/wc-observer.md
 """
 
-import pytest
-from unittest.mock import AsyncMock
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
-from codehub.control.coordinator.observer import BulkObserver
+import pytest
+
+from codehub.control.coordinator.base import LeaderElection, NotifySubscriber
+from codehub.control.coordinator.observer import BulkObserver, ObserverCoordinator
 from codehub.core.interfaces.instance import ContainerInfo, InstanceController
 from codehub.core.interfaces.storage import ArchiveInfo, StorageProvider, VolumeInfo
 
@@ -272,3 +275,136 @@ class TestBulkObserverModelDump:
             "reason": "ArchiveUploaded",
             "message": "msg",
         }
+
+
+# =============================================================================
+# ObserverCoordinator._bulk_update_conditions() Tests
+# =============================================================================
+
+
+@pytest.fixture
+def mock_conn() -> MagicMock:
+    """Mock AsyncConnection."""
+    conn = MagicMock()
+    conn.execute = AsyncMock()
+    conn.commit = AsyncMock()
+    return conn
+
+
+@pytest.fixture
+def mock_leader() -> MagicMock:
+    """Mock LeaderElection (always leader)."""
+    leader = MagicMock(spec=LeaderElection)
+    leader.is_leader = True
+    leader.try_acquire = MagicMock(return_value=True)
+    return leader
+
+
+@pytest.fixture
+def mock_notify() -> MagicMock:
+    """Mock NotifySubscriber."""
+    return MagicMock(spec=NotifySubscriber)
+
+
+@pytest.fixture
+def observer_coordinator(
+    mock_conn: MagicMock,
+    mock_leader: MagicMock,
+    mock_notify: MagicMock,
+    mock_ic: AsyncMock,
+    mock_sp: AsyncMock,
+) -> ObserverCoordinator:
+    """Create ObserverCoordinator with mocked dependencies."""
+    return ObserverCoordinator(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
+
+
+class TestObserverCoordinatorBulkUpdate:
+    """_bulk_update_conditions() tests - PostgreSQL unnest bulk update."""
+
+    async def test_empty_list_returns_zero(
+        self,
+        observer_coordinator: ObserverCoordinator,
+        mock_conn: MagicMock,
+    ):
+        """Empty updates list returns 0 without DB call."""
+        result = await observer_coordinator._bulk_update_conditions([])
+
+        assert result == 0
+        mock_conn.execute.assert_not_called()
+
+    async def test_uses_single_query(
+        self,
+        observer_coordinator: ObserverCoordinator,
+        mock_conn: MagicMock,
+    ):
+        """N updates use single execute() call (O(1) round-trips)."""
+        now = datetime.now(UTC)
+        updates = [
+            ("ws-1", {"container": None, "volume": None, "archive": None}, now),
+            ("ws-2", {"container": None, "volume": None, "archive": None}, now),
+            ("ws-3", {"container": None, "volume": None, "archive": None}, now),
+        ]
+
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("ws-1",), ("ws-2",), ("ws-3",)]
+        mock_conn.execute.return_value = mock_result
+
+        result = await observer_coordinator._bulk_update_conditions(updates)
+
+        assert result == 3
+        mock_conn.execute.assert_called_once()  # Single query!
+
+    async def test_returns_updated_count(
+        self,
+        observer_coordinator: ObserverCoordinator,
+        mock_conn: MagicMock,
+    ):
+        """Returns count of actually updated rows."""
+        now = datetime.now(UTC)
+        updates = [
+            ("ws-1", {"container": None}, now),
+            ("ws-2", {"container": None}, now),
+            ("ws-not-exists", {"container": None}, now),  # doesn't exist in DB
+        ]
+
+        # Only 2 rows updated (ws-not-exists not found)
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("ws-1",), ("ws-2",)]
+        mock_conn.execute.return_value = mock_result
+
+        result = await observer_coordinator._bulk_update_conditions(updates)
+
+        assert result == 2  # Only 2 actually updated
+
+    async def test_jsonb_serialization(
+        self,
+        observer_coordinator: ObserverCoordinator,
+        mock_conn: MagicMock,
+    ):
+        """conditions dict is JSON serialized for PostgreSQL."""
+        now = datetime.now(UTC)
+        conditions = {
+            "container": {"workspace_id": "ws-1", "running": True},
+            "volume": {"workspace_id": "ws-1", "exists": True},
+            "archive": None,
+        }
+        updates = [("ws-1", conditions, now)]
+
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [("ws-1",)]
+        mock_conn.execute.return_value = mock_result
+
+        await observer_coordinator._bulk_update_conditions(updates)
+
+        # Verify execute was called with proper parameters
+        call_args = mock_conn.execute.call_args
+        params = call_args[0][1]  # Second positional arg is params dict
+
+        assert params["ids"] == ["ws-1"]
+        assert len(params["conditions"]) == 1
+        # conditions should be JSON string
+        import json
+        parsed = json.loads(params["conditions"][0])
+        assert parsed["container"]["running"] is True
+        assert parsed["volume"]["exists"] is True
+        assert parsed["archive"] is None

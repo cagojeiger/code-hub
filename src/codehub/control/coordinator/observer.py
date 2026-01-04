@@ -3,10 +3,11 @@
 Reference: docs/architecture_v2/wc-observer.md
 """
 
+import json
 import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
@@ -165,7 +166,9 @@ class ObserverCoordinator(CoordinatorBase):
         self,
         updates: list[tuple[str, dict, datetime]],
     ) -> int:
-        """Bulk update conditions for multiple workspaces.
+        """Bulk update conditions using PostgreSQL unnest.
+
+        Complexity: O(1) DB round-trips (TTL Manager 패턴).
 
         Args:
             updates: List of (workspace_id, conditions, observed_at)
@@ -173,13 +176,30 @@ class ObserverCoordinator(CoordinatorBase):
         Returns:
             Number of rows updated
         """
-        count = 0
-        for ws_id, conditions, observed_at in updates:
-            stmt = (
-                update(Workspace)
-                .where(Workspace.id == ws_id)
-                .values(conditions=conditions, observed_at=observed_at)
-            )
-            result = await self._conn.execute(stmt)
-            count += result.rowcount
-        return count
+        if not updates:
+            return 0
+
+        # Prepare arrays for PostgreSQL unnest
+        ws_ids = [ws_id for ws_id, _, _ in updates]
+        conditions_json = [json.dumps(cond) for _, cond, _ in updates]
+        timestamps = [ts for _, _, ts in updates]
+
+        result = await self._conn.execute(
+            text("""
+                UPDATE workspaces AS w
+                SET conditions = v.conditions::jsonb,
+                    observed_at = v.observed_at
+                FROM unnest(
+                    CAST(:ids AS text[]),
+                    CAST(:conditions AS jsonb[]),
+                    CAST(:timestamps AS timestamptz[])
+                ) AS v(id, conditions, observed_at)
+                WHERE w.id = v.id
+                RETURNING w.id
+            """),
+            {"ids": ws_ids, "conditions": conditions_json, "timestamps": timestamps},
+        )
+
+        updated_count = len(result.fetchall())
+        logger.debug("[%s] Bulk updated %d conditions", self.name, updated_count)
+        return updated_count
