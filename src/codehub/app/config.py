@@ -63,7 +63,7 @@ class LimitsConfig(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="LIMITS_")
 
-    max_running_per_user: int = Field(default=2)
+    max_running_per_user: int = Field(default=3)
 
 
 class CookieConfig(BaseSettings):

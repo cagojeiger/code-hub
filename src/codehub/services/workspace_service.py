@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codehub.app.config import get_settings
@@ -206,19 +206,26 @@ async def delete_workspace(
 
 
 async def count_running_workspaces(db: AsyncSession, user_id: str) -> int:
-    """Count RUNNING workspaces for a user.
+    """Count RUNNING or starting workspaces for a user.
+
+    Counts workspaces that are either:
+    - Already running (phase=RUNNING)
+    - Requested to start (desired_state=RUNNING)
 
     Args:
         db: Database session
         user_id: Owner user ID
 
     Returns:
-        Number of RUNNING workspaces
+        Number of RUNNING or starting workspaces
     """
     stmt = select(func.count()).select_from(Workspace).where(
         Workspace.owner_user_id == user_id,
-        Workspace.phase == Phase.RUNNING.value,
         Workspace.deleted_at.is_(None),
+        or_(
+            Workspace.phase == Phase.RUNNING.value,
+            Workspace.desired_state == DesiredState.RUNNING.value,
+        ),
     )
     result = await db.execute(stmt)
     return result.scalar() or 0
