@@ -59,3 +59,13 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
     async with _session_factory() as session:
         yield session
+
+
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Get session factory for creating new sessions.
+
+    Use for long-lived connections (SSE, WebSocket) where fresh sessions are needed.
+    """
+    if _session_factory is None:
+        raise RuntimeError("Database not initialized")
+    return _session_factory

@@ -1,5 +1,6 @@
 """Workspace API endpoints."""
 
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Depends, Query
@@ -8,15 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from codehub.app.config import get_settings
 from codehub.app.proxy.auth import get_user_id_from_session
-from codehub.control.coordinator.base import NotifyPublisher
 from codehub.core.domain import DesiredState
-from codehub.infra import get_publisher, get_session
+from codehub.infra import get_session
 from codehub.services import workspace_service
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
-Publisher = Annotated[NotifyPublisher, Depends(get_publisher)]
 
 # Default image from settings
 _settings = get_settings()
@@ -60,8 +59,9 @@ class WorkspaceResponse(BaseModel):
     archive_key: str | None
     error_reason: str | None
     error_count: int
-    created_at: str
-    updated_at: str
+    created_at: datetime
+    updated_at: datetime
+    last_access_at: datetime | None  # 마지막 활동 시간
 
     model_config = {"from_attributes": True}
 
@@ -80,22 +80,7 @@ class WorkspaceListResponse(BaseModel):
 
 def _to_response(ws) -> WorkspaceResponse:
     """Convert workspace model to response."""
-    return WorkspaceResponse(
-        id=ws.id,
-        owner_user_id=ws.owner_user_id,
-        name=ws.name,
-        description=ws.description,
-        memo=ws.memo,
-        image_ref=ws.image_ref,
-        phase=ws.phase,
-        operation=ws.operation,
-        desired_state=ws.desired_state,
-        archive_key=ws.archive_key,
-        error_reason=ws.error_reason,
-        error_count=ws.error_count,
-        created_at=ws.created_at.isoformat(),
-        updated_at=ws.updated_at.isoformat(),
-    )
+    return WorkspaceResponse.model_validate(ws)
 
 
 # =============================================================================
@@ -107,7 +92,6 @@ def _to_response(ws) -> WorkspaceResponse:
 async def create_workspace(
     request: CreateWorkspaceRequest,
     db: DbSession,
-    publisher: Publisher,
     session: Annotated[str | None, Cookie(alias="session")] = None,
 ) -> WorkspaceResponse:
     """Create a new workspace."""
@@ -120,10 +104,6 @@ async def create_workspace(
         description=request.description,
         image_ref=request.image_ref,
     )
-
-    # Accelerate coordinators for fast convergence
-    await publisher.wake_ob()
-    await publisher.wake_wc()
 
     return _to_response(workspace)
 
@@ -174,7 +154,6 @@ async def update_workspace(
     workspace_id: str,
     request: UpdateWorkspaceRequest,
     db: DbSession,
-    publisher: Publisher,
     session: Annotated[str | None, Cookie(alias="session")] = None,
 ) -> WorkspaceResponse:
     """Update workspace."""
@@ -190,11 +169,6 @@ async def update_workspace(
         desired_state=request.desired_state,
     )
 
-    # Accelerate coordinators when desired_state changes
-    if request.desired_state is not None:
-        await publisher.wake_ob()
-        await publisher.wake_wc()
-
     return _to_response(workspace)
 
 
@@ -202,7 +176,6 @@ async def update_workspace(
 async def delete_workspace(
     workspace_id: str,
     db: DbSession,
-    publisher: Publisher,
     session: Annotated[str | None, Cookie(alias="session")] = None,
 ) -> None:
     """Delete workspace (soft delete)."""
@@ -213,7 +186,3 @@ async def delete_workspace(
         workspace_id=workspace_id,
         user_id=user_id,
     )
-
-    # Accelerate coordinators for fast cleanup
-    await publisher.wake_ob()
-    await publisher.wake_wc()
