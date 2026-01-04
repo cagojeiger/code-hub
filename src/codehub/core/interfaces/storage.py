@@ -50,11 +50,27 @@ class StorageProvider(ABC):
     async def list_archives(self, prefix: str) -> list[ArchiveInfo]:
         """Bulk observe all archives with given prefix.
 
+        Returns latest archive per workspace for Observer.
+
         Args:
             prefix: Archive key prefix (e.g., "ws-")
 
         Returns:
-            List of ArchiveInfo for all archives
+            List of ArchiveInfo (one per workspace, latest only)
+        """
+        ...
+
+    @abstractmethod
+    async def list_all_archive_keys(self, prefix: str) -> set[str]:
+        """List all archive keys with given prefix.
+
+        Returns all archive keys for GC.
+
+        Args:
+            prefix: Archive key prefix (e.g., "ws-")
+
+        Returns:
+            Set of all archive keys (including old versions)
         """
         ...
 
@@ -124,6 +140,18 @@ class StorageProvider(ABC):
 
         Returns:
             Archive key for the created empty archive
+        """
+        ...
+
+    @abstractmethod
+    async def delete_archive(self, archive_key: str) -> bool:
+        """Delete archive by key.
+
+        Args:
+            archive_key: Full archive path (e.g., "ws-xxx/op-id/home.tar.zst")
+
+        Returns:
+            True if deleted successfully
         """
         ...
 

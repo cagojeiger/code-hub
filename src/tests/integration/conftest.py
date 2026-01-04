@@ -25,7 +25,12 @@ from codehub.infra import close_storage, get_s3_client, init_storage
 TEST_BUCKET = "codehub-archives-test"
 
 # PostgreSQL server URL (without database name)
-POSTGRES_SERVER = "postgresql+asyncpg://codehub:codehub@postgres:5432"
+# Use POSTGRES_HOST env var to override hostname for local testing
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
+POSTGRES_SERVER = f"postgresql+asyncpg://codehub:codehub@{POSTGRES_HOST}:5432"
+
+# Redis host (for local testing)
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 
 
 @pytest.fixture(scope="function")
@@ -150,11 +155,12 @@ def test_prefix() -> str:
 async def test_redis():
     """Redis client for integration tests.
 
-    Uses the same Redis instance as the application (redis:6379).
+    Uses the same Redis instance as the application.
+    Set REDIS_HOST env var for local testing.
     """
     import redis.asyncio as redis
 
-    client = redis.Redis(host="redis", port=6379, decode_responses=True)
+    client = redis.Redis(host=REDIS_HOST, port=6379, decode_responses=True)
     yield client
     await client.aclose()
 
