@@ -14,16 +14,15 @@ logger = logging.getLogger(__name__)
 
 
 class WakeTarget(StrEnum):
-    """Wake target identifiers for Redis Streams."""
+    """Wake target identifiers for PUB/SUB channels."""
 
     OB = "ob"
     WC = "wc"
     GC = "gc"
 
 
-# Legacy Channel names (kept for backwards compatibility)
 class Channel(StrEnum):
-    """Notify channel names (legacy, for backwards compatibility)."""
+    """PUB/SUB channel names for coordinator wake-up."""
 
     OB_WAKE = "ob:wake"
     WC_WAKE = "wc:wake"
@@ -39,148 +38,99 @@ class CoordinatorType(StrEnum):
     TTL = "ttl"
 
 
-# Redis Streams constants
-STREAM_WAKE = "stream:wake"
-CONSUMER_GROUP = "coordinators"
-STREAM_MAXLEN = 100
+def _get_wake_channel(target: WakeTarget) -> str:
+    """Get PUB/SUB channel name for wake target."""
+    return f"{target}:wake"
 
 
 class NotifyPublisher:
-    """Publishes notifications to wake up Coordinators via Redis Streams.
+    """Publishes notifications to wake up Coordinators via Redis PUB/SUB.
 
-    Uses XADD to add wake messages to stream:wake.
+    Uses PUBLISH to broadcast wake messages to all subscribers.
     """
 
     def __init__(self, client: redis.Redis) -> None:
         self._client = client
 
-    async def publish(self, target: WakeTarget) -> str:
-        """Publish wake message to stream.
+    async def publish(self, target: WakeTarget) -> int:
+        """Publish wake message to PUB/SUB channel.
 
-        Returns the message ID.
+        Returns the number of subscribers that received the message.
         """
-        msg_id = await self._client.xadd(
-            STREAM_WAKE,
-            {"target": str(target)},
-            maxlen=STREAM_MAXLEN,
-        )
-        logger.debug("Published wake to %s (target=%s, id=%s)", STREAM_WAKE, target, msg_id)
-        return msg_id
+        channel = _get_wake_channel(target)
+        count = await self._client.publish(channel, "wake")
+        logger.debug("Published wake to %s (subscribers=%d)", channel, count)
+        return count
 
-    async def wake_ob(self) -> str:
+    async def wake_ob(self) -> int:
         return await self.publish(WakeTarget.OB)
 
-    async def wake_wc(self) -> str:
+    async def wake_wc(self) -> int:
         return await self.publish(WakeTarget.WC)
 
-    async def wake_gc(self) -> str:
+    async def wake_gc(self) -> int:
         return await self.publish(WakeTarget.GC)
 
 
 class NotifySubscriber:
-    """Subscribes to wake stream using Redis Streams XREADGROUP.
+    """Subscribes to wake channel using Redis PUB/SUB.
 
-    Uses consumer groups for exactly-once message delivery.
-    Each coordinator instance is a separate consumer in the group.
+    Uses PUB/SUB for broadcasting - all subscribers receive all messages.
+    This ensures every coordinator instance gets wake-up notifications.
     """
 
-    def __init__(self, client: redis.Redis, consumer_name: str) -> None:
+    def __init__(self, client: redis.Redis) -> None:
         """Initialize subscriber.
 
         Args:
             client: Redis client.
-            consumer_name: Unique consumer name (e.g., "observer-12345").
         """
         self._client = client
-        self._consumer_name = consumer_name
+        self._pubsub: redis.client.PubSub | None = None
         self._target: WakeTarget | None = None
-        self._initialized = False
 
     async def subscribe(self, target: WakeTarget) -> None:
-        """Subscribe to wake stream for a specific target.
+        """Subscribe to wake channel for a specific target.
 
-        Creates consumer group if it doesn't exist.
+        Creates PubSub connection and subscribes to the target's channel.
         """
         self._target = target
-        await self._ensure_group()
-        logger.info(
-            "Subscribed to %s (consumer=%s, target=%s)",
-            STREAM_WAKE,
-            self._consumer_name,
-            target,
-        )
-
-    async def _ensure_group(self) -> None:
-        """Create consumer group if it doesn't exist."""
-        if self._initialized:
-            return
-
-        try:
-            await self._client.xgroup_create(
-                STREAM_WAKE,
-                CONSUMER_GROUP,
-                id="$",  # Start from new messages
-                mkstream=True,  # Create stream if not exists
-            )
-            logger.info("Created consumer group %s on %s", CONSUMER_GROUP, STREAM_WAKE)
-        except redis.ResponseError as e:
-            if "BUSYGROUP" not in str(e):
-                raise
-            # Group already exists, that's fine
-
-        self._initialized = True
+        channel = _get_wake_channel(target)
+        self._pubsub = self._client.pubsub()
+        await self._pubsub.subscribe(channel)
+        logger.info("Subscribed to %s (target=%s)", channel, target)
 
     async def unsubscribe(self) -> None:
-        """Unsubscribe (no-op for streams, kept for interface compatibility)."""
+        """Unsubscribe and close PubSub connection."""
+        if self._pubsub:
+            try:
+                await self._pubsub.unsubscribe()
+                await self._pubsub.close()
+            except Exception as e:
+                logger.warning("Error closing pubsub: %s", e)
+            self._pubsub = None
         self._target = None
 
     async def get_message(self, timeout: float = 0.0) -> str | None:
-        """Read wake message from stream.
+        """Read wake message from PUB/SUB channel.
 
-        Returns the target if a matching message was received, None otherwise.
-        Automatically ACKs processed messages.
+        Returns the target if a message was received, None otherwise.
         """
-        if not self._target:
+        if not self._pubsub or not self._target:
             return None
 
-        await self._ensure_group()
-
         try:
-            # XREADGROUP: read new messages for this consumer
-            messages = await self._client.xreadgroup(
-                CONSUMER_GROUP,
-                self._consumer_name,
-                {STREAM_WAKE: ">"},  # Only new messages
-                block=int(timeout * 1000) if timeout > 0 else None,
-                count=10,  # Process up to 10 messages at once
+            msg = await self._pubsub.get_message(
+                ignore_subscribe_messages=True,
+                timeout=timeout,
             )
-
-            if not messages:
-                return None
-
-            for stream, entries in messages:
-                for msg_id, fields in entries:
-                    # Get target from message
-                    target_raw = fields.get(b"target") or fields.get("target")
-                    if isinstance(target_raw, bytes):
-                        target_raw = target_raw.decode()
-
-                    # ACK the message
-                    await self._client.xack(STREAM_WAKE, CONSUMER_GROUP, msg_id)
-
-                    # Check if this message is for us
-                    if target_raw == str(self._target):
-                        logger.debug(
-                            "Received wake (consumer=%s, target=%s)",
-                            self._consumer_name,
-                            target_raw,
-                        )
-                        return target_raw
-
+            if msg and msg["type"] == "message":
+                logger.debug("Received wake (target=%s)", self._target)
+                return str(self._target)
             return None
 
         except Exception as e:
-            logger.warning("Error reading from stream: %s", e)
+            logger.warning("Error reading from pubsub: %s", e)
             return None
 
 

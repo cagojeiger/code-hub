@@ -4,7 +4,7 @@
  */
 
 import { state, STATUS_ORDER, getStatusConfig, getDisplayStatus } from './state.js';
-import { escapeHtml, formatShortDate } from './utils.js';
+import { escapeHtml, formatShortDate, formatDate } from './utils.js';
 
 /**
  * Render skeleton loading cards
@@ -103,8 +103,9 @@ export function renderWorkspaceCard(workspace, index) {
       </div>
       <p class="text-vscode-text text-sm truncate mb-1">${escapeHtml(workspace.description) || 'No description'}</p>
       <div class="text-xs text-gray-500 flex gap-3">
-        <span title="Created at ${workspace.created_at}">+ ${formatShortDate(workspace.created_at)}</span>
-        <span title="Updated at ${workspace.updated_at}">~ ${formatShortDate(workspace.updated_at)}</span>
+        <span title="Created: ${formatDate(workspace.created_at)}">+ ${formatShortDate(workspace.created_at)}</span>
+        <span title="Updated: ${formatDate(workspace.updated_at)}">~ ${formatShortDate(workspace.updated_at)}</span>
+        ${workspace.last_access_at ? `<span title="Last active: ${formatDate(workspace.last_access_at)}">⚡ ${formatShortDate(workspace.last_access_at)}</span>` : ''}
       </div>
       ${buttonsHtml}
     </div>
