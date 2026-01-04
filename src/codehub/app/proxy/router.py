@@ -20,17 +20,24 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from codehub.app.config import get_settings
+from codehub.core.domain import DesiredState, Phase
 from codehub.core.errors import (
     ForbiddenError,
     UnauthorizedError,
     UpstreamUnavailableError,
     WorkspaceNotFoundError,
 )
-from codehub.app.config import get_settings
 from codehub.infra import get_session
+from codehub.services.workspace_service import (
+    count_running_workspaces,
+    list_running_workspaces,
+    set_desired_state,
+)
 
 from .activity import get_activity_buffer
 from .auth import get_user_id_from_session, get_workspace_for_user
+from .pages import archived_page, error_page, limit_exceeded_page, starting_page
 from .client import (
     WS_HOP_BY_HOP_HEADERS,
     filter_headers,
@@ -56,6 +63,7 @@ DbSession = Annotated[AsyncSession, Depends(get_session)]
 # =============================================================================
 _settings = get_settings()
 _docker_config = _settings.docker
+_limits_config = _settings.limits
 
 # Dummy mode for testing (set DUMMY_MODE=True to use dummy-codeserver)
 DUMMY_MODE = False
@@ -96,6 +104,7 @@ async def trailing_slash_redirect(workspace_id: str) -> RedirectResponse:
 @router.api_route(
     "/w/{workspace_id}/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    response_model=None,
 )
 async def proxy_http(
     workspace_id: str,
@@ -103,12 +112,37 @@ async def proxy_http(
     request: Request,
     db: DbSession,
     session: Annotated[str | None, Cookie(alias="session")] = None,
-) -> StreamingResponse:
+) -> StreamingResponse | RedirectResponse:
     """Proxy HTTP requests to workspace container."""
     # Authenticate user and verify workspace ownership
     if not DUMMY_MODE:
         user_id = await get_user_id_from_session(db, session)
-        await get_workspace_for_user(db, workspace_id, user_id)
+        workspace = await get_workspace_for_user(db, workspace_id, user_id)
+
+        # Phase check (spec_v2/02-states.md: Proxy behavior by phase)
+        if workspace.phase == Phase.RUNNING.value:
+            # Normal proxy - continue below
+            pass
+        elif workspace.phase == Phase.STANDBY.value:
+            # Auto-wake (STANDBY only)
+            if workspace.desired_state != DesiredState.RUNNING.value:
+                # Check running limit
+                running_count = await count_running_workspaces(db, user_id)
+                if running_count >= _limits_config.max_running_per_user:
+                    running_workspaces = await list_running_workspaces(db, user_id)
+                    return limit_exceeded_page(
+                        running_workspaces, _limits_config.max_running_per_user
+                    )
+                # Trigger wake (DB trigger -> EventListener -> Redis PUBLISH)
+                await set_desired_state(db, workspace_id, DesiredState.RUNNING)
+            # Return starting page (SSE-based auto-refresh)
+            return starting_page(workspace)
+        elif workspace.phase == Phase.ARCHIVED.value:
+            # 502 + restore needed (no auto-wake)
+            return archived_page(workspace)
+        else:
+            # PENDING, ERROR, DELETED, etc -> 502 + status page
+            return error_page(workspace)
 
     # Record activity for TTL tracking
     get_activity_buffer().record(workspace_id)
@@ -184,7 +218,7 @@ async def proxy_websocket(
         session_cookie = websocket.cookies.get("session")
         try:
             user_id = await get_user_id_from_session(db, session_cookie)
-            await get_workspace_for_user(db, workspace_id, user_id)
+            workspace = await get_workspace_for_user(db, workspace_id, user_id)
         except UnauthorizedError:
             await websocket.close(code=1008, reason="Authentication required")
             return
@@ -193,6 +227,12 @@ async def proxy_websocket(
             return
         except WorkspaceNotFoundError:
             await websocket.close(code=1008, reason="Workspace not found")
+            return
+
+        # Phase check - WebSocket only works for RUNNING workspaces
+        # Non-RUNNING states are handled by HTTP endpoint (returns HTML pages)
+        if workspace.phase != Phase.RUNNING.value:
+            await websocket.close(code=1008, reason="Workspace not running")
             return
 
     # Record activity for TTL tracking

@@ -58,6 +58,14 @@ class TtlConfig(BaseSettings):
     archive_seconds: int = Field(default=1800)  # 30분 (테스트용), 프로덕션: 86400 (24시간)
 
 
+class LimitsConfig(BaseSettings):
+    """Resource limits configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="LIMITS_")
+
+    max_running_per_user: int = Field(default=2)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CODEHUB_",
@@ -69,6 +77,7 @@ class Settings(BaseSettings):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     docker: DockerConfig = Field(default_factory=DockerConfig)
     ttl: TtlConfig = Field(default_factory=TtlConfig)
+    limits: LimitsConfig = Field(default_factory=LimitsConfig)
 
 
 @lru_cache

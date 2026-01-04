@@ -102,13 +102,21 @@ async def _event_generator(
         loop = asyncio.get_running_loop()
         last_heartbeat = loop.time()
 
+        # Send initial connection event to establish the stream
+        yield "event: connected\ndata: {}\n\n"
+
         while True:
             # Check if client disconnected
             if await request.is_disconnected():
                 break
 
             # Read messages using SSEStreamReader
-            messages = await reader.read()
+            try:
+                messages = await reader.read()
+            except Exception as e:
+                logger.warning("[SSE] Redis read error: %s", e)
+                await asyncio.sleep(1)
+                continue
 
             for _msg_id, fields in messages:
                 try:

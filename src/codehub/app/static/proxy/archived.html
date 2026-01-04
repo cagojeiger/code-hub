@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workspace Archived - CodeHub</title>
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            vscode: {
+              bg: '#1e1e1e',
+              sidebar: '#252526',
+              hover: '#2a2d2e',
+              border: '#3c3c3c',
+              text: '#cccccc',
+              accent: '#007acc',
+              success: '#89d185',
+              warning: '#cca700',
+              error: '#f14c4c',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-vscode-bg text-vscode-text min-h-screen flex items-center justify-center">
+  <div class="text-center px-4 max-w-md">
+    <div class="text-5xl mb-4">📦</div>
+    <h1 class="text-xl font-semibold text-white mb-2">Workspace Archived</h1>
+    <p id="workspace-name" class="text-vscode-accent font-medium mb-4"></p>
+    <p class="text-sm mb-6">
+      This workspace has been archived due to inactivity.<br>
+      Please restore it from the dashboard to continue.
+    </p>
+    <a href="/" class="inline-block bg-vscode-accent hover:bg-blue-600 text-white px-6 py-2 rounded font-medium transition-colors">
+      Go to Dashboard
+    </a>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const workspaceName = params.get('name') || 'Workspace';
+    document.getElementById('workspace-name').textContent = workspaceName;
+  </script>
+</body>
+</html>

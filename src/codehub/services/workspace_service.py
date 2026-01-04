@@ -3,7 +3,7 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codehub.app.config import get_settings
@@ -194,5 +194,75 @@ async def delete_workspace(
     workspace.deleted_at = now  # Soft delete (spec: API sets deleted_at)
     workspace.desired_state = DesiredState.DELETED.value
     workspace.updated_at = now
+
+    await db.commit()
+
+
+async def count_running_workspaces(db: AsyncSession, user_id: str) -> int:
+    """Count RUNNING workspaces for a user.
+
+    Args:
+        db: Database session
+        user_id: Owner user ID
+
+    Returns:
+        Number of RUNNING workspaces
+    """
+    stmt = select(func.count()).select_from(Workspace).where(
+        Workspace.owner_user_id == user_id,
+        Workspace.phase == Phase.RUNNING.value,
+        Workspace.deleted_at.is_(None),
+    )
+    result = await db.execute(stmt)
+    return result.scalar() or 0
+
+
+async def list_running_workspaces(db: AsyncSession, user_id: str) -> list[Workspace]:
+    """List RUNNING workspaces for a user.
+
+    Args:
+        db: Database session
+        user_id: Owner user ID
+
+    Returns:
+        List of RUNNING workspaces
+    """
+    stmt = (
+        select(Workspace)
+        .where(
+            Workspace.owner_user_id == user_id,
+            Workspace.phase == Phase.RUNNING.value,
+            Workspace.deleted_at.is_(None),
+        )
+        .order_by(Workspace.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def set_desired_state(
+    db: AsyncSession,
+    workspace_id: str,
+    desired_state: DesiredState,
+) -> None:
+    """Set desired_state for a workspace (internal use, no ownership check).
+
+    Args:
+        db: Database session
+        workspace_id: Workspace ID
+        desired_state: New desired state
+    """
+    stmt = select(Workspace).where(
+        Workspace.id == workspace_id,
+        Workspace.deleted_at.is_(None),
+    )
+    result = await db.execute(stmt)
+    workspace = result.scalar_one_or_none()
+
+    if workspace is None:
+        raise WorkspaceNotFoundError()
+
+    workspace.desired_state = desired_state.value
+    workspace.updated_at = datetime.now(UTC)
 
     await db.commit()
