@@ -3,7 +3,7 @@
  * Server-Sent Events for real-time updates with polling fallback
  */
 
-import { API, POLL_INTERVAL, state, getStatusConfig, getDisplayStatus } from './state.js';
+import { API, POLL_INTERVAL, state, transitionState, getStatusConfig, getDisplayStatus, getProgressInfo, STATUS_CONFIG } from './state.js';
 import { showToast, updateFooterStats } from './utils.js';
 import { renderFilteredWorkspaces } from './cards.js';
 import { renderDetailPanel, closeDetailPanel } from './detail-panel.js';
@@ -41,9 +41,41 @@ export function updateConnectionStatus(status) {
 }
 
 /**
+ * Calculate progress entirely in frontend.
+ * Uses TRANSITION_STEPS and STEP_MAP from state.js.
+ *
+ * @param {string} wsId - Workspace ID
+ * @param {object} workspace - Workspace object
+ * @returns {object|null} Progress object or null if not in transition
+ */
+function calculateProgress(wsId, workspace) {
+  const { phase, operation, desired_state } = workspace;
+
+  // Transition complete (operation === 'NONE')
+  if (!operation || operation === 'NONE') {
+    delete transitionState[wsId];
+    return null;
+  }
+
+  // New transition start detection
+  if (!transitionState[wsId] || transitionState[wsId].desiredState !== desired_state) {
+    transitionState[wsId] = { startPhase: phase, desiredState: desired_state };
+  }
+
+  const { startPhase, desiredState } = transitionState[wsId];
+  const { step, totalSteps, percent } = getProgressInfo(startPhase, desiredState, operation);
+  const label = STATUS_CONFIG[operation]?.label || 'Processing...';
+
+  return { step, total_steps: totalSteps, percent, label };
+}
+
+/**
  * Handle workspace update event
  */
 export function handleWorkspaceUpdate(workspace) {
+  // Calculate progress in frontend (replaces BE progress)
+  workspace.progress = calculateProgress(workspace.id, workspace);
+
   // Update cache
   state.cache[workspace.id] = workspace;
 
@@ -64,11 +96,15 @@ export function handleWorkspaceUpdate(workspace) {
     renderDetailPanel(workspace);
   }
 
-  // Show toast for status changes (M2: use phase + operation)
-  const config = getStatusConfig(workspace);
-  const displayStatus = getDisplayStatus(workspace);
-  if (config && !config.isTransition) {
-    showToast(`${workspace.name}: ${config.label}`, displayStatus === 'ERROR' ? 'error' : 'info');
+  // Show toast for status changes only when transition is complete
+  // If progress exists, we're in transition - don't show toast (action already showed one)
+  // If progress is null, transition is complete - show completion toast
+  if (!workspace.progress) {
+    const config = getStatusConfig(workspace);
+    const displayStatus = getDisplayStatus(workspace);
+    if (config) {
+      showToast(`${workspace.name}: ${config.label}`, displayStatus === 'ERROR' ? 'error' : 'info');
+    }
   }
 }
 
@@ -78,6 +114,9 @@ export function handleWorkspaceUpdate(workspace) {
 export function handleWorkspaceDeleted(id) {
   // Remove from cache
   delete state.cache[id];
+
+  // Remove transition state
+  delete transitionState[id];
 
   // Remove from workspaces
   state.workspaces = state.workspaces.filter(ws => ws.id !== id);

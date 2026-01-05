@@ -148,6 +148,23 @@ export function renderWorkspaceCard(workspace, index) {
     infoHtml += `<div class="text-xs text-red-400">⚠ ${escapeHtml(workspace.error_reason)}${retryInfo}</div>`;
   }
 
+  // Progress bar (shown during transitions)
+  let progressHtml = '';
+  if (workspace.progress) {
+    const { step, total_steps, label, percent } = workspace.progress;
+    progressHtml = `
+      <div class="progress-container mt-2">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-xs text-vscode-text">${escapeHtml(label)}</span>
+          <span class="text-xs text-gray-500">${step}/${total_steps}</span>
+        </div>
+        <div class="h-1 bg-vscode-border rounded overflow-hidden">
+          <div class="h-full bg-vscode-accent rounded transition-all duration-300" style="width: ${percent}%"></div>
+        </div>
+      </div>
+    `;
+  }
+
   return `
     <div data-workspace-id="${workspace.id}"
          data-index="${index}"
@@ -161,6 +178,7 @@ export function renderWorkspaceCard(workspace, index) {
       </div>
       <p class="text-vscode-text text-sm truncate mb-1">${escapeHtml(workspace.description) || 'No description'}</p>
       ${infoHtml}
+      ${progressHtml}
       ${buttonsHtml}
     </div>
   `;

@@ -45,7 +45,11 @@ class UpdateWorkspaceRequest(BaseModel):
 
 
 class WorkspaceResponse(BaseModel):
-    """Workspace response."""
+    """Workspace response.
+
+    Note: progress field is calculated in frontend (state.js).
+    Backend only provides phase, operation, desired_state.
+    """
 
     id: str
     owner_user_id: str

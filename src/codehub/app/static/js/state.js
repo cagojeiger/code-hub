@@ -19,6 +19,45 @@ export const state = {
   loadVersion: 0,
 };
 
+// Transition state tracking for consistent progress display
+// Structure: { [workspaceId]: { startPhase, desiredState } }
+export const transitionState = {};
+
+// Total steps per transition type
+export const TRANSITION_STEPS = {
+  'PENDING_RUNNING': 4,    // CREATE_EMPTY → PROVISIONING → STARTING → RUNNING
+  'ARCHIVED_RUNNING': 3,   // RESTORING → STARTING → RUNNING
+  'STANDBY_RUNNING': 2,    // STARTING → RUNNING
+  'RUNNING_STANDBY': 2,    // STOPPING → STANDBY
+  'STANDBY_ARCHIVED': 2,   // ARCHIVING → ARCHIVED
+  'RUNNING_ARCHIVED': 3,   // STOPPING → ARCHIVING → ARCHIVED
+};
+
+// Operation → step mapping (varies by transition)
+export const STEP_MAP = {
+  'PENDING_RUNNING': { CREATE_EMPTY_ARCHIVE: 1, PROVISIONING: 2, STARTING: 3 },
+  'ARCHIVED_RUNNING': { RESTORING: 1, STARTING: 2 },
+  'STANDBY_RUNNING': { STARTING: 1 },
+  'RUNNING_STANDBY': { STOPPING: 1 },
+  'STANDBY_ARCHIVED': { ARCHIVING: 1 },
+  'RUNNING_ARCHIVED': { STOPPING: 1, ARCHIVING: 2 },
+};
+
+/**
+ * Get progress info for a workspace transition
+ * @param {string} startPhase - Phase when transition started
+ * @param {string} desiredState - Target desired state
+ * @param {string} operation - Current operation
+ * @returns {object} { step, totalSteps, percent }
+ */
+export function getProgressInfo(startPhase, desiredState, operation) {
+  const key = `${startPhase}_${desiredState}`;
+  const totalSteps = TRANSITION_STEPS[key] || 2;
+  const stepMap = STEP_MAP[key] || {};
+  const step = stepMap[operation] || 1;
+  return { step, totalSteps, percent: Math.round((step / totalSteps) * 100) };
+}
+
 // M2 Phase + Operation → Display Status mapping
 export const STATUS_CONFIG = {
   // Stable states

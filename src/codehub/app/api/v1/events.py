@@ -47,6 +47,7 @@ SSE_WORKSPACE_FIELDS = {
     "created_at",
     "updated_at",
     "last_access_at",
+    "phase_changed_at",  # TTL 계산용
 }
 
 
@@ -56,6 +57,8 @@ def _workspace_to_dict(ws: Workspace) -> dict:
     Uses Pydantic's model_dump with mode='json' for automatic:
     - datetime → ISO string conversion
     - Enum → value conversion
+
+    Note: progress is calculated in frontend (state.js).
     """
     return ws.model_dump(mode="json", include=SSE_WORKSPACE_FIELDS)
 

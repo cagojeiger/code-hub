@@ -130,3 +130,15 @@ export async function deleteWorkspace(id) {
     throw new Error(error.detail || 'Failed to delete workspace');
   }
 }
+
+/**
+ * Get a single workspace by ID
+ */
+export async function getWorkspace(id) {
+  const response = await fetchWithAuth(`${API}/workspaces/${id}`);
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to get workspace');
+  }
+  return response.json();
+}

@@ -9,6 +9,7 @@ import { showToast } from './utils.js';
 import { getFilteredWorkspaces, renderFilteredWorkspaces, scrollToCard } from './cards.js';
 import { closeDetailPanel, saveMemo } from './detail-panel.js';
 import { openCreateModal, openShortcutsModal, closeAllModals, isModalOpen } from './modals.js';
+import { handleWorkspaceUpdate } from './sse.js';
 
 /**
  * Open workspace in new tab
@@ -19,13 +20,41 @@ export function openWorkspace(id) {
 }
 
 /**
- * Generic workspace action handler to reduce code duplication
+ * Generic workspace action handler with Optimistic Update
+ *
+ * 1. Immediately hide button by setting expected operation (optimistic)
+ * 2. Call API
+ * 3. Update with actual response
+ * 4. Rollback on error
+ *
+ * @param {string} id - Workspace ID
+ * @param {function} apiCall - API function to call
+ * @param {string} expectedOperation - Expected operation for optimistic update
+ * @param {string} targetDesiredState - Target desired_state for progress calculation
+ * @param {string} successMsg - Toast message on success
  */
-async function handleWorkspaceAction(id, apiCall, successMsg) {
+async function handleWorkspaceAction(id, apiCall, expectedOperation, targetDesiredState, successMsg) {
+  const originalWorkspace = state.cache[id];
+
+  // Guard: prevent double-click if already in transition or not in cache
+  if (!originalWorkspace || originalWorkspace.operation !== 'NONE') {
+    return;
+  }
+
+  // 1. Optimistic Update - immediately hide button and set desired_state
+  handleWorkspaceUpdate({ ...originalWorkspace, operation: expectedOperation, desired_state: targetDesiredState });
+
   try {
-    await apiCall(id);
+    // 2. Call API
+    const updatedWorkspace = await apiCall(id);
+    // 3. Update with actual response
+    handleWorkspaceUpdate(updatedWorkspace);
     showToast(successMsg, 'info');
   } catch (error) {
+    // 4. Rollback on error
+    if (originalWorkspace) {
+      handleWorkspaceUpdate(originalWorkspace);
+    }
     if (error.message !== 'Session expired') {
       showToast(error.message, 'error');
     }
@@ -35,17 +64,17 @@ async function handleWorkspaceAction(id, apiCall, successMsg) {
 /**
  * Handle workspace start action
  */
-export const handleStart = (id) => handleWorkspaceAction(id, startWorkspace, 'Workspace starting...');
+export const handleStart = (id) => handleWorkspaceAction(id, startWorkspace, 'STARTING', 'RUNNING', 'Starting...');
 
 /**
  * Handle workspace pause action (RUNNING → STANDBY)
  */
-export const handlePause = (id) => handleWorkspaceAction(id, pauseWorkspace, 'Workspace pausing...');
+export const handlePause = (id) => handleWorkspaceAction(id, pauseWorkspace, 'STOPPING', 'STANDBY', 'Pausing...');
 
 /**
  * Handle workspace archive action (STANDBY → ARCHIVED)
  */
-export const handleArchive = (id) => handleWorkspaceAction(id, archiveWorkspace, 'Workspace archiving...');
+export const handleArchive = (id) => handleWorkspaceAction(id, archiveWorkspace, 'ARCHIVING', 'ARCHIVED', 'Archiving...');
 
 /**
  * Select a workspace by ID
