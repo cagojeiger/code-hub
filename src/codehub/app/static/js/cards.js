@@ -148,24 +148,25 @@ export function renderWorkspaceCard(workspace, index) {
     infoHtml += `<div class="text-xs text-red-400">⚠ ${escapeHtml(workspace.error_reason)}${retryInfo}</div>`;
   }
 
-  // Progress bar (shown during transitions)
-  let progressHtml = '';
-  if (workspace.progress) {
-    const { step, total_steps, label, percent } = workspace.progress;
-    const targetLabel = workspace.desired_state ? ` → ${workspace.desired_state}` : '';
-    progressHtml = `
-      <div class="progress-container mt-2">
-        <div class="flex items-center gap-2 mb-1">
-          <span class="text-xs text-vscode-text">${escapeHtml(label)}</span>
-          <span class="text-xs text-gray-500">${step}/${total_steps}</span>
-          <span class="text-xs text-gray-400">${targetLabel}</span>
-        </div>
-        <div class="h-1 bg-vscode-border rounded overflow-hidden">
-          <div class="h-full bg-vscode-accent rounded transition-all duration-300" style="width: ${percent}%"></div>
-        </div>
+  // Progress bar (always rendered to prevent layout jump)
+  const hasProgress = !!workspace.progress;
+  const { step = 0, total_steps = 1, label = '', percent = 0 } = workspace.progress || {};
+  const targetLabel = workspace.desired_state && workspace.desired_state !== workspace.phase
+    ? ` → ${workspace.desired_state}`
+    : '';
+
+  const progressHtml = `
+    <div class="progress-container mt-2">
+      <div class="flex items-center gap-2 mb-1 ${hasProgress ? '' : 'invisible'}">
+        <span class="text-xs text-vscode-text">${escapeHtml(label) || '&nbsp;'}</span>
+        <span class="text-xs text-gray-500">${step}/${total_steps}</span>
+        <span class="text-xs text-gray-400">${targetLabel}</span>
       </div>
-    `;
-  }
+      <div class="h-1 bg-vscode-border rounded overflow-hidden">
+        <div class="h-full bg-vscode-accent rounded transition-all duration-300" style="width: ${percent}%"></div>
+      </div>
+    </div>
+  `;
 
   return `
     <div data-workspace-id="${workspace.id}"
