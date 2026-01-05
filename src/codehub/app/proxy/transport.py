@@ -24,6 +24,15 @@ from .client import WS_HOP_BY_HOP_HEADERS, filter_headers, get_http_client
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# WebSocket Connection Settings
+# =============================================================================
+
+WS_PING_INTERVAL = 20.0  # Ping interval for connection health check (seconds)
+WS_PING_TIMEOUT = 20.0  # Pong response timeout (seconds)
+WS_MAX_SIZE = 16 * 1024 * 1024  # Max message size: 16MB
+WS_MAX_QUEUE = 64  # Max queued messages (backpressure, no data loss)
+
 
 # =============================================================================
 # Internal WebSocket Relay Functions
@@ -156,7 +165,12 @@ async def proxy_ws_to_upstream(
     # Connect to upstream first (before accepting client)
     try:
         backend_ws = await websockets.connect(
-            upstream_ws_uri, additional_headers=extra_headers
+            upstream_ws_uri,
+            additional_headers=extra_headers,
+            ping_interval=WS_PING_INTERVAL,
+            ping_timeout=WS_PING_TIMEOUT,
+            max_size=WS_MAX_SIZE,
+            max_queue=WS_MAX_QUEUE,
         )
     except websockets.InvalidURI as exc:
         logger.warning("Invalid WebSocket URI for %s: %s", workspace_id, exc)

@@ -12,6 +12,12 @@ import httpx
 # Proxy timeouts (seconds)
 PROXY_TIMEOUT_TOTAL = 30.0  # Total request timeout
 PROXY_TIMEOUT_CONNECT = 10.0  # Connection timeout
+PROXY_TIMEOUT_POOL = 5.0  # Pool acquire timeout (waiting for available connection)
+
+# Connection pool limits
+PROXY_MAX_CONNECTIONS = 100  # Maximum concurrent connections
+PROXY_MAX_KEEPALIVE = 20  # Maximum keepalive connections
+PROXY_KEEPALIVE_EXPIRY = 30.0  # Keepalive connection expiry (seconds)
 
 # HTTP hop-by-hop headers to remove before forwarding (RFC 7230)
 HOP_BY_HOP_HEADERS = frozenset(
@@ -50,7 +56,18 @@ async def get_http_client() -> httpx.AsyncClient:
     global _http_client
     if _http_client is None:
         _http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(PROXY_TIMEOUT_TOTAL, connect=PROXY_TIMEOUT_CONNECT)
+            timeout=httpx.Timeout(
+                timeout=PROXY_TIMEOUT_TOTAL,
+                connect=PROXY_TIMEOUT_CONNECT,
+                read=PROXY_TIMEOUT_TOTAL,
+                write=PROXY_TIMEOUT_TOTAL,
+                pool=PROXY_TIMEOUT_POOL,
+            ),
+            limits=httpx.Limits(
+                max_connections=PROXY_MAX_CONNECTIONS,
+                max_keepalive_connections=PROXY_MAX_KEEPALIVE,
+                keepalive_expiry=PROXY_KEEPALIVE_EXPIRY,
+            ),
         )
     return _http_client
 
