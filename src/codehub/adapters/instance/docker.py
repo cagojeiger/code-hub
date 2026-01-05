@@ -3,7 +3,7 @@
 import logging
 
 from codehub.app.config import get_settings
-from codehub.core.interfaces import ContainerInfo, InstanceController
+from codehub.core.interfaces import ContainerInfo, InstanceController, UpstreamInfo
 from codehub.infra.docker import (
     ContainerAPI,
     ContainerConfig,
@@ -118,3 +118,13 @@ class DockerInstanceController(InstanceController):
     async def close(self) -> None:
         """Close is no-op (Docker client is singleton)."""
         pass
+
+    async def resolve_upstream(self, workspace_id: str) -> UpstreamInfo | None:
+        """Resolve upstream address for proxy.
+
+        Returns container_name:port for Docker environment.
+        """
+        return UpstreamInfo(
+            hostname=self._container_name(workspace_id),
+            port=self._config.container_port,
+        )

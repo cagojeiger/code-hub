@@ -1,6 +1,10 @@
 """Abstract base classes for adapters."""
 
-from codehub.core.interfaces.instance import ContainerInfo, InstanceController
+from codehub.core.interfaces.instance import (
+    ContainerInfo,
+    InstanceController,
+    UpstreamInfo,
+)
 from codehub.core.interfaces.job import JobResult, JobRunner
 from codehub.core.interfaces.leader import LeaderElection
 from codehub.core.interfaces.storage import (
@@ -13,6 +17,7 @@ from codehub.core.interfaces.volume import VolumeProvider
 __all__ = [
     "ContainerInfo",
     "InstanceController",
+    "UpstreamInfo",
     "ArchiveInfo",
     "LeaderElection",
     "StorageProvider",

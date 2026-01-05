@@ -2,9 +2,6 @@
 
 Provides HTTP and WebSocket reverse proxy to workspace containers.
 Routes: /w/{workspace_id}/* -> code-server container
-
-TODO: InstanceController에 resolve_upstream() 메서드 추가 필요
-      또는 ContainerInfo에 hostname, port 추가 필요
 """
 
 import asyncio
@@ -20,24 +17,19 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from codehub.app.config import get_settings
-from codehub.core.domain import Phase
+from codehub.adapters.instance.docker import DockerInstanceController
 from codehub.core.errors import (
     ForbiddenError,
-    RunningLimitExceededError,
     UnauthorizedError,
     UpstreamUnavailableError,
     WorkspaceNotFoundError,
 )
+from codehub.core.interfaces import InstanceController
 from codehub.infra import get_session
-from codehub.services.workspace_service import (
-    list_running_workspaces,
-    request_start,
-)
 
 from .activity import get_activity_buffer
 from .auth import get_user_id_from_session, get_workspace_for_user
-from .pages import error_page, limit_exceeded_page, restoring_page, starting_page
+from .policy import ProxyDecision, decide_http, decide_ws
 from .client import (
     WS_HOP_BY_HOP_HEADERS,
     filter_headers,
@@ -55,29 +47,19 @@ router = APIRouter(tags=["proxy"])
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 
-# TODO: InstanceController DI 추가
-# Instance = Annotated[InstanceController, Depends(get_instance_controller)]
-
-# =============================================================================
-# Settings-based configuration
-# =============================================================================
-_settings = get_settings()
-_docker_config = _settings.docker
-_limits_config = _settings.limits
+# InstanceController singleton
+_instance_controller: InstanceController | None = None
 
 
-def _get_container_hostname(workspace_id: str) -> str:
-    """Get container hostname for workspace.
+def get_instance_controller() -> InstanceController:
+    """Get InstanceController singleton."""
+    global _instance_controller
+    if _instance_controller is None:
+        _instance_controller = DockerInstanceController()
+    return _instance_controller
 
-    TODO: InstanceController.resolve_upstream() 구현 후 대체
-    """
-    return f"{_docker_config.resource_prefix}{workspace_id}"
 
-
-def _get_container_port() -> int:
-    """Get container port for workspace."""
-    return _docker_config.container_port
-
+Instance = Annotated[InstanceController, Depends(get_instance_controller)]
 
 # =============================================================================
 # Routes
@@ -103,6 +85,7 @@ async def proxy_http(
     path: str,
     request: Request,
     db: DbSession,
+    instance: Instance,
     session: Annotated[str | None, Cookie(alias="session")] = None,
 ) -> StreamingResponse | RedirectResponse:
     """Proxy HTTP requests to workspace container."""
@@ -110,44 +93,19 @@ async def proxy_http(
     user_id = await get_user_id_from_session(db, session)
     workspace = await get_workspace_for_user(db, workspace_id, user_id)
 
-    # Phase check (spec_v2/02-states.md: Proxy behavior by phase)
-    if workspace.phase == Phase.RUNNING.value:
-        # Normal proxy - continue below
-        pass
-    elif workspace.phase == Phase.STANDBY.value:
-        # Auto-wake (STANDBY only) - use request_start() single entry point
-        try:
-            await request_start(db, workspace_id, user_id)
-        except RunningLimitExceededError:
-            running_workspaces = await list_running_workspaces(db, user_id)
-            return limit_exceeded_page(
-                running_workspaces, _limits_config.max_running_per_user
-            )
-        # Return starting page (polling-based auto-refresh)
-        return starting_page(workspace)
-    elif workspace.phase == Phase.ARCHIVED.value:
-        # Auto-wake (ARCHIVED) - restore + start
-        try:
-            await request_start(db, workspace_id, user_id)
-        except RunningLimitExceededError:
-            running_workspaces = await list_running_workspaces(db, user_id)
-            return limit_exceeded_page(
-                running_workspaces, _limits_config.max_running_per_user
-            )
-        # Return restoring page (polling-based auto-refresh)
-        return restoring_page(workspace)
-    else:
-        # PENDING, ERROR, DELETED, etc -> 502 + status page
-        return error_page(workspace)
+    # Phase-based policy decision (spec_v2/02-states.md)
+    policy_result = await decide_http(db, workspace, user_id)
+    if policy_result.decision != ProxyDecision.ALLOW:
+        return policy_result.response
 
     # Record activity for TTL tracking
     get_activity_buffer().record(workspace_id)
 
-    # Resolve upstream
-    # TODO: InstanceController 사용
-    hostname = _get_container_hostname(workspace_id)
-    port = _get_container_port()
-    upstream_url = f"http://{hostname}:{port}"
+    # Resolve upstream via InstanceController
+    upstream = await instance.resolve_upstream(workspace_id)
+    if upstream is None:
+        raise UpstreamUnavailableError()
+    upstream_url = upstream.url
 
     # Build target URL
     target_path = f"/{path}" if path else "/"
@@ -207,6 +165,7 @@ async def proxy_websocket(
     workspace_id: str,
     path: str,
     db: DbSession,
+    instance: Instance,
 ) -> None:
     """Proxy WebSocket connections to workspace container."""
     # Authenticate user and verify workspace ownership
@@ -224,26 +183,30 @@ async def proxy_websocket(
         await websocket.close(code=1008, reason="Workspace not found")
         return
 
-    # Phase check - WebSocket only works for RUNNING workspaces
-    # Non-RUNNING states are handled by HTTP endpoint (returns HTML pages)
-    if workspace.phase != Phase.RUNNING.value:
-        await websocket.close(code=1008, reason="Workspace not running")
+    # Phase-based policy decision
+    policy_result = decide_ws(workspace)
+    if policy_result.decision != ProxyDecision.ALLOW:
+        await websocket.close(
+            code=policy_result.ws_close_code,
+            reason=policy_result.ws_close_reason,
+        )
         return
 
     # Record activity for TTL tracking
     get_activity_buffer().record(workspace_id)
 
-    # Resolve upstream
-    # TODO: InstanceController 사용
-    hostname = _get_container_hostname(workspace_id)
-    port = _get_container_port()
+    # Resolve upstream via InstanceController
+    upstream = await instance.resolve_upstream(workspace_id)
+    if upstream is None:
+        await websocket.close(code=1011, reason="Upstream unavailable")
+        return
 
     # Build WebSocket URI with query string
     target_path = f"/{path}" if path else "/"
     query_string = websocket.scope.get("query_string", b"").decode()
     if query_string:
         target_path = f"{target_path}?{query_string}"
-    upstream_ws_uri = f"ws://{hostname}:{port}{target_path}"
+    upstream_ws_uri = f"{upstream.ws_url}{target_path}"
 
     # Forward all headers except hop-by-hop (RFC 6455/7230 compliance)
     client_headers = dict(websocket.headers)

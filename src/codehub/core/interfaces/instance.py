@@ -16,6 +16,29 @@ class ContainerInfo(BaseModel):
     model_config = {"frozen": True}
 
 
+class UpstreamInfo(BaseModel):
+    """Upstream address for proxy routing.
+
+    Docker: container_name:port (e.g., ws-abc123:8080)
+    K8s: service.namespace.svc.cluster.local:port
+    """
+
+    hostname: str
+    port: int
+
+    @property
+    def url(self) -> str:
+        """HTTP URL for upstream."""
+        return f"http://{self.hostname}:{self.port}"
+
+    @property
+    def ws_url(self) -> str:
+        """WebSocket URL for upstream."""
+        return f"ws://{self.hostname}:{self.port}"
+
+    model_config = {"frozen": True}
+
+
 class InstanceController(ABC):
     """Interface for container orchestration.
 
@@ -68,4 +91,19 @@ class InstanceController(ABC):
     @abstractmethod
     async def close(self) -> None:
         """Close controller and release resources."""
+        ...
+
+    @abstractmethod
+    async def resolve_upstream(self, workspace_id: str) -> UpstreamInfo | None:
+        """Resolve upstream address for proxy.
+
+        Docker: container_name:port
+        K8s: service_name.namespace.svc.cluster.local:port
+
+        Args:
+            workspace_id: Workspace ID
+
+        Returns:
+            UpstreamInfo if ready, None if not found/not ready
+        """
         ...
