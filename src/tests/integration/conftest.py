@@ -12,7 +12,7 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 import codehub.infra.docker as docker_module
-import codehub.infra.object_storage as storage_module
+import codehub.infra.s3 as storage_module
 from codehub.app.config import get_settings
 from codehub.infra.docker import (
     ContainerAPI,
