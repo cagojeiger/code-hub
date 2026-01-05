@@ -34,6 +34,7 @@ class ErrorCode(str, Enum):
     WORKSPACE_NOT_FOUND = "WORKSPACE_NOT_FOUND"
     INVALID_STATE = "INVALID_STATE"
     TOO_MANY_REQUESTS = "TOO_MANY_REQUESTS"
+    RUNNING_LIMIT_EXCEEDED = "RUNNING_LIMIT_EXCEEDED"
     UPSTREAM_UNAVAILABLE = "UPSTREAM_UNAVAILABLE"
     INTERNAL_ERROR = "INTERNAL_ERROR"
 
@@ -119,6 +120,13 @@ class TooManyRequestsError(CodeHubError):
     ) -> None:
         self.retry_after = retry_after
         super().__init__(ErrorCode.TOO_MANY_REQUESTS, message, 429)
+
+
+class RunningLimitExceededError(CodeHubError):
+    """429 Too Many Requests - Running workspace limit exceeded."""
+
+    def __init__(self, message: str = "Running workspace limit exceeded") -> None:
+        super().__init__(ErrorCode.RUNNING_LIMIT_EXCEEDED, message, 429)
 
 
 class UpstreamUnavailableError(CodeHubError):

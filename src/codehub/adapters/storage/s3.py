@@ -133,7 +133,16 @@ class S3StorageProvider(StorageProvider):
                 workspace_archives[workspace_id].append((key, last_modified))
 
         except ClientError as e:
-            logger.error("Failed to list archives: %s", e)
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            logger.error(
+                "Failed to list archives: %s",
+                e,
+                extra={
+                    "bucket": settings.storage.bucket_name,
+                    "prefix": prefix,
+                    "error_code": error_code,
+                },
+            )
             return results
 
         # Find latest archive per workspace (in memory)
@@ -172,7 +181,16 @@ class S3StorageProvider(StorageProvider):
                     archive_keys.add(key)
 
         except ClientError as e:
-            logger.error("Failed to list all archives: %s", e)
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            logger.error(
+                "Failed to list all archives: %s",
+                e,
+                extra={
+                    "bucket": settings.storage.bucket_name,
+                    "prefix": prefix,
+                    "error_code": error_code,
+                },
+            )
 
         return archive_keys
 

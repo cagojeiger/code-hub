@@ -46,10 +46,18 @@ class BulkObserver:
         try:
             return await asyncio.wait_for(coro, timeout=self._timeout_s)
         except asyncio.TimeoutError:
-            logger.warning("[BulkObserver] %s timeout (%.1fs)", name, self._timeout_s)
+            logger.warning(
+                "[BulkObserver] %s timeout (%.1fs)",
+                name, self._timeout_s,
+                extra={"operation": name, "error_type": "timeout", "timeout_s": self._timeout_s},
+            )
             return None
-        except Exception:
-            logger.exception("[BulkObserver] %s failed", name)
+        except Exception as exc:
+            logger.exception(
+                "[BulkObserver] %s failed: %s",
+                name, exc,
+                extra={"operation": name, "error_type": type(exc).__name__},
+            )
             return None
 
     async def observe_all(self) -> tuple[

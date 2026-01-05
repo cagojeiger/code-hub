@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Query
+from fastapi import APIRouter, Cookie, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +12,6 @@ from codehub.app.proxy.auth import get_user_id_from_session
 from codehub.core.domain import DesiredState
 from codehub.infra import get_session
 from codehub.services import workspace_service
-from codehub.services.workspace_service import RunningLimitExceededError
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -103,22 +102,17 @@ async def create_workspace(
     user_id = await get_user_id_from_session(db, session)
 
     # Check limit before creating (avoid creating workspace that can't start)
-    try:
-        # Create workspace (with desired_state=RUNNING but not counted yet)
-        workspace = await workspace_service.create_workspace(
-            db=db,
-            user_id=user_id,
-            name=request.name,
-            description=request.description,
-            image_ref=request.image_ref,
-        )
-        # request_start validates and commits the start request
-        workspace = await workspace_service.request_start(db, workspace.id, user_id)
-    except RunningLimitExceededError:
-        raise HTTPException(
-            status_code=429,
-            detail="Running workspace limit exceeded",
-        )
+    # Create workspace (with desired_state=RUNNING but not counted yet)
+    workspace = await workspace_service.create_workspace(
+        db=db,
+        user_id=user_id,
+        name=request.name,
+        description=request.description,
+        image_ref=request.image_ref,
+    )
+    # request_start validates and commits the start request
+    # RunningLimitExceededError is handled by FastAPI exception handler
+    workspace = await workspace_service.request_start(db, workspace.id, user_id)
 
     return _to_response(workspace)
 
@@ -179,14 +173,9 @@ async def update_workspace(
     user_id = await get_user_id_from_session(db, session)
 
     # desired_state=RUNNING → request_start() 단일 진입점 사용
+    # RunningLimitExceededError is handled by FastAPI exception handler
     if request.desired_state == DesiredState.RUNNING:
-        try:
-            workspace = await workspace_service.request_start(db, workspace_id, user_id)
-        except RunningLimitExceededError:
-            raise HTTPException(
-                status_code=429,
-                detail="Running workspace limit exceeded",
-            )
+        workspace = await workspace_service.request_start(db, workspace_id, user_id)
         # Update other fields if provided
         if request.name or request.description is not None or request.memo is not None:
             workspace = await workspace_service.update_workspace(

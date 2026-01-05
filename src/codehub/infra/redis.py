@@ -135,8 +135,19 @@ class NotifySubscriber:
                 return str(self._target)
             return None
 
+        except redis.ConnectionError as e:
+            logger.warning(
+                "Redis connection error in pubsub: %s",
+                e,
+                extra={"error_type": "connection", "target": str(self._target)},
+            )
+            return None
         except Exception as e:
-            logger.warning("Error reading from pubsub: %s", e)
+            logger.warning(
+                "Error reading from pubsub: %s",
+                e,
+                extra={"error_type": type(e).__name__, "target": str(self._target)},
+            )
             return None
 
 

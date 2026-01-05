@@ -8,17 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from codehub.app.config import get_settings
 from codehub.core.domain import DesiredState, Operation, Phase
-from codehub.core.errors import ForbiddenError, WorkspaceNotFoundError
+from codehub.core.errors import (
+    ForbiddenError,
+    RunningLimitExceededError,
+    WorkspaceNotFoundError,
+)
 from codehub.core.models import Workspace
 
 # Load settings once at module level
 _settings = get_settings()
-
-
-class RunningLimitExceededError(Exception):
-    """사용자의 동시 실행 워크스페이스 한도 초과."""
-
-    pass
 
 
 async def create_workspace(

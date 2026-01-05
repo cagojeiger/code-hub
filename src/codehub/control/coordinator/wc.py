@@ -35,6 +35,7 @@ from codehub.core.domain.workspace import (
 from codehub.core.interfaces.instance import InstanceController
 from codehub.core.interfaces.storage import StorageProvider
 from codehub.core.models import Workspace
+from codehub.core.retryable import classify_error, with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +107,15 @@ class WorkspaceController(CoordinatorBase):
         ) -> tuple[Workspace, PlanAction]:
             if self._needs_execute(action, ws):
                 try:
+                    # with_retry handles transient errors with exponential backoff
                     await asyncio.wait_for(
-                        self._execute(ws, action),
+                        with_retry(
+                            lambda ws=ws, action=action: self._execute(ws, action),
+                            max_retries=3,
+                            base_delay=1.0,
+                            max_delay=30.0,
+                            circuit_breaker="external",
+                        ),
                         timeout=self.OPERATION_TIMEOUT,
                     )
                 except asyncio.TimeoutError:
@@ -115,8 +123,12 @@ class WorkspaceController(CoordinatorBase):
                         "[%s] Operation %s timeout for ws=%s",
                         self.name, action.operation, ws.id
                     )
-                except Exception:
-                    logger.exception("Failed to execute %s", ws.id)
+                except Exception as exc:
+                    error_class = classify_error(exc)
+                    logger.exception(
+                        "Failed to execute %s (class=%s, cause: %s)",
+                        ws.id, error_class, exc.__cause__ or exc
+                    )
             return (ws, action)
 
         results = await asyncio.gather(
@@ -128,8 +140,10 @@ class WorkspaceController(CoordinatorBase):
         for ws, action in results:
             try:
                 await self._persist(ws, action)
-            except Exception:
-                logger.exception("Failed to persist %s", ws.id)
+            except Exception as exc:
+                logger.exception(
+                    "Failed to persist %s (cause: %s)", ws.id, exc.__cause__ or exc
+                )
 
     def _judge_and_plan(self, ws: Workspace) -> PlanAction:
         """Judge + Plan (순수 계산, DB 미사용)."""

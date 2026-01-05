@@ -542,10 +542,11 @@ class TestTickParallel:
         # 에러가 발생해도 다른 ws는 처리됨
         await wc.tick()
 
-        # 3개 모두 execute 시도됨 (병렬)
-        assert len(execute_calls) == 3
+        # 3개 workspace 모두 execute 시도됨 (병렬, 재시도 가능)
+        # with_retry가 unknown 에러를 재시도하므로 호출 횟수 > 3
+        assert set(execute_calls) == {"ws-1", "ws-2", "ws-3"}
         # 3개 모두 persist 시도됨 (순차, 에러 격리)
-        assert len(persist_calls) == 3
+        assert set(persist_calls) == {"ws-1", "ws-2", "ws-3"}
 
 
 class TestCasUpdate:

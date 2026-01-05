@@ -24,6 +24,7 @@ from codehub.app.config import get_settings
 from codehub.core.domain import Phase
 from codehub.core.errors import (
     ForbiddenError,
+    RunningLimitExceededError,
     UnauthorizedError,
     UpstreamUnavailableError,
     WorkspaceNotFoundError,
@@ -32,7 +33,6 @@ from codehub.infra import get_session
 from codehub.services.workspace_service import (
     list_running_workspaces,
     request_start,
-    RunningLimitExceededError,
 )
 
 from .activity import get_activity_buffer
