@@ -1,9 +1,14 @@
-"""Redis Key-Value for activity tracking.
+"""Redis ZSET for activity tracking.
 
-Provides ActivityStore for managing workspace last_access timestamps.
-Used by TTL Manager for automatic pause/archive decisions.
+Uses Sorted Set for efficient bulk operations and range queries.
+Key: last_access (single ZSET)
+Member: workspace_id
+Score: timestamp (float)
 
-Key pattern: last_access:{workspace_id}
+Advantages over Key-Value:
+- O(1) RTT for bulk operations (vs N+1 with SCAN+GET)
+- ZADD GT prevents timestamp rollback (race condition fix)
+- ZRANGEBYSCORE for efficient TTL queries
 """
 
 import logging
@@ -14,68 +19,84 @@ from codehub.infra.redis import get_redis
 
 logger = logging.getLogger(__name__)
 
+# ZSET key name (single key for all workspaces)
+ACTIVITY_KEY = "last_access"
+
 
 class ActivityStore:
-    """Manages workspace activity timestamps in Redis.
+    """Manages workspace activity timestamps in Redis ZSET.
 
-    Key pattern: last_access:{workspace_id}
-    Used by TTL Manager for automatic pause/archive.
+    Key: last_access (single ZSET)
+    Member: workspace_id
+    Score: timestamp
+
+    Used by TTL Manager for automatic pause/archive decisions.
     """
-
-    KEY_PREFIX = "last_access:"
 
     def __init__(self, client: redis.Redis) -> None:
         self._client = client
 
-    def _get_key(self, workspace_id: str) -> str:
-        return f"{self.KEY_PREFIX}{workspace_id}"
+    async def update(self, activities: dict[str, float]) -> None:
+        """Bulk update activity timestamps using ZADD.
 
-    async def mset(self, activities: dict[str, float]) -> None:
-        """Bulk set activity timestamps.
+        Uses GT flag to only update if new score > existing score.
+        This prevents race condition where older timestamp overwrites newer.
 
         Args:
             activities: Mapping of workspace_id -> timestamp.
         """
         if not activities:
             return
-        redis_data = {self._get_key(ws_id): str(ts) for ws_id, ts in activities.items()}
-        await self._client.mset(redis_data)
-        logger.debug("Activity MSET %d workspaces", len(activities))
+
+        # ZADD key GT score member [score member ...]
+        # GT: Only update if new score > existing score
+        await self._client.zadd(ACTIVITY_KEY, activities, gt=True)
+        logger.debug("Activity ZADD GT %d workspaces", len(activities))
 
     async def scan_all(self) -> dict[str, float]:
-        """Scan all activity keys.
+        """Get all activity timestamps using ZRANGE.
 
         Returns:
             Mapping of workspace_id -> timestamp.
+
+        Complexity: O(1) RTT regardless of N workspaces.
         """
-        result: dict[str, float] = {}
-        pattern = f"{self.KEY_PREFIX}*"
-
-        async for key in self._client.scan_iter(match=pattern):
-            key_str = key.decode() if isinstance(key, bytes) else key
-            ws_id = key_str.removeprefix(self.KEY_PREFIX)
-            value = await self._client.get(key)
-            if value:
-                value_str = value.decode() if isinstance(value, bytes) else value
-                result[ws_id] = float(value_str)
-
-        return result
+        # ZRANGE key 0 -1 WITHSCORES -> [(member, score), ...]
+        items = await self._client.zrange(ACTIVITY_KEY, 0, -1, withscores=True)
+        return dict(items)
 
     async def delete(self, workspace_ids: list[str]) -> int:
-        """Delete activity keys.
+        """Delete activity records using ZREM.
 
         Args:
             workspace_ids: List of workspace IDs to delete.
 
         Returns:
-            Number of keys deleted.
+            Number of members removed.
         """
         if not workspace_ids:
             return 0
-        keys = [self._get_key(ws_id) for ws_id in workspace_ids]
-        count = await self._client.delete(*keys)
-        logger.debug("Activity DELETE %d keys", count)
+
+        # ZREM key member [member ...]
+        count = await self._client.zrem(ACTIVITY_KEY, *workspace_ids)
+        logger.debug("Activity ZREM %d members", count)
         return count
+
+    async def get_expired(self, cutoff_timestamp: float) -> list[str]:
+        """Get workspace IDs with timestamp <= cutoff.
+
+        Useful for TTL Manager to find idle workspaces efficiently.
+
+        Args:
+            cutoff_timestamp: Maximum timestamp (inclusive).
+
+        Returns:
+            List of workspace IDs.
+        """
+        # ZRANGEBYSCORE key -inf cutoff
+        return await self._client.zrangebyscore(
+            ACTIVITY_KEY, min="-inf", max=cutoff_timestamp
+        )
 
 
 # =============================================================================

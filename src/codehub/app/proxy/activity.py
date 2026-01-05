@@ -45,7 +45,7 @@ class ActivityBuffer:
             self._buffer = {}
 
         try:
-            await store.mset(snapshot)
+            await store.update(snapshot)
             logger.debug("Flushed %d workspace activities to Redis", len(snapshot))
             return len(snapshot)
         except redis.RedisError as e:
