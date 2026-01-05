@@ -75,7 +75,7 @@ class SQLAlchemyLeaderElection(LeaderElection):
                     )
                     row = result.fetchone()
                     acquired = row[0] if row else False
-            except TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 logger.warning("Leadership acquire timeout (lock=%s)", self._lock_key)
                 acquired = False
             except Exception as e:
@@ -116,7 +116,7 @@ class SQLAlchemyLeaderElection(LeaderElection):
                         logger.warning(
                             "Lock was not held during release (lock=%s)", self._lock_key
                         )
-            except TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 logger.warning("Leadership release timeout (lock=%s)", self._lock_key)
             except Exception as e:
                 logger.warning("Leadership release error (lock=%s): %s", self._lock_key, e)
@@ -154,7 +154,7 @@ class SQLAlchemyLeaderElection(LeaderElection):
                     )
                     row = result.fetchone()
                     holding = row[0] if row else False
-            except TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 logger.warning("Leadership verify timeout (lock=%s)", self._lock_key)
                 self._is_leader = False
                 return False
@@ -220,7 +220,7 @@ class PsycopgLeaderElection(LeaderElection):
                     )
                     row = await result.fetchone()
                     acquired = row[0] if row else False
-            except TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 logger.warning("Leadership acquire timeout (lock=%s)", self._lock_key)
                 acquired = False
             except Exception as e:
@@ -260,7 +260,7 @@ class PsycopgLeaderElection(LeaderElection):
                         logger.warning(
                             "Lock was not held during release (lock=%s)", self._lock_key
                         )
-            except TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 logger.warning("Leadership release timeout (lock=%s)", self._lock_key)
             except Exception as e:
                 logger.warning("Leadership release error (lock=%s): %s", self._lock_key, e)
@@ -298,7 +298,7 @@ class PsycopgLeaderElection(LeaderElection):
                     )
                     row = await result.fetchone()
                     holding = row[0] if row else False
-            except TimeoutError:
+            except (TimeoutError, asyncio.TimeoutError):
                 logger.warning("Leadership verify timeout (lock=%s)", self._lock_key)
                 self._is_leader = False
                 return False
