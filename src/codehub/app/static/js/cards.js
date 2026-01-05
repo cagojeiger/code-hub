@@ -70,83 +70,97 @@ export function renderWorkspaceCard(workspace, index) {
     ? '<span class="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full spinner ml-1"></span>'
     : '';
 
-  let buttonsHtml = '<div class="flex flex-wrap gap-2 mt-3">';
+  // Check if any buttons will be shown
+  const hasButtons = config.canOpen || config.canStart || config.canPause ||
+                     config.canArchive || config.canRetry || config.canDelete;
+
+  // Build buttons HTML (will be placed in header row)
+  let buttonsInner = '';
 
   if (config.canOpen) {
-    buttonsHtml += `
+    buttonsInner += `
       <button data-action="open" data-id="${workspace.id}"
-              class="px-3 py-1.5 bg-vscode-success hover:bg-green-600 text-white text-sm rounded transition-colors">
+              class="px-2 py-1 bg-vscode-success hover:bg-green-600 text-white text-xs rounded transition-colors">
         Open
       </button>`;
   }
 
   if (config.canStart) {
-    buttonsHtml += `
+    buttonsInner += `
       <button data-action="start" data-id="${workspace.id}"
-              class="px-3 py-1.5 bg-vscode-accent hover:bg-blue-600 text-white text-sm rounded transition-colors">
+              class="px-2 py-1 bg-vscode-accent hover:bg-blue-600 text-white text-xs rounded transition-colors">
         Start
       </button>`;
   }
 
   if (config.canPause) {
-    buttonsHtml += `
+    buttonsInner += `
       <button data-action="pause" data-id="${workspace.id}"
-              class="px-3 py-1.5 bg-vscode-hover border border-vscode-border text-white text-sm rounded transition-colors hover:border-vscode-text">
+              class="px-2 py-1 bg-vscode-hover border border-vscode-border text-white text-xs rounded transition-colors hover:border-vscode-text">
         Pause
       </button>`;
   }
 
   if (config.canArchive) {
-    buttonsHtml += `
+    buttonsInner += `
       <button data-action="archive" data-id="${workspace.id}"
-              class="px-3 py-1.5 bg-vscode-hover border border-vscode-border text-white text-sm rounded transition-colors hover:border-vscode-warning hover:text-vscode-warning">
+              class="px-2 py-1 bg-vscode-hover border border-vscode-border text-white text-xs rounded transition-colors hover:border-vscode-warning hover:text-vscode-warning">
         Archive
       </button>`;
   }
 
   if (config.canRetry) {
-    buttonsHtml += `
+    buttonsInner += `
       <button data-action="start" data-id="${workspace.id}"
-              class="px-3 py-1.5 bg-vscode-accent hover:bg-blue-600 text-white text-sm rounded transition-colors">
+              class="px-2 py-1 bg-vscode-accent hover:bg-blue-600 text-white text-xs rounded transition-colors">
         Retry
       </button>`;
   }
 
   if (config.canDelete) {
-    buttonsHtml += `
+    buttonsInner += `
       <button data-action="delete" data-id="${workspace.id}" data-name="${escapeHtml(workspace.name)}"
-              class="px-3 py-1.5 bg-vscode-hover border border-vscode-border hover:border-vscode-error hover:text-vscode-error text-sm rounded transition-colors">
+              class="px-2 py-1 bg-vscode-hover border border-vscode-border hover:border-vscode-error hover:text-vscode-error text-xs rounded transition-colors">
         Delete
       </button>`;
   }
 
-  buttonsHtml += '</div>';
-
   // Build info lines
   let infoHtml = '';
 
-  // Line 1: Last active or Created
+  // Line 1: Last active or Created (always visible)
   if (workspace.last_access_at) {
     infoHtml += `<div class="text-xs text-gray-500">⚡ Last active ${formatDate(workspace.last_access_at)}</div>`;
   } else {
     infoHtml += `<div class="text-xs text-gray-500">Created ${formatDate(workspace.created_at)}</div>`;
   }
 
-  // Line 2: TTL info (RUNNING/STANDBY) or Error reason (ERROR)
+  // Line 2: TTL/Error (always rendered with fixed height to prevent layout jump)
+  let line2Content = '';
+  let line2Class = 'text-gray-400';
+  let line2Visible = false;
+
   if (workspace.phase === 'RUNNING' && workspace.operation === 'NONE') {
     const ttl = getRemainingTtl(workspace.last_access_at, TTL_STANDBY_SECONDS);
     if (ttl) {
-      infoHtml += `<div class="text-xs text-gray-400">⏱ Auto-pause in ${ttl}</div>`;
+      line2Content = `⏱ Auto-pause in ${ttl}`;
+      line2Visible = true;
     }
   } else if (workspace.phase === 'STANDBY' && workspace.operation === 'NONE') {
     const ttl = getRemainingTtl(workspace.phase_changed_at, TTL_ARCHIVE_SECONDS);
     if (ttl) {
-      infoHtml += `<div class="text-xs text-gray-400">⏱ Auto-archive in ${ttl}</div>`;
+      line2Content = `⏱ Auto-archive in ${ttl}`;
+      line2Visible = true;
     }
   } else if (workspace.phase === 'ERROR' && workspace.error_reason) {
     const retryInfo = workspace.error_count > 0 ? ` (retry ${workspace.error_count}/3)` : '';
-    infoHtml += `<div class="text-xs text-red-400">⚠ ${escapeHtml(workspace.error_reason)}${retryInfo}</div>`;
+    line2Content = `⚠ ${escapeHtml(workspace.error_reason)}${retryInfo}`;
+    line2Class = 'text-red-400';
+    line2Visible = true;
   }
+
+  // Always render Line 2 with h-4 fixed height
+  infoHtml += `<div class="text-xs h-4 ${line2Visible ? line2Class : 'invisible'}">${line2Content || '&nbsp;'}</div>`;
 
   // Progress bar (always rendered to prevent layout jump)
   const hasProgress = !!workspace.progress;
@@ -157,7 +171,7 @@ export function renderWorkspaceCard(workspace, index) {
 
   const progressHtml = `
     <div class="progress-container mt-2">
-      <div class="flex items-center gap-2 mb-1 ${hasProgress ? '' : 'invisible'}">
+      <div class="flex items-center gap-2 mb-1 h-5 ${hasProgress ? '' : 'invisible'}">
         <span class="text-xs text-vscode-text">${escapeHtml(label) || '&nbsp;'}</span>
         <span class="text-xs text-gray-500">${step}/${total_steps}</span>
         <span class="text-xs text-gray-400">${targetLabel}</span>
@@ -173,16 +187,20 @@ export function renderWorkspaceCard(workspace, index) {
          data-index="${index}"
          tabindex="0"
          class="workspace-card bg-vscode-sidebar border border-vscode-border rounded-lg p-4 cursor-pointer focus-ring ${isSelected ? 'selected' : ''}">
-      <div class="flex items-center justify-between mb-2">
-        <h3 class="text-white font-medium truncate flex-1">${escapeHtml(workspace.name)}</h3>
-        <span class="px-2 py-1 rounded text-xs font-medium text-white ${config.bgColor} flex items-center shrink-0 ml-2">
+      <!-- Line 1: Name only -->
+      <h3 class="text-white font-medium truncate mb-2">${escapeHtml(workspace.name)}</h3>
+      <!-- Line 2: Badge + Buttons (fixed height to prevent layout jump) -->
+      <div class="flex items-center justify-between mb-2 h-7">
+        <span class="px-2 py-1 rounded text-xs font-medium text-white ${config.bgColor} flex items-center shrink-0">
           ${config.icon} ${config.label}${spinnerHtml}
         </span>
+        <div class="flex gap-1 ${hasButtons ? '' : 'invisible'}">
+          ${buttonsInner}
+        </div>
       </div>
       <p class="text-vscode-text text-sm truncate mb-1">${escapeHtml(workspace.description) || 'No description'}</p>
       ${infoHtml}
       ${progressHtml}
-      ${buttonsHtml}
     </div>
   `;
 }
