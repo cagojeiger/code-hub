@@ -152,11 +152,13 @@ export function renderWorkspaceCard(workspace, index) {
   let progressHtml = '';
   if (workspace.progress) {
     const { step, total_steps, label, percent } = workspace.progress;
+    const targetLabel = workspace.desired_state ? ` → ${workspace.desired_state}` : '';
     progressHtml = `
       <div class="progress-container mt-2">
         <div class="flex items-center gap-2 mb-1">
           <span class="text-xs text-vscode-text">${escapeHtml(label)}</span>
           <span class="text-xs text-gray-500">${step}/${total_steps}</span>
+          <span class="text-xs text-gray-400">${targetLabel}</span>
         </div>
         <div class="h-1 bg-vscode-border rounded overflow-hidden">
           <div class="h-full bg-vscode-accent rounded transition-all duration-300" style="width: ${percent}%"></div>

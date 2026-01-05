@@ -62,9 +62,9 @@ const ProxyPage = {
    * Poll workspace status and redirect when RUNNING
    * @param {string} workspaceId - Workspace ID to monitor
    * @param {string} statusElementId - Element ID to update status text
-   * @param {number} intervalMs - Polling interval in milliseconds (default: 2000)
+   * @param {number} intervalMs - Polling interval in milliseconds (default: 500)
    */
-  pollStatus(workspaceId, statusElementId, intervalMs = 2000) {
+  pollStatus(workspaceId, statusElementId, intervalMs = 500) {
     const statusEl = document.getElementById(statusElementId);
     const progressBarEl = document.getElementById('progress-bar');
     const progressStepEl = document.getElementById('progress-step');
@@ -72,7 +72,7 @@ const ProxyPage = {
 
     statusEl.textContent = 'Preparing...';
 
-    const updateProgress = (progress) => {
+    const updateProgress = (progress, desiredState) => {
       if (!progress) return;
 
       const { step, total_steps, label, percent } = progress;
@@ -85,9 +85,10 @@ const ProxyPage = {
         progressBarEl.style.width = `${percent}%`;
       }
 
-      // Update step indicator if element exists
+      // Update step indicator if element exists (with target state)
       if (progressStepEl) {
-        progressStepEl.textContent = `${step}/${total_steps}`;
+        const targetLabel = desiredState ? ` → ${desiredState}` : '';
+        progressStepEl.textContent = `${step}/${total_steps}${targetLabel}`;
       }
     };
 
@@ -132,7 +133,7 @@ const ProxyPage = {
           );
 
           if (progress) {
-            updateProgress(progress);
+            updateProgress(progress, ws.desired_state);
           } else {
             statusEl.textContent = 'Preparing...';
           }

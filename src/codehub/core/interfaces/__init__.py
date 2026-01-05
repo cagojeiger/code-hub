@@ -2,6 +2,7 @@
 
 from codehub.core.interfaces.instance import ContainerInfo, InstanceController
 from codehub.core.interfaces.job import JobResult, JobRunner
+from codehub.core.interfaces.leader import LeaderElection
 from codehub.core.interfaces.storage import (
     ArchiveInfo,
     StorageProvider,
@@ -13,6 +14,7 @@ __all__ = [
     "ContainerInfo",
     "InstanceController",
     "ArchiveInfo",
+    "LeaderElection",
     "StorageProvider",
     "VolumeInfo",
     "VolumeProvider",

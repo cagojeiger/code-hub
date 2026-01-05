@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from codehub.control.coordinator.base import LeaderElection
+from codehub.core.interfaces.leader import LeaderElection
 from codehub.infra.redis import NotifySubscriber
 
 
@@ -26,6 +26,7 @@ def mock_leader(mock_conn: AsyncMock) -> AsyncMock:
     leader.is_leader = True
     leader.try_acquire = AsyncMock(return_value=True)
     leader.release = AsyncMock()
+    leader.verify_holding = AsyncMock(return_value=True)  # P6: verify_holding mock
     return leader
 
 

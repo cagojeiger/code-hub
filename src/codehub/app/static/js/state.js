@@ -43,6 +43,16 @@ export const STEP_MAP = {
   'RUNNING_ARCHIVED': { STOPPING: 1, ARCHIVING: 2 },
 };
 
+// Inferred operation when WC hasn't triggered yet (operation=NONE but desired_state!=phase)
+const INFERRED_OPERATION = {
+  'STANDBY_ARCHIVED': 'ARCHIVING',
+  'ARCHIVED_RUNNING': 'RESTORING',
+  'STANDBY_RUNNING': 'STARTING',
+  'RUNNING_STANDBY': 'STOPPING',
+  'RUNNING_ARCHIVED': 'STOPPING',
+  'PENDING_RUNNING': 'CREATE_EMPTY_ARCHIVE',
+};
+
 /**
  * Get progress info for a workspace transition
  * @param {string} startPhase - Phase when transition started
@@ -82,18 +92,25 @@ export const STATUS_ORDER = ['RUNNING', 'STARTING', 'STOPPING', 'STANDBY', 'ARCH
 
 /**
  * Get display status from workspace phase and operation (M2)
- * @param {object} workspace - Workspace object with phase and operation
+ * @param {object} workspace - Workspace object with phase, operation, desired_state
  * @returns {string} Display status key for STATUS_CONFIG
  */
 export function getDisplayStatus(workspace) {
-  const { phase, operation } = workspace;
+  const { phase, operation, desired_state } = workspace;
 
-  // If operation is active (not NONE), show operation as status
+  // 1. If operation is active (not NONE), show operation as status
   if (operation && operation !== 'NONE') {
     return operation;
   }
 
-  // Otherwise show phase
+  // 2. WC trigger pending: desired_state !== phase → infer operation
+  if (desired_state && desired_state !== phase) {
+    const key = `${phase}_${desired_state}`;
+    const inferred = INFERRED_OPERATION[key];
+    if (inferred) return inferred;
+  }
+
+  // 3. Stable state
   return phase || 'PENDING';
 }
 

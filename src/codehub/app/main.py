@@ -32,7 +32,7 @@ from codehub.control.coordinator import (
     TTLManager,
     WorkspaceController,
 )
-from codehub.control.coordinator.base import LeaderElection
+from codehub.infra.pg_leader import SQLAlchemyLeaderElection
 from codehub.infra import (
     close_db,
     close_docker,
@@ -142,7 +142,7 @@ async def _run_coordinators() -> None:
         """
         async def runner() -> None:
             async with engine.connect() as conn:
-                leader = LeaderElection(conn, coordinator_cls.COORDINATOR_TYPE)
+                leader = SQLAlchemyLeaderElection(conn, coordinator_cls.COORDINATOR_TYPE)
                 notify = NotifySubscriber(redis_client)
                 coordinator = coordinator_cls(conn, leader, notify, *args)
                 await coordinator.run()

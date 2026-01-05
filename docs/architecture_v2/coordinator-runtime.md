@@ -35,6 +35,51 @@
 - 다중 파드/워커 환경에서 하나만 리더
 - 리더 실패 시 다른 인스턴스가 즉시 인수
 - 세션 기반 잠금 (연결 끊기면 자동 해제)
+- 64-bit lock ID (SHA-256 해시, 충돌 방지)
+
+### 안정성 패턴
+
+| 패턴 | 구현 | 효과 |
+|------|------|------|
+| 재진입 방지 | 이미 리더면 DB 스킵 | 락 누적 방지 |
+| 파라미터 바인딩 | SQL 인젝션 방지 | 보안 강화 |
+| 타임아웃 | `asyncio.timeout(5s)` | 무한 대기 방지 |
+| 주기적 확인 | VERIFY_INTERVAL=10초 | Split Brain 감지 |
+| Jitter | ±30% | Thundering Herd 방지 |
+| 작업 전 확인 | `verify_holding()` | tick 중 Split Brain 방지 |
+
+### Split Brain 방지
+
+```
+┌────────────────────────────────────────────────────┐
+│               Tick Execution Flow                   │
+│                                                     │
+│  1. _ensure_leadership()                            │
+│     └─ try_acquire() 호출 (VERIFY_INTERVAL마다)     │
+│                                                     │
+│  2. _execute_tick()                                 │
+│     └─ verify_holding() ─→ pg_locks 조회            │
+│        ├─ True: tick() 실행                         │
+│        └─ False: tick 스킵, 리더십 재획득 시도      │
+│                                                     │
+│  3. tick()                                          │
+│     └─ 실제 작업 수행                               │
+└────────────────────────────────────────────────────┘
+```
+
+**타이밍:**
+- VERIFY_INTERVAL: 10초 (±30% jitter)
+- verify_holding 타임아웃: 2초
+- 최악 Split Brain 감지: ~12초
+
+### 엣지 케이스
+
+| 시나리오 | 현재 대응 |
+|---------|---------|
+| 네트워크 파티션 | verify_holding()으로 ~2초 내 감지 |
+| 롤링 배포 | Idempotent 설계로 안전 |
+| DB 응답 지연 | 타임아웃 후 리더십 포기 |
+| 재진입 락 | is_leader 체크로 DB 호출 스킵 |
 
 ---
 

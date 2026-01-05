@@ -21,7 +21,7 @@ import logging
 import psycopg
 import redis.asyncio as redis
 
-from codehub.control.coordinator.base import LeaderElection
+from codehub.infra.pg_leader import PsycopgLeaderElection
 from codehub.infra.redis import NotifyPublisher, SSEStreamPublisher
 
 logger = logging.getLogger(__name__)
@@ -85,8 +85,8 @@ class EventListener:
         )
         logger.info("[%s] Connected to PostgreSQL", self._log_prefix)
 
-        # Use unified LeaderElection (supports both SQLAlchemy and psycopg)
-        leader = LeaderElection(aconn, self.LOCK_KEY)
+        # Use PsycopgLeaderElection for psycopg3 connection
+        leader = PsycopgLeaderElection(aconn, self.LOCK_KEY)
 
         try:
             # Wait for leadership

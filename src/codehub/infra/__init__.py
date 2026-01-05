@@ -2,7 +2,7 @@
 
 from codehub.core.models import Workspace
 from codehub.infra.docker import close_docker, get_docker_client
-from codehub.infra.object_storage import close_storage, get_s3_client, init_storage
+from codehub.infra.s3 import close_storage, get_s3_client, init_storage
 from codehub.infra.postgresql import (
     close_db,
     get_engine,

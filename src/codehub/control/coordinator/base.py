@@ -1,21 +1,18 @@
-"""Coordinator infrastructure - leader election, base class."""
+"""Coordinator infrastructure - base class for coordinators."""
 
 import asyncio
 import logging
+import random
 import time
 from abc import ABC, abstractmethod
 from enum import StrEnum
 
-import psycopg
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
+from codehub.core.interfaces.leader import LeaderElection
 from codehub.infra.redis import NotifySubscriber, WakeTarget
 
 logger = logging.getLogger(__name__)
-
-# Type alias for both connection types
-ConnType = SAConnection | psycopg.AsyncConnection
 
 
 class CoordinatorType(StrEnum):
@@ -25,67 +22,6 @@ class CoordinatorType(StrEnum):
     WC = "wc"
     GC = "gc"
     TTL = "ttl"
-
-
-class LeaderElection:
-    """Leader election using PostgreSQL session-level advisory lock.
-
-    Supports both SQLAlchemy and psycopg3 connections.
-    """
-
-    def __init__(self, conn: ConnType, lock_key: str) -> None:
-        """Initialize leader election.
-
-        Args:
-            conn: SQLAlchemy AsyncConnection or psycopg3 AsyncConnection.
-            lock_key: Unique key for the advisory lock (e.g., coordinator type).
-        """
-        self._conn = conn
-        self._lock_key = str(lock_key)  # Convert enum to str if needed
-        self._is_leader = False
-        self._was_leader = False
-
-    @property
-    def is_leader(self) -> bool:
-        return self._is_leader
-
-    async def try_acquire(self) -> bool:
-        """Try to acquire leadership (non-blocking). Logs only on state change."""
-        query = f"SELECT pg_try_advisory_lock(hashtext('{self._lock_key}'))"
-
-        if isinstance(self._conn, psycopg.AsyncConnection):
-            # psycopg3 path (async fetchone)
-            result = await self._conn.execute(query)
-            row = await result.fetchone()
-        else:
-            # SQLAlchemy path (sync fetchone)
-            result = await self._conn.execute(text(query))
-            row = result.fetchone()
-
-        self._is_leader = row[0] if row else False
-
-        if self._is_leader and not self._was_leader:
-            logger.info("Acquired leadership (lock=%s)", self._lock_key)
-        elif not self._is_leader and self._was_leader:
-            logger.warning("Lost leadership (lock=%s)", self._lock_key)
-
-        self._was_leader = self._is_leader
-        return self._is_leader
-
-    async def release(self) -> None:
-        """Release leadership lock."""
-        if not self._is_leader:
-            return
-
-        query = f"SELECT pg_advisory_unlock(hashtext('{self._lock_key}'))"
-
-        if isinstance(self._conn, psycopg.AsyncConnection):
-            await self._conn.execute(query)
-        else:
-            await self._conn.execute(text(query))
-
-        self._is_leader = False
-        logger.info("Released leadership (lock=%s)", self._lock_key)
 
 
 class CoordinatorBase(ABC):
@@ -119,7 +55,8 @@ class CoordinatorBase(ABC):
     ACTIVE_INTERVAL: float = 1.0
     MIN_INTERVAL: float = 1.0
     LEADER_RETRY_INTERVAL: float = 5.0
-    VERIFY_INTERVAL: float = 60.0
+    VERIFY_INTERVAL: float = 10.0  # P4: Reduced from 60s for faster Split Brain detection
+    VERIFY_JITTER: float = 0.3  # P5: ±30% jitter to prevent Thundering Herd
     ACTIVE_DURATION: float = 30.0
 
     COORDINATOR_TYPE: CoordinatorType
@@ -155,6 +92,15 @@ class CoordinatorBase(ABC):
     def _get_interval(self) -> float:
         return self.ACTIVE_INTERVAL if self.is_active else self.IDLE_INTERVAL
 
+    def _jittered_verify_interval(self) -> float:
+        """Return VERIFY_INTERVAL with ±VERIFY_JITTER random jitter.
+
+        Jitter prevents Thundering Herd when multiple coordinators
+        try to re-verify leadership at the same time.
+        """
+        jitter = 1.0 + random.uniform(-self.VERIFY_JITTER, self.VERIFY_JITTER)
+        return self.VERIFY_INTERVAL * jitter
+
     async def _safe_rollback(self) -> None:
         """Rollback transaction, logging any errors."""
         try:
@@ -189,7 +135,8 @@ class CoordinatorBase(ABC):
     async def _ensure_leadership(self) -> bool:
         """Verify/acquire leadership. Returns False if not leader."""
         now = time.time()
-        if now - self._last_verify <= self.VERIFY_INTERVAL and self._leader.is_leader:
+        # P5: Use jittered interval to prevent Thundering Herd
+        if now - self._last_verify <= self._jittered_verify_interval() and self._leader.is_leader:
             return True
 
         try:
@@ -220,8 +167,15 @@ class CoordinatorBase(ABC):
             await asyncio.sleep(self.MIN_INTERVAL - elapsed)
 
     async def _execute_tick(self) -> bool:
-        """Execute tick. Returns False if cancelled."""
+        """Execute tick. Returns False if cancelled or leadership lost."""
         logger.info("[%s] _execute_tick() entering tick()", self.name)
+
+        # P6: Verify leadership before tick to detect Split Brain early
+        if not await self._leader.verify_holding():
+            logger.warning("[%s] Leadership lost before tick - skipping", self.name)
+            await self._release_subscription()
+            return True  # Continue loop to re-acquire leadership
+
         try:
             await self.tick()
             self._last_tick = time.time()

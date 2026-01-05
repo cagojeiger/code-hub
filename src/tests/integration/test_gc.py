@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from codehub.adapters.instance import DockerInstanceController
 from codehub.adapters.storage import S3StorageProvider
 from codehub.app.config import get_settings
-from codehub.control.coordinator.base import LeaderElection, NotifySubscriber
+from codehub.core.interfaces.leader import LeaderElection
+from codehub.infra.redis import NotifySubscriber
 from codehub.control.coordinator.gc import ArchiveGC
 from codehub.infra import get_s3_client
 from codehub.infra.docker import ContainerAPI, VolumeAPI, VolumeConfig
