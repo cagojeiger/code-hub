@@ -1,4 +1,7 @@
-"""Coordinator infrastructure - base class for coordinators."""
+"""Coordinator infrastructure - base class for coordinators.
+
+Configuration via CoordinatorConfig (COORDINATOR_ env prefix).
+"""
 
 import asyncio
 import logging
@@ -9,10 +12,13 @@ from enum import StrEnum
 
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
+from codehub.app.config import get_settings
 from codehub.core.interfaces.leader import LeaderElection
 from codehub.infra.redis import NotifySubscriber, WakeTarget
 
 logger = logging.getLogger(__name__)
+
+_coordinator_config = get_settings().coordinator
 
 
 class CoordinatorType(StrEnum):
@@ -51,13 +57,13 @@ class CoordinatorBase(ABC):
     which may differ from the Advisory Lock connection, causing Zombie Lock risk.
     """
 
-    IDLE_INTERVAL: float = 15.0
-    ACTIVE_INTERVAL: float = 1.0
-    MIN_INTERVAL: float = 1.0
-    LEADER_RETRY_INTERVAL: float = 5.0
-    VERIFY_INTERVAL: float = 10.0  # P4: Reduced from 60s for faster Split Brain detection
-    VERIFY_JITTER: float = 0.3  # P5: ±30% jitter to prevent Thundering Herd
-    ACTIVE_DURATION: float = 30.0
+    IDLE_INTERVAL: float = _coordinator_config.idle_interval
+    ACTIVE_INTERVAL: float = _coordinator_config.active_interval
+    MIN_INTERVAL: float = _coordinator_config.min_interval
+    LEADER_RETRY_INTERVAL: float = _coordinator_config.leader_retry_interval
+    VERIFY_INTERVAL: float = _coordinator_config.verify_interval
+    VERIFY_JITTER: float = _coordinator_config.verify_jitter
+    ACTIVE_DURATION: float = _coordinator_config.active_duration
 
     COORDINATOR_TYPE: CoordinatorType
     WAKE_TARGET: WakeTarget | None = None  # Set to receive wake messages

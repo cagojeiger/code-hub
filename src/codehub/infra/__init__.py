@@ -1,6 +1,13 @@
-"""Infrastructure connections (DB, Redis, S3, Docker)."""
+"""Infrastructure connections (DB, Redis, S3, Docker, Cache)."""
 
 from codehub.core.models import Workspace
+from codehub.infra.cache import (
+    clear_all_caches,
+    clear_session_cache,
+    clear_workspace_cache,
+    session_cache,
+    workspace_cache,
+)
 from codehub.infra.docker import close_docker, get_docker_client
 from codehub.infra.s3 import close_storage, get_s3_client, init_storage
 from codehub.infra.postgresql import (
@@ -27,6 +34,12 @@ from codehub.infra.redis import (
 )
 
 __all__ = [
+    # Cache
+    "session_cache",
+    "workspace_cache",
+    "clear_session_cache",
+    "clear_workspace_cache",
+    "clear_all_caches",
     # DB
     "init_db",
     "close_db",

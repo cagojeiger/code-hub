@@ -4,6 +4,8 @@ All Redis operations are encapsulated in wrapper classes:
 - NotifyPublisher/Subscriber: PUB/SUB for coordinator wake-up
 - SSEStreamPublisher/Reader: Streams for SSE events
 - ActivityStore: Key-Value for activity tracking
+
+Configuration via RedisConfig and SSEConfig.
 """
 
 import asyncio
@@ -16,6 +18,8 @@ import redis.asyncio as redis
 from codehub.app.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+_settings = get_settings()
 
 # =============================================================================
 # Wake-up (PUB/SUB)
@@ -164,7 +168,7 @@ class SSEStreamPublisher:
     """
 
     STREAM_PREFIX = "events:"
-    MAXLEN = 1000
+    MAXLEN = _settings.sse.stream_maxlen
 
     def __init__(self, client: redis.Redis) -> None:
         self._client = client
@@ -220,9 +224,9 @@ class SSEStreamReader:
     """
 
     STREAM_PREFIX = "events:"
-    BLOCK_MS = 1000
-    COUNT = 10
-    TIMEOUT_SEC = 2.0
+    BLOCK_MS = _settings.sse.xread_block_ms
+    COUNT = _settings.sse.xread_count
+    TIMEOUT_SEC = _settings.sse.xread_timeout
 
     def __init__(self, client: redis.Redis, user_id: str) -> None:
         """Initialize reader for a specific user's stream.
@@ -349,10 +353,15 @@ async def init_redis() -> None:
 
     settings = get_settings()
     url = str(settings.redis.url)
+    max_connections = settings.redis.max_connections
 
-    _client = redis.from_url(url, decode_responses=True)
+    _client = redis.from_url(
+        url,
+        decode_responses=True,
+        max_connections=max_connections,
+    )
     await _client.ping()
-    logger.info("Redis connected: %s", url)
+    logger.info("Redis connected: %s (max_connections=%d)", url, max_connections)
 
 
 async def close_redis() -> None:

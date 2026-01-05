@@ -17,20 +17,19 @@ class DockerJobRunner(JobRunner):
     - ARCHIVE_URL environment variable (Spec-v2 compliant)
     - Volume mounted at /data
     - Network access to S3/MinIO
-    """
 
-    # Default timeout for container wait (5 minutes)
-    DEFAULT_TIMEOUT = 300
+    Configuration via DockerConfig (DOCKER_ env prefix).
+    """
 
     def __init__(
         self,
         containers: ContainerAPI | None = None,
-        timeout: int = DEFAULT_TIMEOUT,
+        timeout: int | None = None,
     ) -> None:
         settings = get_settings()
         self._config = settings.docker
         self._containers = containers or ContainerAPI()
-        self._timeout = timeout
+        self._timeout = timeout or self._config.job_timeout
 
     async def run_archive(
         self,

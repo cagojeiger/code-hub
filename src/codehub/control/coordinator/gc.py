@@ -39,7 +39,8 @@ class ArchiveGC(CoordinatorBase):
     COORDINATOR_TYPE = CoordinatorType.GC
     WAKE_TARGET = WakeTarget.GC
 
-    IDLE_INTERVAL = 14400.0  # 4시간
+    # GC uses longer interval from config
+    IDLE_INTERVAL = _settings.coordinator.gc_interval
 
     def __init__(
         self,

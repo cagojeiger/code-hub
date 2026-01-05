@@ -5,6 +5,8 @@
 WC = Judge + Control (Observer 분리)
 - Observer Coordinator가 conditions 저장
 - WC는 DB에서 conditions 읽어서 phase 계산 + operation 실행
+
+Configuration via CoordinatorConfig (COORDINATOR_ env prefix).
 """
 
 import asyncio
@@ -17,6 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from codehub.app.config import get_settings
 from codehub.control.coordinator.base import (
     CoordinatorBase,
     CoordinatorType,
@@ -38,6 +41,8 @@ from codehub.core.models import Workspace
 from codehub.core.retryable import classify_error, with_retry
 
 logger = logging.getLogger(__name__)
+
+_coordinator_config = get_settings().coordinator
 
 
 class PlanAction(BaseModel):
@@ -66,11 +71,8 @@ class WorkspaceController(CoordinatorBase):
     COORDINATOR_TYPE = CoordinatorType.WC
     WAKE_TARGET = WakeTarget.WC
 
-    IDLE_INTERVAL = 15.0
-    ACTIVE_INTERVAL = 1.0
-
-    # Operation timeout (초)
-    OPERATION_TIMEOUT = 300  # 5분
+    # Operation timeout from config
+    OPERATION_TIMEOUT = _coordinator_config.operation_timeout
 
     def __init__(
         self,

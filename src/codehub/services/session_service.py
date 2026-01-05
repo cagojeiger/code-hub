@@ -5,6 +5,8 @@ Provides session lifecycle management:
 - Get valid: Retrieve and validate session
 - Revoke: Invalidate session
 - Is valid: Check session validity
+
+Configuration via SecurityConfig (SECURITY_ env prefix).
 """
 
 from datetime import UTC, datetime, timedelta
@@ -13,14 +15,17 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col
 
+from codehub.app.config import get_settings
 from codehub.core.models import Session, User
+
+_security_config = get_settings().security
 
 
 class SessionService:
     """Service for managing user sessions."""
 
-    # Default session TTL: 24 hours
-    DEFAULT_SESSION_TTL_SECONDS = 86400
+    # Session TTL from config
+    DEFAULT_SESSION_TTL_SECONDS = _security_config.session_ttl
 
     @staticmethod
     async def create(

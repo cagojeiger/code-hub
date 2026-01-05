@@ -44,8 +44,9 @@ class TTLManager(CoordinatorBase):
 
     COORDINATOR_TYPE = CoordinatorType.TTL
 
-    IDLE_INTERVAL = 60.0
-    ACTIVE_INTERVAL = 60.0  # TTL은 항상 60초 주기
+    # TTL Manager uses fixed interval from config (always same idle/active)
+    IDLE_INTERVAL = _settings.coordinator.ttl_interval
+    ACTIVE_INTERVAL = _settings.coordinator.ttl_interval
 
     def __init__(
         self,

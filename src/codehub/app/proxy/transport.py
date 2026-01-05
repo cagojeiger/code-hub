@@ -1,6 +1,6 @@
-"""Transport layer for workspace proxy.
+"""HTTP and WebSocket transport to upstream containers.
 
-HTTP and WebSocket transport to upstream containers.
+Configuration via ProxyConfig (PROXY_ env prefix).
 """
 
 import asyncio
@@ -16,6 +16,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from websockets.asyncio.client import ClientConnection
 
+from codehub.app.config import get_settings
 from codehub.core.errors import UpstreamUnavailableError
 from codehub.core.interfaces import UpstreamInfo
 
@@ -24,22 +25,8 @@ from .client import WS_HOP_BY_HOP_HEADERS, filter_headers, get_http_client
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# WebSocket Connection Settings
-# =============================================================================
-
-WS_PING_INTERVAL = 20.0  # Ping interval for connection health check (seconds)
-WS_PING_TIMEOUT = 20.0  # Pong response timeout (seconds)
-WS_MAX_SIZE = 16 * 1024 * 1024  # Max message size: 16MB
-WS_MAX_QUEUE = 64  # Max queued messages (backpressure, no data loss)
-
-# Cache activity buffer at module level to avoid function call overhead per message
+_proxy_config = get_settings().proxy
 _activity_buffer = get_activity_buffer()
-
-
-# =============================================================================
-# Internal WebSocket Relay Functions
-# =============================================================================
 
 
 async def _relay_client_to_backend(
@@ -80,30 +67,13 @@ async def proxy_http_to_upstream(
     path: str,
     workspace_id: str,
 ) -> StreamingResponse:
-    """Proxy HTTP request to upstream.
-
-    Args:
-        request: FastAPI Request object
-        upstream: Target upstream info
-        path: Request path
-        workspace_id: Workspace ID for logging
-
-    Returns:
-        StreamingResponse
-
-    Raises:
-        UpstreamUnavailableError: On connection failure
-    """
-    # Build target URL
+    """Proxy HTTP request to upstream. Raises UpstreamUnavailableError on failure."""
     target_path = f"/{path}" if path else "/"
     if request.url.query:
         target_path = f"{target_path}?{request.url.query}"
     target_url = f"{upstream.url}{target_path}"
 
-    # Filter headers
     headers = filter_headers(dict(request.headers))
-
-    # Proxy request with streaming body
     http_client = await get_http_client()
     content = request.stream() if request.method in ("POST", "PUT", "PATCH") else None
 
@@ -119,7 +89,6 @@ async def proxy_http_to_upstream(
 
         async def stream_response() -> AsyncGenerator[bytes]:
             try:
-                # Use aiter_raw() to preserve original encoding (gzip, br, etc.)
                 async for chunk in upstream_response.aiter_raw():
                     yield chunk
             finally:
@@ -144,35 +113,25 @@ async def proxy_ws_to_upstream(
     path: str,
     workspace_id: str,
 ) -> None:
-    """Proxy WebSocket to upstream and relay messages.
-
-    Args:
-        websocket: Starlette WebSocket object
-        upstream: Target upstream info
-        path: Request path
-        workspace_id: Workspace ID for activity tracking
-    """
-    # Build WebSocket URI
+    """Proxy WebSocket to upstream and relay messages."""
     target_path = f"/{path}" if path else "/"
     query_string = websocket.scope.get("query_string", b"").decode()
     if query_string:
         target_path = f"{target_path}?{query_string}"
     upstream_ws_uri = f"{upstream.ws_url}{target_path}"
 
-    # Filter headers (iterate directly without dict copy)
     extra_headers = {
         k: v for k, v in websocket.headers.items() if k.lower() not in WS_HOP_BY_HOP_HEADERS
     }
 
-    # Connect to upstream first (before accepting client)
     try:
         backend_ws = await websockets.connect(
             upstream_ws_uri,
             additional_headers=extra_headers,
-            ping_interval=WS_PING_INTERVAL,
-            ping_timeout=WS_PING_TIMEOUT,
-            max_size=WS_MAX_SIZE,
-            max_queue=WS_MAX_QUEUE,
+            ping_interval=_proxy_config.ws_ping_interval,
+            ping_timeout=_proxy_config.ws_ping_timeout,
+            max_size=_proxy_config.ws_max_size,
+            max_queue=_proxy_config.ws_max_queue,
         )
     except websockets.InvalidURI as exc:
         logger.warning("Invalid WebSocket URI for %s: %s", workspace_id, exc)
@@ -187,12 +146,10 @@ async def proxy_ws_to_upstream(
         await websocket.close(code=1011, reason="Upstream connection failed")
         return
 
-    # Accept client connection after successful upstream connection
     await websocket.accept()
 
     try:
         async with backend_ws:
-            # Use TaskGroup for proper exception handling (Python 3.11+)
             try:
                 async with asyncio.TaskGroup() as tg:
                     tg.create_task(
@@ -202,11 +159,10 @@ async def proxy_ws_to_upstream(
                         _relay_backend_to_client(websocket, backend_ws, workspace_id)
                     )
             except* WebSocketDisconnect:
-                pass  # Normal client disconnect
+                pass
             except* websockets.ConnectionClosed:
-                pass  # Normal backend close
+                pass
     except Exception as exc:
-        # Unexpected error - log as error level
         logger.error("WebSocket proxy error for %s: %s", workspace_id, exc)
     finally:
         with contextlib.suppress(Exception):

@@ -2,6 +2,8 @@
 
 Provides async Docker API access for containers and volumes.
 Supports both Unix socket and TCP (docker-proxy) connections.
+
+Configuration via DockerConfig (DOCKER_ env prefix).
 """
 
 import logging
@@ -10,7 +12,11 @@ import os
 import httpx
 from pydantic import BaseModel
 
+from codehub.app.config import get_settings
+
 logger = logging.getLogger(__name__)
+
+_docker_config = get_settings().docker
 
 # Docker host configuration
 DOCKER_HOST = os.getenv("DOCKER_HOST", "unix:///var/run/docker.sock")
@@ -107,14 +113,14 @@ class DockerClient:
             return httpx.AsyncClient(
                 transport=transport,
                 base_url="http://localhost",
-                timeout=30.0,
+                timeout=_docker_config.api_timeout,
             )
         else:
             # TCP (docker-proxy)
             base_url = self._host
             if base_url.startswith("tcp://"):
                 base_url = base_url.replace("tcp://", "http://")
-            return httpx.AsyncClient(base_url=base_url, timeout=30.0)
+            return httpx.AsyncClient(base_url=base_url, timeout=_docker_config.api_timeout)
 
     async def get(self) -> httpx.AsyncClient:
         """Get or create the HTTP client.
@@ -262,16 +268,18 @@ class ContainerAPI:
         resp.raise_for_status()
         logger.info("Removed container: %s", name)
 
-    async def wait(self, name: str, timeout: int = 300) -> int:
+    async def wait(self, name: str, timeout: int | None = None) -> int:
         """Wait for container to exit and return exit code.
 
         Args:
             name: Container name or ID
-            timeout: Seconds to wait for container to exit
+            timeout: Seconds to wait for container to exit (default from config)
 
         Returns:
             Container exit code (0 = success)
         """
+        if timeout is None:
+            timeout = _docker_config.container_wait_timeout
         client = await self._docker.get()
         # Use longer HTTP timeout than container timeout
         resp = await client.post(
@@ -467,7 +475,7 @@ class ImageAPI:
         resp = await client.post(
             "/images/create",
             params={"fromImage": image, "tag": tag},
-            timeout=600.0,  # 10 minutes for large images
+            timeout=_docker_config.image_pull_timeout,
         )
         resp.raise_for_status()
         logger.info("Pulled image: %s:%s", image, tag)

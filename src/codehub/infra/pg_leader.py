@@ -1,4 +1,7 @@
-"""Leader election implementations using PostgreSQL advisory lock."""
+"""Leader election implementations using PostgreSQL advisory lock.
+
+Configuration via CoordinatorConfig (COORDINATOR_ env prefix).
+"""
 
 import asyncio
 import hashlib
@@ -8,9 +11,12 @@ import psycopg
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
+from codehub.app.config import get_settings
 from codehub.core.interfaces.leader import LeaderElection
 
 logger = logging.getLogger(__name__)
+
+_coordinator_config = get_settings().coordinator
 
 
 def _compute_lock_id(lock_key: str) -> int:
@@ -30,7 +36,7 @@ class SQLAlchemyLeaderElection(LeaderElection):
     Used by Coordinators (Observer, WC, GC, TTL).
     """
 
-    DEFAULT_TIMEOUT: float = 5.0
+    DEFAULT_TIMEOUT: float = _coordinator_config.leader_timeout
 
     def __init__(self, conn: SAConnection, lock_key: str) -> None:
         """Initialize leader election.
@@ -177,7 +183,7 @@ class PsycopgLeaderElection(LeaderElection):
     Used by EventListener (requires psycopg3 for LISTEN/NOTIFY).
     """
 
-    DEFAULT_TIMEOUT: float = 5.0
+    DEFAULT_TIMEOUT: float = _coordinator_config.leader_timeout
 
     def __init__(self, conn: psycopg.AsyncConnection, lock_key: str) -> None:
         """Initialize leader election.

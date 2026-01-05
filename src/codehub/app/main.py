@@ -163,15 +163,15 @@ async def _run_coordinators() -> None:
     async def activity_buffer_flush_loop() -> None:
         """Flush activity buffer to Redis periodically.
 
-        Runs every 30 seconds to batch memory buffer to Redis.
+        Runs based on ActivityConfig.flush_interval to batch memory buffer to Redis.
         TTL Manager then syncs Redis to DB every 60 seconds.
 
         Reference: docs/architecture_v2/ttl-manager.md
         """
-        ACTIVITY_FLUSH_INTERVAL_SEC = 30
+        flush_interval = get_settings().activity.flush_interval
         buffer = get_activity_buffer()
         while True:
-            await asyncio.sleep(ACTIVITY_FLUSH_INTERVAL_SEC)
+            await asyncio.sleep(flush_interval)
             try:
                 count = await buffer.flush(activity_store)
                 if count > 0:

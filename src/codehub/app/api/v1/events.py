@@ -3,6 +3,8 @@
 Provides real-time workspace updates via Server-Sent Events.
 Uses SSEStreamReader (Redis Streams) for reliable message delivery.
 
+Configuration via SSEConfig (SSE_ env prefix).
+
 Reference: docs/architecture_v2/event-listener.md
 """
 
@@ -16,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from codehub.app.config import get_settings
 from codehub.app.proxy.auth import get_user_id_from_session
 from codehub.core.models import Workspace
 from codehub.infra import get_redis, get_session, get_session_factory
@@ -27,8 +30,7 @@ router = APIRouter(tags=["events"])
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 
-# Constants
-HEARTBEAT_INTERVAL_SEC = 30.0
+_sse_config = get_settings().sse
 
 # SSE payload fields (subset of Workspace)
 SSE_WORKSPACE_FIELDS = {
@@ -161,7 +163,7 @@ async def _event_generator(
 
             # Send heartbeat
             now = loop.time()
-            if now - last_heartbeat >= HEARTBEAT_INTERVAL_SEC:
+            if now - last_heartbeat >= _sse_config.heartbeat_interval:
                 yield "event: heartbeat\ndata: {}\n\n"
                 last_heartbeat = now
 

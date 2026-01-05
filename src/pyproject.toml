@@ -27,6 +27,9 @@ dependencies = [
     # Proxy
     "httpx>=0.28.0",
     "websockets>=14.0",
+    # Cache
+    "cachetools>=5.0.0",
+    "cachetools-async>=0.0.5",
     # Compression
     "zstandard>=0.23.0",
 ]

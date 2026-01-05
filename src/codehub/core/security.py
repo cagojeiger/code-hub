@@ -2,12 +2,17 @@
 
 This module provides password hashing and verification using Argon2id,
 as recommended for secure password storage.
+
+Configuration via SecurityConfig (SECURITY_ env prefix).
 """
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
+from codehub.app.config import get_settings
+
 _hasher = PasswordHasher()
+_security_config = get_settings().security
 
 
 def hash_password(password: str) -> str:
@@ -24,10 +29,10 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-# Login rate limiting constants
-LOGIN_LOCKOUT_THRESHOLD = 5  # Start lockout after this many failures
-LOGIN_LOCKOUT_BASE_SECONDS = 30  # Base lockout duration in seconds
-LOGIN_LOCKOUT_MAX_SECONDS = 1800  # Maximum lockout duration (30 minutes)
+# Login rate limiting constants from config
+LOGIN_LOCKOUT_THRESHOLD = _security_config.lockout_threshold
+LOGIN_LOCKOUT_BASE_SECONDS = _security_config.lockout_base
+LOGIN_LOCKOUT_MAX_SECONDS = _security_config.lockout_max
 
 
 def calculate_lockout_duration(failed_attempts: int) -> int:
