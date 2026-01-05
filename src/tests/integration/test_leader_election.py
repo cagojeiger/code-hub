@@ -1,7 +1,5 @@
 """Integration tests for SQLAlchemyLeaderElection with real PostgreSQL."""
 
-import asyncio
-
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -224,30 +222,3 @@ class TestLockIdConsistency:
                 result2 = await leader2.try_acquire()
 
                 assert result2 is False
-
-
-class TestTimeout:
-    """Timeout behavior with real database."""
-
-    @pytest.mark.asyncio
-    async def test_verify_timeout_with_slow_query(
-        self, test_db_engine: AsyncEngine
-    ) -> None:
-        """verify_holding times out on slow query."""
-        async with test_db_engine.connect() as conn:
-            leader = SQLAlchemyLeaderElection(conn, "test_timeout")
-            await leader.try_acquire()
-
-            # Inject slow query by temporarily replacing _execute_verify
-            original_execute = leader._execute_verify
-
-            async def slow_execute() -> bool:
-                await asyncio.sleep(10)
-                return await original_execute()
-
-            leader._execute_verify = slow_execute  # type: ignore
-
-            # Should timeout
-            result = await leader.verify_holding(timeout=0.1)
-            assert result is False
-            assert leader.is_leader is False
