@@ -15,7 +15,6 @@ class ConditionInput(BaseModel):
     container_ready: bool = False
     volume_ready: bool = False
     archive_ready: bool = False
-    archive_reason: str | None = None
 
     model_config = {"frozen": True}
 
@@ -42,5 +41,4 @@ class ConditionInput(BaseModel):
             container_ready=container.get("running", False),
             volume_ready=volume.get("exists", False),
             archive_ready=archive.get("exists", False),
-            archive_reason=archive.get("reason"),
         )

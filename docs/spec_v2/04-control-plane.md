@@ -174,7 +174,6 @@ flowchart TB
 | 위반 유형 | 조건 | 처리 |
 |----------|------|------|
 | ContainerWithoutVolume | container_ready ∧ !volume_ready | policy.healthy = {status: false, reason: "ContainerWithoutVolume"} |
-| ArchiveAccessError | archive_ready.reason ∈ {Corrupted, Expired, NotFound} | policy.healthy = {status: false, reason: "ArchiveAccessError"} |
 
 ### Operation 결정 규칙
 

@@ -2,7 +2,7 @@
 
 Reference:
 - docs/spec_v2/02-states.md - Phase, Operation, DesiredState
-- docs/spec_v2/03-schema.md - ArchiveReason, ErrorReason
+- docs/spec_v2/03-schema.md - ErrorReason
 """
 
 from enum import StrEnum
@@ -42,18 +42,6 @@ class DesiredState(StrEnum):
     RUNNING = "RUNNING"
 
 
-class ArchiveReason(StrEnum):
-    """archive_ready.reason values."""
-
-    ARCHIVE_UPLOADED = "ArchiveUploaded"
-    ARCHIVE_CORRUPTED = "ArchiveCorrupted"
-    ARCHIVE_EXPIRED = "ArchiveExpired"
-    ARCHIVE_NOT_FOUND = "ArchiveNotFound"
-    ARCHIVE_UNREACHABLE = "ArchiveUnreachable"
-    ARCHIVE_TIMEOUT = "ArchiveTimeout"
-    NO_ARCHIVE = "NoArchive"
-
-
 class ErrorReason(StrEnum):
     """error_reason column values."""
 
@@ -66,19 +54,6 @@ class ErrorReason(StrEnum):
     CONTAINER_WITHOUT_VOLUME = "ContainerWithoutVolume"
     ARCHIVE_CORRUPTED = "ArchiveCorrupted"
 
-
-# Terminal archive reasons (cause ERROR phase)
-ARCHIVE_TERMINAL_REASONS = frozenset({
-    ArchiveReason.ARCHIVE_CORRUPTED,
-    ArchiveReason.ARCHIVE_EXPIRED,
-    ArchiveReason.ARCHIVE_NOT_FOUND,
-})
-
-# Transient archive reasons (allow fallback to ARCHIVED)
-ARCHIVE_TRANSIENT_REASONS = frozenset({
-    ArchiveReason.ARCHIVE_UNREACHABLE,
-    ArchiveReason.ARCHIVE_TIMEOUT,
-})
 
 # Terminal error reasons (no retry)
 ERROR_TERMINAL_REASONS = frozenset({

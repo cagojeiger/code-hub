@@ -151,27 +151,22 @@
 
 ## storage.archive_ready reason 값
 
-| reason | status | is_terminal | 설명 |
-|--------|--------|-------------|------|
-| ArchiveUploaded | true | - | Archive 정상 접근 가능 |
-| ArchiveCorrupted | false | true | checksum 불일치 |
-| ArchiveExpired | false | true | TTL 만료 |
-| ArchiveNotFound | false | true | archive_key 있지만 S3에 없음 |
-| ArchiveUnreachable | false | **false** | S3 일시 장애 (재시도 가능) |
-| ArchiveTimeout | false | **false** | S3 요청 타임아웃 (재시도 가능) |
-| NoArchive | false | - | archive_key = NULL |
+| reason | status | 설명 |
+|--------|--------|------|
+| ArchiveUploaded | true | Archive 정상 접근 가능 |
+| NoArchive | false | archive_key = NULL |
 
-> **비단말 오류**: ArchiveUnreachable/Timeout은 healthy=false 유발하지 않음 (재시도)
-> **단말 오류**: Corrupted/Expired/NotFound → healthy=false → Phase=ERROR
+> **Note**: 현재 Observer는 S3 HEAD 성공/실패만 판단합니다.
+> 상세 에러 reason (Corrupted, Expired 등)은 미구현.
+> S3 장애 시 Observer tick 전체 스킵 → 이전 상태 유지.
 
 ---
 
 ## policy.healthy=false 조건
 
-| 우선순위 | 조건 | reason | 설명 |
-|---------|------|--------|------|
-| 1 | container_ready ∧ !volume_ready | ContainerWithoutVolume | 불변식 위반 |
-| 2 | archive_ready.reason ∈ {Corrupted, Expired, NotFound} | ArchiveAccessError | Archive 단말 오류 |
+| 조건 | reason | 설명 |
+|------|--------|------|
+| container_ready ∧ !volume_ready | ContainerWithoutVolume | 불변식 위반 (계약 #6) |
 
 > **WC 판정**: WC가 관측 후 불변식 위반 확인하여 policy.healthy 설정
 > **에러 처리**: WC가 작업 실패 시 phase=ERROR + error_reason 원자적 설정

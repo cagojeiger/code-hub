@@ -20,7 +20,6 @@ Judge는 conditions를 읽어 phase를 계산하는 **순수 함수**입니다.
 │  • volume_ready (Observer)      • phase ◀── 계산             │
 │  • archive_ready (Observer)                                  │
 │  • deleted_at (API)                                          │
-│  • archive_key (WC Control)                                  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -28,7 +27,7 @@ Judge는 conditions를 읽어 phase를 계산하는 **순수 함수**입니다.
 
 ---
 
-## 판단 순서 (4단계)
+## 판단 순서 (3단계)
 
 Judge는 다음 순서로 phase를 결정합니다. **순서가 우선순위**입니다.
 
@@ -37,16 +36,15 @@ Judge는 다음 순서로 phase를 결정합니다. **순서가 우선순위**�
 | 1 | **사용자 의도** | deleted_at | API (DB) | 삭제 요청 (최우선) |
 | 2 | **시스템 판단** | policy.healthy | Judge 계산 (tick 내) | 불변식 준수 여부 |
 | 3 | **현실** | container_ready, volume_ready, archive_ready | Observer (DB) | 관측된 리소스 상태 |
-| 4 | **시스템 기억** | archive_key | WC Control (DB) | Fallback용 과거 기록 |
 
 ### 판단 순서 흐름
 
 ```
-1. 사용자 의도  →  2. 시스템 판단  →  3. 현실  →  4. 시스템 기억
-   (삭제 우선)       (안전성 체크)      (상태)      (Fallback)
+1. 사용자 의도  →  2. 시스템 판단  →  3. 현실  →  default
+   (삭제 우선)       (안전성 체크)      (상태)
 ```
 
-> **핵심**: 사용자 의도(삭제) > 시스템 안전성(불변식) > 현재 상태 > 과거 기록
+> **핵심**: 사용자 의도(삭제) > 시스템 안전성(불변식) > 현재 상태
 
 ---
 
@@ -63,10 +61,9 @@ archive_ready ────┘
 
 ### 불변식 위반 조건 (check_invariants)
 
-| 우선순위 | 조건 | reason | 설명 |
-|---------|------|--------|------|
-| 1 | container_ready ∧ !volume_ready | ContainerWithoutVolume | 계약 #6 위반 |
-| 2 | archive_ready.reason ∈ {Corrupted, Expired, NotFound} | ArchiveAccessError | Archive 단말 오류 |
+| 조건 | reason | 설명 |
+|------|--------|------|
+| container_ready ∧ !volume_ready | ContainerWithoutVolume | 계약 #6 위반 |
 
 > **Spec 참조**: [03-schema.md#policy.healthy=false 조건](../spec_v2/03-schema.md#policyhealthyfalse-조건)
 
@@ -87,38 +84,6 @@ archive_ready ────┘
 
 ---
 
-## 단계 4: Fallback (시스템 기억)
-
-### 왜 필요한가?
-
-S3 일시 장애 시 archive_ready.status=false가 되면, 실제로 Archive가 있어도 PENDING으로 잘못 판정됩니다.
-
-```
-[Fallback 없을 때]
-S3 일시 장애 → archive_ready=false → phase=PENDING
-                                         ↓
-                                    desired=ARCHIVED면?
-                                         ↓
-                                    CREATE_EMPTY_ARCHIVE
-                                         ↓
-                                    기존 Archive 덮어씀!
-                                         ↓
-                                    🔴 데이터 손실
-```
-
-### Fallback 동작
-
-| 조건 | 동작 |
-|------|------|
-| archive_ready.status = false | 정상: PENDING으로 판정 |
-| + archive_key 존재 | Fallback 후보 |
-| + reason ∈ {Unreachable, Timeout} | Fallback 적용: **ARCHIVED 유지** |
-| + reason ∈ {Corrupted, Expired, NotFound} | 단말 오류: **ERROR** |
-
-> **Spec 참조**: [02-states.md#calculate_phase](../spec_v2/02-states.md#calculate_phase)
-
----
-
 ## Phase 결정 테이블
 
 ### 전체 결정 흐름
@@ -131,11 +96,9 @@ S3 일시 장애 → archive_ready=false → phase=PENDING
 | 3 | resources | container ∧ volume | RUNNING |
 | 3 | resources | volume | STANDBY |
 | 3 | resources | archive | ARCHIVED |
-| 4 | fallback | archive_key ∧ 일시장애 | ARCHIVED |
-| 5 | default | - | PENDING |
+| 4 | default | - | PENDING |
 
 > **resources**: `container_ready ∨ volume_ready ∨ archive_ready`
-> **일시장애**: `archive_ready.reason ∈ {Unreachable, Timeout}`
 
 ### 결정 흐름도
 
@@ -164,10 +127,6 @@ archive? ──Yes──▶ ARCHIVED
     │
    No
     ▼
-archive_key ∧ 일시장애? ──Yes──▶ ARCHIVED (Fallback)
-    │
-   No
-    ▼
 PENDING
 ```
 
@@ -182,9 +141,6 @@ ERROR는 **두 경로**에서 발생합니다.
 | error_reason | 조건 | 감지 시점 |
 |--------------|------|----------|
 | ContainerWithoutVolume | container ∧ !volume | 관측 직후 |
-| ArchiveCorrupted | archive.reason = Corrupted | 관측 직후 |
-| ArchiveExpired | archive.reason = Expired | 관측 직후 |
-| ArchiveNotFound | archive.reason = NotFound | 관측 직후 |
 
 > **즉시 ERROR**: 관측 결과만으로 판단, 작업 시도 없이 ERROR
 > **Spec 참조**: [03-schema.md#policy.healthy=false 조건](../spec_v2/03-schema.md#policyhealthyfalse-조건)
@@ -275,7 +231,6 @@ Control 단계에서 operation 실행 중 실패 시 ERROR로 전환됩니다.
 | ID | conditions | 기대 결과 |
 |----|------------|----------|
 | JDG-005 | {c:T, v:F, a:F} | ERROR (ContainerWithoutVolume) |
-| JDG-008 | archive.reason=Corrupted | ERROR (ArchiveAccessError) |
 
 ### 삭제 처리
 
@@ -283,14 +238,6 @@ Control 단계에서 operation 실행 중 실패 시 ERROR로 전환됩니다.
 |----|------------|------------|-----------|
 | JDG-006 | {c:T, v:T} | Y | DELETING |
 | JDG-007 | {c:F, v:F} | Y | DELETED |
-
-### Fallback
-
-| ID | conditions | archive_key | 기대 phase |
-|----|------------|-------------|-----------|
-| JDG-009 | {a.status:F, a.reason:Unreachable} | 존재 | ARCHIVED |
-| JDG-010 | {a.status:F, a.reason:NotFound} | 존재 | ERROR |
-| JDG-011 | {a.status:F, a.reason:Unreachable} | NULL | PENDING |
 
 ### 순서 검증
 
@@ -310,4 +257,3 @@ Control 단계에서 operation 실행 중 실패 시 ERROR로 전환됩니다.
 - [02-states.md](../spec_v2/02-states.md) - Phase 정의, calculate_phase()
 - [03-schema.md](../spec_v2/03-schema.md) - policy.healthy, error_reason 정의
 - [04-control-plane.md](../spec_v2/04-control-plane.md) - ERROR 전환 규칙
-

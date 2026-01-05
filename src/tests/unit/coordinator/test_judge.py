@@ -3,8 +3,6 @@
 Reference: docs/architecture_v2/wc-judge.md
 """
 
-import pytest
-
 from codehub.control.coordinator.judge import (
     JudgeInput,
     JudgeOutput,
@@ -13,7 +11,6 @@ from codehub.control.coordinator.judge import (
 )
 from codehub.core.domain.conditions import ConditionInput
 from codehub.core.domain.workspace import (
-    ArchiveReason,
     ErrorReason,
     Phase,
 )
@@ -80,7 +77,7 @@ class TestBasicPhaseCalculation:
 
 
 class TestInvariantViolation:
-    """불변식 위반 테스트 (JDG-005, JDG-008)."""
+    """불변식 위반 테스트 (JDG-005)."""
 
     def test_jdg_005_container_without_volume_returns_error(self):
         """JDG-005: container=T, volume=F → ERROR (ContainerWithoutVolume)."""
@@ -96,52 +93,6 @@ class TestInvariantViolation:
         assert output.phase == Phase.ERROR
         assert output.healthy is False
         assert output.error_reason == ErrorReason.CONTAINER_WITHOUT_VOLUME
-
-    def test_jdg_008_archive_corrupted_returns_error(self):
-        """JDG-008: archive.reason=ArchiveCorrupted → ERROR."""
-        cond = ConditionInput(
-            container_ready=False,
-            volume_ready=False,
-            archive_ready=False,
-            archive_reason=ArchiveReason.ARCHIVE_CORRUPTED.value,
-        )
-        input = JudgeInput(conditions=cond, deleted_at=False)
-
-        output = judge(input)
-
-        assert output.phase == Phase.ERROR
-        assert output.healthy is False
-        assert output.error_reason == ErrorReason.ARCHIVE_CORRUPTED
-
-    def test_archive_expired_returns_error(self):
-        """archive.reason=ArchiveExpired → ERROR."""
-        cond = ConditionInput(
-            container_ready=False,
-            volume_ready=False,
-            archive_ready=False,
-            archive_reason=ArchiveReason.ARCHIVE_EXPIRED.value,
-        )
-        input = JudgeInput(conditions=cond, deleted_at=False)
-
-        output = judge(input)
-
-        assert output.phase == Phase.ERROR
-        assert output.healthy is False
-
-    def test_archive_not_found_returns_error(self):
-        """archive.reason=ArchiveNotFound → ERROR."""
-        cond = ConditionInput(
-            container_ready=False,
-            volume_ready=False,
-            archive_ready=False,
-            archive_reason=ArchiveReason.ARCHIVE_NOT_FOUND.value,
-        )
-        input = JudgeInput(conditions=cond, deleted_at=False)
-
-        output = judge(input)
-
-        assert output.phase == Phase.ERROR
-        assert output.healthy is False
 
 
 class TestDeletionHandling:
@@ -173,82 +124,6 @@ class TestDeletionHandling:
         output = judge(input)
 
         assert output.phase == Phase.DELETED
-        assert output.healthy is True
-
-
-class TestFallback:
-    """Fallback 테스트 (JDG-009 ~ JDG-011)."""
-
-    def test_jdg_009_transient_failure_with_archive_key_returns_archived(self):
-        """JDG-009: 일시 장애 + archive_key → ARCHIVED (Fallback)."""
-        cond = ConditionInput(
-            container_ready=False,
-            volume_ready=False,
-            archive_ready=False,
-            archive_reason=ArchiveReason.ARCHIVE_UNREACHABLE.value,
-        )
-        input = JudgeInput(
-            conditions=cond,
-            deleted_at=False,
-            archive_key="ws-123/op-456/home.tar.zst",
-        )
-
-        output = judge(input)
-
-        assert output.phase == Phase.ARCHIVED
-        assert output.healthy is True
-
-    def test_jdg_010_terminal_failure_with_archive_key_returns_error(self):
-        """JDG-010: 터미널 오류 + archive_key → ERROR."""
-        cond = ConditionInput(
-            container_ready=False,
-            volume_ready=False,
-            archive_ready=False,
-            archive_reason=ArchiveReason.ARCHIVE_NOT_FOUND.value,
-        )
-        input = JudgeInput(
-            conditions=cond,
-            deleted_at=False,
-            archive_key="ws-123/op-456/home.tar.zst",
-        )
-
-        output = judge(input)
-
-        assert output.phase == Phase.ERROR
-        assert output.healthy is False
-
-    def test_jdg_011_transient_failure_without_archive_key_returns_pending(self):
-        """JDG-011: 일시 장애 + no archive_key → PENDING."""
-        cond = ConditionInput(
-            container_ready=False,
-            volume_ready=False,
-            archive_ready=False,
-            archive_reason=ArchiveReason.ARCHIVE_UNREACHABLE.value,
-        )
-        input = JudgeInput(conditions=cond, deleted_at=False, archive_key=None)
-
-        output = judge(input)
-
-        assert output.phase == Phase.PENDING
-        assert output.healthy is True
-
-    def test_timeout_with_archive_key_returns_archived(self):
-        """일시 장애 (Timeout) + archive_key → ARCHIVED (Fallback)."""
-        cond = ConditionInput(
-            container_ready=False,
-            volume_ready=False,
-            archive_ready=False,
-            archive_reason=ArchiveReason.ARCHIVE_TIMEOUT.value,
-        )
-        input = JudgeInput(
-            conditions=cond,
-            deleted_at=False,
-            archive_key="ws-123/op-456/home.tar.zst",
-        )
-
-        output = judge(input)
-
-        assert output.phase == Phase.ARCHIVED
         assert output.healthy is True
 
 
@@ -326,19 +201,6 @@ class TestCheckInvariants:
         assert healthy is False
         assert error_reason == ErrorReason.CONTAINER_WITHOUT_VOLUME
 
-    def test_archive_corrupted_returns_false(self):
-        """Archive Corrupted → (False, ARCHIVE_CORRUPTED)."""
-        cond = ConditionInput(
-            container_ready=False,
-            volume_ready=False,
-            archive_reason=ArchiveReason.ARCHIVE_CORRUPTED.value,
-        )
-
-        healthy, error_reason = check_invariants(cond)
-
-        assert healthy is False
-        assert error_reason == ErrorReason.ARCHIVE_CORRUPTED
-
 
 class TestConditionInputFromConditions:
     """ConditionInput.from_conditions 테스트."""
@@ -350,7 +212,6 @@ class TestConditionInputFromConditions:
         assert cond.container_ready is False
         assert cond.volume_ready is False
         assert cond.archive_ready is False
-        assert cond.archive_reason is None
 
     def test_from_full_conditions(self):
         """모든 조건 True인 conditions."""
@@ -365,24 +226,6 @@ class TestConditionInputFromConditions:
         assert cond.container_ready is True
         assert cond.volume_ready is True
         assert cond.archive_ready is True
-        assert cond.archive_reason == "ArchiveUploaded"
-
-    def test_from_conditions_with_archive_error(self):
-        """Archive 오류 상태 conditions."""
-        conditions = {
-            "archive": {
-                "workspace_id": "ws-1",
-                "archive_key": None,
-                "exists": False,
-                "reason": "ArchiveCorrupted",
-                "message": "",
-            },
-        }
-
-        cond = ConditionInput.from_conditions(conditions)
-
-        assert cond.archive_ready is False
-        assert cond.archive_reason == "ArchiveCorrupted"
 
     def test_from_conditions_with_none_values(self):
         """None 값 처리 테스트."""
@@ -397,4 +240,3 @@ class TestConditionInputFromConditions:
         assert cond.container_ready is False
         assert cond.volume_ready is False
         assert cond.archive_ready is False
-        assert cond.archive_reason is None

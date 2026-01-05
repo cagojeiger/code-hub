@@ -7,9 +7,6 @@ from pydantic import BaseModel
 
 from codehub.core.domain.conditions import ConditionInput
 from codehub.core.domain.workspace import (
-    ARCHIVE_TERMINAL_REASONS,
-    ARCHIVE_TRANSIENT_REASONS,
-    ArchiveReason,
     ErrorReason,
     Phase,
 )
@@ -21,12 +18,10 @@ class JudgeInput(BaseModel):
     Attributes:
         conditions: 관측된 condition 요약
         deleted_at: 삭제 요청 여부
-        archive_key: DB에 저장된 archive_key (Fallback용)
     """
 
     conditions: ConditionInput
     deleted_at: bool
-    archive_key: str | None = None
 
     model_config = {"frozen": True}
 
@@ -47,17 +42,11 @@ class JudgeOutput(BaseModel):
     model_config = {"frozen": True}
 
 
-# Reason 값 집합 (str 비교용)
-ARCHIVE_TERMINAL_REASON_VALUES = frozenset(r.value for r in ARCHIVE_TERMINAL_REASONS)
-ARCHIVE_TRANSIENT_REASON_VALUES = frozenset(r.value for r in ARCHIVE_TRANSIENT_REASONS)
-
-
 def check_invariants(conditions: ConditionInput) -> tuple[bool, ErrorReason | None]:
     """Check invariants and return (healthy, error_reason).
 
     Invariant violations:
     1. Container without Volume (계약 #6)
-    2. Archive terminal errors (Corrupted, Expired, NotFound)
 
     Returns:
         (True, None) if healthy
@@ -66,14 +55,6 @@ def check_invariants(conditions: ConditionInput) -> tuple[bool, ErrorReason | No
     # 계약 #6: Container without Volume
     if conditions.container_ready and not conditions.volume_ready:
         return False, ErrorReason.CONTAINER_WITHOUT_VOLUME
-
-    # Archive terminal error check
-    if conditions.archive_reason and conditions.archive_reason in ARCHIVE_TERMINAL_REASON_VALUES:
-        # 터미널 reason별 ErrorReason 매핑
-        if conditions.archive_reason == ArchiveReason.ARCHIVE_CORRUPTED.value:
-            return False, ErrorReason.ARCHIVE_CORRUPTED
-        # Expired, NotFound도 ARCHIVE_CORRUPTED로 매핑 (spec 참조)
-        return False, ErrorReason.ARCHIVE_CORRUPTED
 
     return True, None
 
@@ -85,11 +66,10 @@ def judge(input: JudgeInput) -> JudgeOutput:
     1. deleted_at (사용자 의도)
     2. policy.healthy (시스템 판단)
     3. resources (현실)
-    4. archive_key fallback (시스템 기억)
-    5. default → PENDING
+    4. default → PENDING
 
     Args:
-        input: JudgeInput with conditions, deleted_at, archive_key
+        input: JudgeInput with conditions, deleted_at
 
     Returns:
         JudgeOutput with phase, healthy, error_reason
@@ -115,10 +95,5 @@ def judge(input: JudgeInput) -> JudgeOutput:
     if cond.archive_ready:
         return JudgeOutput(phase=Phase.ARCHIVED, healthy=True)
 
-    # Step 4: Fallback (일시 장애 시 archive_key로 ARCHIVED 유지)
-    if input.archive_key and cond.archive_reason:
-        if cond.archive_reason in ARCHIVE_TRANSIENT_REASON_VALUES:
-            return JudgeOutput(phase=Phase.ARCHIVED, healthy=True)
-
-    # Step 5: default
+    # Step 4: default
     return JudgeOutput(phase=Phase.PENDING, healthy=True)

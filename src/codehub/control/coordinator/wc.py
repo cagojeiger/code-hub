@@ -137,7 +137,6 @@ class WorkspaceController(CoordinatorBase):
         judge_input = JudgeInput(
             conditions=cond_input,
             deleted_at=ws.deleted_at is not None,
-            archive_key=ws.archive_key,
         )
         judge_output = judge(judge_input)
         return self._plan(ws, judge_output)

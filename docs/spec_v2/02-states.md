@@ -40,10 +40,6 @@ Phase는 Conditions에서 계산되는 **파생 값**입니다.
 
 > **resources**: `volume_ready ∨ container_ready ∨ archive_ready`
 > **Phase 계산**: WC가 reconcile 시 conditions를 읽어 phase 계산/저장 (인덱스용 캐시)
->
-> **일시 장애 예외**: S3 일시 장애(ArchiveUnreachable/Timeout) 시
-> `archive_ready.status=false`여도 `archive_key` 존재하면 ARCHIVED 유지
-> (상세: calculate_phase() 참조)
 
 ### calculate_phase()
 
@@ -54,14 +50,12 @@ Phase는 Conditions에서 계산되는 **파생 값**입니다.
 def calculate_phase(
     conditions: dict,
     deleted_at: datetime | None,
-    archive_key: str | None = None
 ) -> Phase:
     """Phase 계산 로직 (유일한 정의)
 
     Args:
         conditions: Condition 상태 딕셔너리 (빈 dict 허용)
         deleted_at: Soft delete 시각
-        archive_key: Archive 경로 (일시 장애 시 ARCHIVED 유지 판정에 사용)
 
     Note:
         conditions가 빈 딕셔너리일 수 있으므로 기본값 병합 후 계산.
@@ -102,12 +96,6 @@ def calculate_phase(
     if cond["storage.archive_ready"]["status"] == "True":
         return Phase.ARCHIVED
 
-    # 일시 장애 시 archive_key 존재하면 ARCHIVED 유지
-    if archive_key:
-        reason = cond["storage.archive_ready"].get("reason", "")
-        if reason in ["ArchiveUnreachable", "ArchiveTimeout"]:
-            return Phase.ARCHIVED
-
     return Phase.PENDING
 ```
 
@@ -119,8 +107,7 @@ def calculate_phase(
 
 > **안전성**: 빈 conditions에도 기본값을 적용하여 KeyError 없이 안전하게 계산
 >
-> **일시 장애 안정성**: S3 일시 장애(ArchiveUnreachable/Timeout) 시
-> archive_key가 존재하면 ARCHIVED 상태 유지
+> **S3 장애 처리**: Observer가 all-or-nothing 방식으로 동작하여 S3 장애 시 tick 스킵 → 이전 상태 유지
 
 ---
 
