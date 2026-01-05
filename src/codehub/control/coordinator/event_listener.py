@@ -22,7 +22,8 @@ import psycopg
 import redis.asyncio as redis
 
 from codehub.infra.pg_leader import PsycopgLeaderElection
-from codehub.infra.redis import NotifyPublisher, SSEStreamPublisher
+from codehub.infra.redis_pubsub import NotifyPublisher
+from codehub.infra.redis_streams import SSEStreamPublisher
 
 logger = logging.getLogger(__name__)
 

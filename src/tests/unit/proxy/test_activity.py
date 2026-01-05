@@ -10,7 +10,7 @@ import pytest
 import redis.asyncio as redis
 
 from codehub.app.proxy.activity import ActivityBuffer, get_activity_buffer
-from codehub.infra.redis import ActivityStore
+from codehub.infra.redis_kv import ActivityStore
 
 
 class TestActivityBuffer:

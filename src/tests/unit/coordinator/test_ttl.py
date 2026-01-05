@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from codehub.control.coordinator.ttl import TTLManager
-from codehub.infra.redis import ActivityStore, NotifyPublisher
+from codehub.infra.redis_kv import ActivityStore
+from codehub.infra.redis_pubsub import NotifyPublisher
 
 
 @pytest.fixture

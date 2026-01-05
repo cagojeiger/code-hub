@@ -22,7 +22,7 @@ from codehub.app.config import get_settings
 from codehub.app.proxy.auth import get_user_id_from_session
 from codehub.core.models import Workspace
 from codehub.infra import get_redis, get_session, get_session_factory
-from codehub.infra.redis import SSEStreamReader
+from codehub.infra.redis_streams import SSEStreamReader
 
 logger = logging.getLogger(__name__)
 

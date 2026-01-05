@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from codehub.app.config import get_settings
 from codehub.core.interfaces.leader import LeaderElection
-from codehub.infra.redis import NotifySubscriber, WakeTarget
+from codehub.infra.redis_pubsub import NotifySubscriber, WakeTarget
 
 logger = logging.getLogger(__name__)
 

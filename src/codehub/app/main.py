@@ -47,7 +47,7 @@ from codehub.infra import (
     init_redis,
     init_storage,
 )
-from codehub.infra.redis import NotifyPublisher, NotifySubscriber
+from codehub.infra.redis_pubsub import NotifyPublisher, NotifySubscriber
 
 setup_logging()
 logger = logging.getLogger(__name__)

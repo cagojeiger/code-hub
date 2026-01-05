@@ -10,7 +10,7 @@ import time
 import redis.asyncio as redis
 
 from codehub.app.config import get_settings
-from codehub.infra.redis import ActivityStore
+from codehub.infra.redis_kv import ActivityStore
 
 logger = logging.getLogger(__name__)
 

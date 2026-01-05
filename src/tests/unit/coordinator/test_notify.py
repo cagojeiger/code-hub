@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from codehub.infra.redis import (
+from codehub.infra.redis_pubsub import (
     NotifyPublisher,
     NotifySubscriber,
     WakeTarget,

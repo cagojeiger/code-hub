@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from codehub.core.interfaces.leader import LeaderElection
-from codehub.infra.redis import NotifySubscriber
+from codehub.infra.redis_pubsub import NotifySubscriber
 from codehub.control.coordinator.observer import BulkObserver, ObserverCoordinator
 from codehub.core.interfaces.instance import ContainerInfo, InstanceController
 from codehub.core.interfaces.storage import StorageProvider, VolumeInfo

@@ -10,7 +10,7 @@ from codehub.control.coordinator.gc import ArchiveGC
 from codehub.control.coordinator.observer import ObserverCoordinator
 from codehub.control.coordinator.ttl import TTLManager
 from codehub.control.coordinator.wc import WorkspaceController
-from codehub.infra.redis import (
+from codehub.infra.redis_pubsub import (
     NotifyPublisher,
     NotifySubscriber,
     WakeTarget,

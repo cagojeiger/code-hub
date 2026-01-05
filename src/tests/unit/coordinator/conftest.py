@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from codehub.core.interfaces.leader import LeaderElection
-from codehub.infra.redis import NotifySubscriber
+from codehub.infra.redis_pubsub import NotifySubscriber
 
 
 @pytest.fixture

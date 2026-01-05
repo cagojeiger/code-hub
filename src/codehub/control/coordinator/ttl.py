@@ -25,7 +25,8 @@ from codehub.control.coordinator.base import (
     NotifySubscriber,
 )
 from codehub.core.domain.workspace import DesiredState, Operation, Phase
-from codehub.infra.redis import ActivityStore, NotifyPublisher
+from codehub.infra.redis_kv import ActivityStore
+from codehub.infra.redis_pubsub import NotifyPublisher
 
 logger = logging.getLogger(__name__)
 

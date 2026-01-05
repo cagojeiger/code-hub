@@ -318,7 +318,7 @@ class TestJitteredVerifyInterval:
     ) -> None:
         """Jitter가 ±30% 범위 내."""
         from codehub.control.coordinator.base import CoordinatorBase, CoordinatorType
-        from codehub.infra.redis import WakeTarget
+        from codehub.infra.redis_pubsub import WakeTarget
 
         class TestCoordinator(CoordinatorBase):
             COORDINATOR_TYPE = CoordinatorType.WC

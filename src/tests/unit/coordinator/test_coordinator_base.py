@@ -10,7 +10,7 @@ from codehub.control.coordinator.base import (
     CoordinatorType,
     LeaderElection,
 )
-from codehub.infra.redis import NotifySubscriber, WakeTarget
+from codehub.infra.redis_pubsub import NotifySubscriber, WakeTarget
 
 
 class DummyCoordinator(CoordinatorBase):
