@@ -174,6 +174,28 @@ class TestRelease:
         assert leader.is_leader is False
         conn.execute.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_release_logs_warning_when_lock_not_held(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """락을 보유하지 않았을 때 WARNING 로그."""
+        import logging
+
+        caplog.set_level(logging.WARNING)
+
+        conn = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.fetchone.return_value = (False,)  # Lock was not held
+        conn.execute = AsyncMock(return_value=result_mock)
+
+        leader = SQLAlchemyLeaderElection(conn, "test_lock")
+        leader._is_leader = True
+
+        await leader.release()
+
+        assert leader.is_leader is False
+        assert "Lock was not held during release" in caplog.text
+
 
 class TestVerifyHolding:
     """verify_holding() 테스트."""
