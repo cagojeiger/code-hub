@@ -28,8 +28,8 @@ class TestActivityBuffer:
         assert before <= buffer._buffer["ws-1"] <= after
 
     def test_record_updates_existing(self):
-        """record() updates timestamp for existing workspace."""
-        buffer = ActivityBuffer()
+        """record() updates timestamp for existing workspace (when not throttled)."""
+        buffer = ActivityBuffer(throttle_sec=0)  # Disable throttling for this test
 
         buffer.record("ws-1")
         old_ts = buffer._buffer["ws-1"]
@@ -39,6 +39,17 @@ class TestActivityBuffer:
         new_ts = buffer._buffer["ws-1"]
 
         assert new_ts > old_ts
+
+    def test_record_throttles_frequent_calls(self):
+        """record() ignores calls within throttle window."""
+        buffer = ActivityBuffer(throttle_sec=1.0)
+
+        buffer.record("ws-1")
+        first_ts = buffer._buffer["ws-1"]
+
+        # Immediate second call should be throttled
+        buffer.record("ws-1")
+        assert buffer._buffer["ws-1"] == first_ts  # Timestamp unchanged
 
     def test_record_multiple_workspaces(self):
         """record() handles multiple workspaces."""
@@ -122,7 +133,7 @@ class TestActivityBuffer:
 
     async def test_flush_does_not_overwrite_new_records(self):
         """flush() does not overwrite new records on restore."""
-        buffer = ActivityBuffer()
+        buffer = ActivityBuffer(throttle_sec=0)  # Disable throttling for this test
         mock_store = AsyncMock(spec=ActivityStore)
 
         # Original records
@@ -132,6 +143,7 @@ class TestActivityBuffer:
         # Simulate: flush starts, takes snapshot
         async def slow_mset(*args, **kwargs):
             # During flush, new record arrives
+            time.sleep(0.01)  # Ensure timestamp is different
             buffer.record("ws-1")  # Update ws-1 with new timestamp
             raise redis.RedisError("Connection failed")
 

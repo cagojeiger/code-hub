@@ -3,6 +3,8 @@
 Provides shared httpx AsyncClient for connection pooling and header filtering.
 """
 
+import asyncio
+
 import httpx
 
 # =============================================================================
@@ -49,26 +51,33 @@ WS_HOP_BY_HOP_HEADERS = HOP_BY_HOP_HEADERS | frozenset(
 
 # Shared httpx client for connection pooling
 _http_client: httpx.AsyncClient | None = None
+_http_client_lock = asyncio.Lock()
 
 
 async def get_http_client() -> httpx.AsyncClient:
-    """Get or create shared httpx AsyncClient."""
+    """Get or create shared httpx AsyncClient (thread-safe)."""
     global _http_client
-    if _http_client is None:
-        _http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(
-                timeout=PROXY_TIMEOUT_TOTAL,
-                connect=PROXY_TIMEOUT_CONNECT,
-                read=PROXY_TIMEOUT_TOTAL,
-                write=PROXY_TIMEOUT_TOTAL,
-                pool=PROXY_TIMEOUT_POOL,
-            ),
-            limits=httpx.Limits(
-                max_connections=PROXY_MAX_CONNECTIONS,
-                max_keepalive_connections=PROXY_MAX_KEEPALIVE,
-                keepalive_expiry=PROXY_KEEPALIVE_EXPIRY,
-            ),
-        )
+    # Fast path: return existing client without lock
+    if _http_client is not None:
+        return _http_client
+
+    # Slow path: acquire lock and double-check
+    async with _http_client_lock:
+        if _http_client is None:
+            _http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    timeout=PROXY_TIMEOUT_TOTAL,
+                    connect=PROXY_TIMEOUT_CONNECT,
+                    read=PROXY_TIMEOUT_TOTAL,
+                    write=PROXY_TIMEOUT_TOTAL,
+                    pool=PROXY_TIMEOUT_POOL,
+                ),
+                limits=httpx.Limits(
+                    max_connections=PROXY_MAX_CONNECTIONS,
+                    max_keepalive_connections=PROXY_MAX_KEEPALIVE,
+                    keepalive_expiry=PROXY_KEEPALIVE_EXPIRY,
+                ),
+            )
     return _http_client
 
 

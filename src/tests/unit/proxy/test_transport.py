@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import codehub.app.proxy.transport as transport_module
 from codehub.app.proxy.transport import (
     _relay_client_to_backend,
     _relay_backend_to_client,
@@ -30,12 +31,8 @@ class TestRelayClientToBackend:
             ]
         )
 
-        with patch(
-            "codehub.app.proxy.transport.get_activity_buffer"
-        ) as mock_get_buffer:
-            mock_buffer = MagicMock()
-            mock_get_buffer.return_value = mock_buffer
-
+        mock_buffer = MagicMock()
+        with patch.object(transport_module, "_activity_buffer", mock_buffer):
             await _relay_client_to_backend(mock_client_ws, mock_backend_ws, workspace_id)
 
             # record() should be called once
@@ -56,12 +53,8 @@ class TestRelayClientToBackend:
             ]
         )
 
-        with patch(
-            "codehub.app.proxy.transport.get_activity_buffer"
-        ) as mock_get_buffer:
-            mock_buffer = MagicMock()
-            mock_get_buffer.return_value = mock_buffer
-
+        mock_buffer = MagicMock()
+        with patch.object(transport_module, "_activity_buffer", mock_buffer):
             await _relay_client_to_backend(mock_client_ws, mock_backend_ws, workspace_id)
 
             mock_buffer.record.assert_called_once_with(workspace_id)
@@ -83,12 +76,8 @@ class TestRelayClientToBackend:
             ]
         )
 
-        with patch(
-            "codehub.app.proxy.transport.get_activity_buffer"
-        ) as mock_get_buffer:
-            mock_buffer = MagicMock()
-            mock_get_buffer.return_value = mock_buffer
-
+        mock_buffer = MagicMock()
+        with patch.object(transport_module, "_activity_buffer", mock_buffer):
             await _relay_client_to_backend(mock_client_ws, mock_backend_ws, workspace_id)
 
             # record() should be called 3 times
@@ -104,12 +93,8 @@ class TestRelayClientToBackend:
             return_value={"type": "websocket.disconnect"}
         )
 
-        with patch(
-            "codehub.app.proxy.transport.get_activity_buffer"
-        ) as mock_get_buffer:
-            mock_buffer = MagicMock()
-            mock_get_buffer.return_value = mock_buffer
-
+        mock_buffer = MagicMock()
+        with patch.object(transport_module, "_activity_buffer", mock_buffer):
             await _relay_client_to_backend(mock_client_ws, mock_backend_ws, workspace_id)
 
             # No messages received, no record() calls
@@ -131,12 +116,8 @@ class TestRelayBackendToClient:
 
         mock_backend_ws.__aiter__ = lambda self: mock_iter()
 
-        with patch(
-            "codehub.app.proxy.transport.get_activity_buffer"
-        ) as mock_get_buffer:
-            mock_buffer = MagicMock()
-            mock_get_buffer.return_value = mock_buffer
-
+        mock_buffer = MagicMock()
+        with patch.object(transport_module, "_activity_buffer", mock_buffer):
             await _relay_backend_to_client(mock_client_ws, mock_backend_ws, workspace_id)
 
             mock_buffer.record.assert_called_once_with(workspace_id)
@@ -153,12 +134,8 @@ class TestRelayBackendToClient:
 
         mock_backend_ws.__aiter__ = lambda self: mock_iter()
 
-        with patch(
-            "codehub.app.proxy.transport.get_activity_buffer"
-        ) as mock_get_buffer:
-            mock_buffer = MagicMock()
-            mock_get_buffer.return_value = mock_buffer
-
+        mock_buffer = MagicMock()
+        with patch.object(transport_module, "_activity_buffer", mock_buffer):
             await _relay_backend_to_client(mock_client_ws, mock_backend_ws, workspace_id)
 
             mock_buffer.record.assert_called_once_with(workspace_id)
@@ -177,12 +154,8 @@ class TestRelayBackendToClient:
 
         mock_backend_ws.__aiter__ = lambda self: mock_iter()
 
-        with patch(
-            "codehub.app.proxy.transport.get_activity_buffer"
-        ) as mock_get_buffer:
-            mock_buffer = MagicMock()
-            mock_get_buffer.return_value = mock_buffer
-
+        mock_buffer = MagicMock()
+        with patch.object(transport_module, "_activity_buffer", mock_buffer):
             await _relay_backend_to_client(mock_client_ws, mock_backend_ws, workspace_id)
 
             # record() should be called 3 times

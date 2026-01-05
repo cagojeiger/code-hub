@@ -33,6 +33,9 @@ WS_PING_TIMEOUT = 20.0  # Pong response timeout (seconds)
 WS_MAX_SIZE = 16 * 1024 * 1024  # Max message size: 16MB
 WS_MAX_QUEUE = 64  # Max queued messages (backpressure, no data loss)
 
+# Cache activity buffer at module level to avoid function call overhead per message
+_activity_buffer = get_activity_buffer()
+
 
 # =============================================================================
 # Internal WebSocket Relay Functions
@@ -48,7 +51,7 @@ async def _relay_client_to_backend(
     while True:
         data = await client_ws.receive()
         if data["type"] == "websocket.receive":
-            get_activity_buffer().record(workspace_id)
+            _activity_buffer.record(workspace_id)
             if "text" in data:
                 await backend_ws.send(data["text"])
             elif "bytes" in data:
@@ -64,7 +67,7 @@ async def _relay_backend_to_client(
 ) -> None:
     """Relay messages from backend WebSocket to client WebSocket."""
     async for message in backend_ws:
-        get_activity_buffer().record(workspace_id)
+        _activity_buffer.record(workspace_id)
         if isinstance(message, str):
             await client_ws.send_text(message)
         else:
@@ -156,10 +159,9 @@ async def proxy_ws_to_upstream(
         target_path = f"{target_path}?{query_string}"
     upstream_ws_uri = f"{upstream.ws_url}{target_path}"
 
-    # Filter headers
-    client_headers = dict(websocket.headers)
+    # Filter headers (iterate directly without dict copy)
     extra_headers = {
-        k: v for k, v in client_headers.items() if k.lower() not in WS_HOP_BY_HOP_HEADERS
+        k: v for k, v in websocket.headers.items() if k.lower() not in WS_HOP_BY_HOP_HEADERS
     }
 
     # Connect to upstream first (before accepting client)

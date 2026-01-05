@@ -25,26 +25,37 @@ class ActivityBuffer:
     Thread-safe (asyncio) buffer that collects workspace activity and
     periodically flushes to Redis via ActivityStore.
 
+    Optimizations:
+    - Throttling: Skip record() if last record was < throttle_sec ago
+    - Dict swap: O(1) flush instead of O(n) copy
+    - Auto cleanup: No separate tracking dict needed
+
     Usage:
         buffer = ActivityBuffer()
 
-        # Record activity (instant, non-blocking)
+        # Record activity (instant, non-blocking, throttled)
         buffer.record(workspace_id)
 
         # Flush to Redis (periodic background task)
         count = await buffer.flush(activity_store)
     """
 
-    def __init__(self) -> None:
+    def __init__(self, throttle_sec: float = 1.0) -> None:
         self._buffer: dict[str, float] = {}
         self._lock = asyncio.Lock()
+        self._throttle_sec = throttle_sec
 
     def record(self, workspace_id: str) -> None:
-        """Record activity for workspace (non-blocking).
+        """Record activity for workspace (non-blocking, throttled).
 
-        Stores the current timestamp. Multiple calls update to latest time.
+        Stores the current timestamp. Skips if last record was < throttle_sec ago.
+        This reduces CPU overhead for high-frequency WebSocket messages.
         """
-        self._buffer[workspace_id] = time.time()
+        now = time.time()
+        last = self._buffer.get(workspace_id, 0)
+        if now - last < self._throttle_sec:
+            return
+        self._buffer[workspace_id] = now
 
     async def flush(self, store: ActivityStore) -> int:
         """Flush buffer to Redis via ActivityStore.
@@ -59,9 +70,9 @@ class ActivityBuffer:
             if not self._buffer:
                 return 0
 
-            # Snapshot and clear
-            snapshot = dict(self._buffer)
-            self._buffer.clear()
+            # Dict swap: O(1) instead of O(n) copy
+            snapshot = self._buffer
+            self._buffer = {}
 
         try:
             await store.mset(snapshot)
@@ -69,12 +80,11 @@ class ActivityBuffer:
             return len(snapshot)
         except redis.RedisError as e:
             logger.warning("Failed to flush activities to Redis: %s", e)
-            # Re-add to buffer for next flush attempt
+            # Restore with max(ts) to keep latest timestamp
             async with self._lock:
                 for ws_id, ts in snapshot.items():
-                    # Only restore if not already updated
-                    if ws_id not in self._buffer:
-                        self._buffer[ws_id] = ts
+                    existing = self._buffer.get(ws_id, 0)
+                    self._buffer[ws_id] = max(ts, existing)
             return 0
 
     @property

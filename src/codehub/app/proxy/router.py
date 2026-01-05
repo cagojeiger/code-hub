@@ -29,6 +29,9 @@ from .transport import proxy_http_to_upstream, proxy_ws_to_upstream
 
 logger = logging.getLogger(__name__)
 
+# Cache activity buffer at module level to avoid function call overhead per request
+_activity_buffer = get_activity_buffer()
+
 router = APIRouter(tags=["proxy"])
 
 # =============================================================================
@@ -89,7 +92,7 @@ async def proxy_http(
         return policy_result.response
 
     # Record activity for TTL tracking
-    get_activity_buffer().record(workspace_id)
+    _activity_buffer.record(workspace_id)
 
     # Resolve upstream via InstanceController
     upstream = await instance.resolve_upstream(workspace_id)
@@ -133,7 +136,7 @@ async def proxy_websocket(
         return
 
     # Record activity for TTL tracking
-    get_activity_buffer().record(workspace_id)
+    _activity_buffer.record(workspace_id)
 
     # Resolve upstream via InstanceController
     upstream = await instance.resolve_upstream(workspace_id)
