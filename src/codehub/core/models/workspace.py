@@ -1,6 +1,6 @@
 """Workspace model (M2 schema).
 
-Reference: docs/spec_v2/03-schema.md
+Reference: docs/spec/03-schema.md
 """
 
 from datetime import datetime
@@ -15,7 +15,7 @@ from codehub.core.domain.workspace import DesiredState, Operation, Phase
 class Workspace(SQLModel, table=True):
     """Workspace model (M2 schema).
 
-    Reference: docs/spec_v2/03-schema.md
+    Reference: docs/spec/03-schema.md
     """
 
     __tablename__ = "workspaces"

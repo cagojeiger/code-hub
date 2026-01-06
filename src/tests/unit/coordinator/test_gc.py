@@ -1,6 +1,6 @@
 """Tests for ArchiveGC.
 
-Reference: docs/spec_v2/05-data-plane.md (Archive GC)
+Reference: docs/spec/05-data-plane.md (Archive GC)
 Contract #9: GC Separation & Protection
 """
 

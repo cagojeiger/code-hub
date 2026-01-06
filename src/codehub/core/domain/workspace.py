@@ -1,8 +1,8 @@
 """Workspace domain enums.
 
 Reference:
-- docs/spec_v2/02-states.md - Phase, Operation, DesiredState
-- docs/spec_v2/03-schema.md - ErrorReason
+- docs/spec/02-states.md - Phase, Operation, DesiredState
+- docs/spec/03-schema.md - ErrorReason
 """
 
 from enum import StrEnum

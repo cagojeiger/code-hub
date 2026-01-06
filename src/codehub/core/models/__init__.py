@@ -1,7 +1,7 @@
 """Database models for code-hub.
 
 Models are defined using SQLModel (SQLAlchemy + Pydantic).
-All models follow the schema defined in spec_v2/03-schema.md.
+All models follow the schema defined in spec/03-schema.md.
 """
 
 from codehub.core.models.auth import Session, User, generate_ulid, utc_now
