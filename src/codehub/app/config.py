@@ -42,6 +42,20 @@ class RedisConfig(BaseSettings):
     max_connections: int = Field(default=150)
 
 
+class RedisChannelConfig(BaseSettings):
+    """Redis PUB/SUB channel naming configuration.
+
+    Channel naming pattern: {prefix}:{identifier}
+    - SSE events: codehub:sse:{user_id}
+    - Wake notifications: codehub:wake:{target}
+    """
+
+    model_config = SettingsConfigDict(env_prefix="REDIS_CHANNEL_")
+
+    sse_prefix: str = Field(default="codehub:sse")
+    wake_prefix: str = Field(default="codehub:wake")
+
+
 class StorageConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="S3_")
 
@@ -222,6 +236,7 @@ class Settings(BaseSettings):
 
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
+    redis_channel: RedisChannelConfig = Field(default_factory=RedisChannelConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     docker: DockerConfig = Field(default_factory=DockerConfig)
     ttl: TtlConfig = Field(default_factory=TtlConfig)

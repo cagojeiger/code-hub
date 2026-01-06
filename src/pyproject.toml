@@ -9,8 +9,8 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     # Database
     "sqlmodel>=0.0.22",
-    "asyncpg>=0.30.0",
-    "psycopg[binary]>=3.1.0",  # EventListener (PG LISTEN/NOTIFY)
+    "asyncpg>=0.30.0",  # SQLAlchemy async driver
+    "psycopg[binary]>=3.2.4",  # EventListener (LISTEN/NOTIFY with OS-level wait)
     "greenlet>=3.0.0",
     # Redis
     "redis[hiredis]>=5.0.0",

@@ -14,11 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
 from codehub.control.coordinator.base import (
+    ChannelSubscriber,
     CoordinatorBase,
     CoordinatorType,
     LeaderElection,
-    NotifySubscriber,
-    WakeTarget,
 )
 from codehub.core.interfaces import InstanceController, StorageProvider
 
@@ -37,7 +36,7 @@ class ArchiveGC(CoordinatorBase):
     """
 
     COORDINATOR_TYPE = CoordinatorType.GC
-    WAKE_TARGET = WakeTarget.GC
+    WAKE_TARGET = "gc"
 
     # GC uses longer interval from config
     IDLE_INTERVAL = _settings.coordinator.gc_interval
@@ -46,11 +45,11 @@ class ArchiveGC(CoordinatorBase):
         self,
         conn: AsyncConnection,
         leader: LeaderElection,
-        notify: NotifySubscriber,
+        subscriber: ChannelSubscriber,
         storage: StorageProvider,
         ic: InstanceController,
     ) -> None:
-        super().__init__(conn, leader, notify)
+        super().__init__(conn, leader, subscriber)
         self._storage = storage
         self._ic = ic
         self._prefix = _settings.docker.resource_prefix

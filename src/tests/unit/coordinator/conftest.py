@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from codehub.core.interfaces.leader import LeaderElection
-from codehub.infra.redis_pubsub import NotifySubscriber
+from codehub.infra.redis_pubsub import ChannelSubscriber
 
 
 @pytest.fixture
@@ -31,10 +31,10 @@ def mock_leader(mock_conn: AsyncMock) -> AsyncMock:
 
 
 @pytest.fixture
-def mock_notify() -> AsyncMock:
-    """NotifySubscriber mock."""
-    notify = AsyncMock(spec=NotifySubscriber)
-    notify.subscribe = AsyncMock()
-    notify.unsubscribe = AsyncMock()
-    notify.get_message = AsyncMock(return_value=None)
-    return notify
+def mock_subscriber() -> AsyncMock:
+    """ChannelSubscriber mock."""
+    subscriber = AsyncMock(spec=ChannelSubscriber)
+    subscriber.subscribe = AsyncMock()
+    subscriber.unsubscribe = AsyncMock()
+    subscriber.get_message = AsyncMock(return_value=None)
+    return subscriber

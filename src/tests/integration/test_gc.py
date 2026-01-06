@@ -15,7 +15,7 @@ from codehub.adapters.instance import DockerInstanceController
 from codehub.adapters.storage import S3StorageProvider
 from codehub.app.config import get_settings
 from codehub.core.interfaces.leader import LeaderElection
-from codehub.infra.redis_pubsub import NotifySubscriber
+from codehub.infra.redis_pubsub import ChannelSubscriber
 from codehub.control.coordinator.gc import ArchiveGC
 from codehub.infra import get_s3_client
 from codehub.infra.docker import ContainerAPI, VolumeAPI, VolumeConfig
@@ -67,10 +67,10 @@ def mock_leader() -> MagicMock:
 
 
 @pytest.fixture
-def mock_notify() -> MagicMock:
-    """Mock NotifySubscriber."""
-    notify = MagicMock(spec=NotifySubscriber)
-    return notify
+def mock_subscriber() -> MagicMock:
+    """Mock ChannelSubscriber."""
+    subscriber = MagicMock(spec=ChannelSubscriber)
+    return subscriber
 
 
 @pytest.fixture
@@ -97,7 +97,7 @@ class TestArchiveOrphanCleanup:
         self,
         test_db_engine: AsyncEngine,
         mock_leader: MagicMock,
-        mock_notify: MagicMock,
+        mock_subscriber: MagicMock,
         storage_provider: S3StorageProvider,
         instance_controller: DockerInstanceController,
     ):
@@ -123,7 +123,7 @@ class TestArchiveOrphanCleanup:
 
         # 2. Run GC tick
         async with test_db_engine.connect() as conn:
-            gc = ArchiveGC(conn, mock_leader, mock_notify, storage_provider, instance_controller)
+            gc = ArchiveGC(conn, mock_leader, mock_subscriber, storage_provider, instance_controller)
             await gc.tick()
 
         # 3. Verify orphan is deleted
@@ -134,7 +134,7 @@ class TestArchiveOrphanCleanup:
         self,
         test_db_engine: AsyncEngine,
         mock_leader: MagicMock,
-        mock_notify: MagicMock,
+        mock_subscriber: MagicMock,
         storage_provider: S3StorageProvider,
         instance_controller: DockerInstanceController,
     ):
@@ -183,7 +183,7 @@ class TestArchiveOrphanCleanup:
 
         # 3. Run GC tick
         async with test_db_engine.connect() as conn:
-            gc = ArchiveGC(conn, mock_leader, mock_notify, storage_provider, instance_controller)
+            gc = ArchiveGC(conn, mock_leader, mock_subscriber, storage_provider, instance_controller)
             await gc.tick()
 
         # 4. Verify archive is still there (protected)
@@ -194,7 +194,7 @@ class TestArchiveOrphanCleanup:
         self,
         test_db_engine: AsyncEngine,
         mock_leader: MagicMock,
-        mock_notify: MagicMock,
+        mock_subscriber: MagicMock,
         storage_provider: S3StorageProvider,
         instance_controller: DockerInstanceController,
     ):
@@ -244,7 +244,7 @@ class TestArchiveOrphanCleanup:
 
         # 3. Run GC tick
         async with test_db_engine.connect() as conn:
-            gc = ArchiveGC(conn, mock_leader, mock_notify, storage_provider, instance_controller)
+            gc = ArchiveGC(conn, mock_leader, mock_subscriber, storage_provider, instance_controller)
             await gc.tick()
 
         # 4. Verify archive is deleted (user wanted deletion)
@@ -263,7 +263,7 @@ class TestVolumeOrphanCleanup:
         self,
         test_db_engine: AsyncEngine,
         mock_leader: MagicMock,
-        mock_notify: MagicMock,
+        mock_subscriber: MagicMock,
         storage_provider: S3StorageProvider,
         instance_controller: DockerInstanceController,
         volume_api: VolumeAPI,
@@ -286,7 +286,7 @@ class TestVolumeOrphanCleanup:
         try:
             # 2. Run GC tick
             async with test_db_engine.connect() as conn:
-                gc = ArchiveGC(conn, mock_leader, mock_notify, storage_provider, instance_controller)
+                gc = ArchiveGC(conn, mock_leader, mock_subscriber, storage_provider, instance_controller)
                 await gc.tick()
 
             # 3. Verify orphan volume is deleted
@@ -303,7 +303,7 @@ class TestVolumeOrphanCleanup:
         self,
         test_db_engine: AsyncEngine,
         mock_leader: MagicMock,
-        mock_notify: MagicMock,
+        mock_subscriber: MagicMock,
         storage_provider: S3StorageProvider,
         instance_controller: DockerInstanceController,
         volume_api: VolumeAPI,
@@ -348,7 +348,7 @@ class TestVolumeOrphanCleanup:
         try:
             # 3. Run GC tick
             async with test_db_engine.connect() as conn:
-                gc = ArchiveGC(conn, mock_leader, mock_notify, storage_provider, instance_controller)
+                gc = ArchiveGC(conn, mock_leader, mock_subscriber, storage_provider, instance_controller)
                 await gc.tick()
 
             # 4. Verify volume still exists (protected)

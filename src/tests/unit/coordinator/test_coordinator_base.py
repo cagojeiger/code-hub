@@ -10,14 +10,14 @@ from codehub.control.coordinator.base import (
     CoordinatorType,
     LeaderElection,
 )
-from codehub.infra.redis_pubsub import NotifySubscriber, WakeTarget
+from codehub.infra.redis_pubsub import ChannelSubscriber
 
 
 class DummyCoordinator(CoordinatorBase):
     """Test용 더미 Coordinator."""
 
     COORDINATOR_TYPE = CoordinatorType.WC
-    WAKE_TARGET = WakeTarget.WC
+    WAKE_TARGET = "wc"
 
     # 빠른 테스트를 위해 간격 축소
     IDLE_INTERVAL = 0.5
@@ -29,9 +29,9 @@ class DummyCoordinator(CoordinatorBase):
         self,
         conn: AsyncMock,
         leader: LeaderElection | AsyncMock,
-        notify: NotifySubscriber | AsyncMock,
+        subscriber: ChannelSubscriber | AsyncMock,
     ) -> None:
-        super().__init__(conn, leader, notify)
+        super().__init__(conn, leader, subscriber)
         self.tick_count = 0
 
     async def tick(self) -> None:
@@ -42,10 +42,10 @@ class TestAccelerateAndIsActive:
     """accelerate()와 is_active 테스트."""
 
     def test_accelerate_extends_active_duration(
-        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_notify: AsyncMock
+        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_subscriber: AsyncMock
     ) -> None:
         """accelerate() 호출 시 ACTIVE_DURATION 연장."""
-        coord = DummyCoordinator(mock_conn, mock_leader, mock_notify)
+        coord = DummyCoordinator(mock_conn, mock_leader, mock_subscriber)
 
         # 만료 상태로 설정
         coord._active_until = time.time() - 1
@@ -58,10 +58,10 @@ class TestAccelerateAndIsActive:
         assert coord.is_active is True
 
     def test_is_active_returns_false_after_duration(
-        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_notify: AsyncMock
+        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_subscriber: AsyncMock
     ) -> None:
         """ACTIVE_DURATION 후 is_active=False."""
-        coord = DummyCoordinator(mock_conn, mock_leader, mock_notify)
+        coord = DummyCoordinator(mock_conn, mock_leader, mock_subscriber)
 
         # 만료 상태로 설정
         coord._active_until = time.time() - 1
@@ -69,10 +69,10 @@ class TestAccelerateAndIsActive:
         assert coord.is_active is False
 
     def test_is_active_returns_true_when_not_expired(
-        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_notify: AsyncMock
+        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_subscriber: AsyncMock
     ) -> None:
         """ACTIVE_DURATION 내에는 is_active=True."""
-        coord = DummyCoordinator(mock_conn, mock_leader, mock_notify)
+        coord = DummyCoordinator(mock_conn, mock_leader, mock_subscriber)
 
         # 생성 직후는 active
         assert coord.is_active is True
@@ -82,20 +82,20 @@ class TestGetInterval:
     """_get_interval() 테스트."""
 
     def test_get_interval_returns_active_when_active(
-        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_notify: AsyncMock
+        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_subscriber: AsyncMock
     ) -> None:
         """Active 상태 → ACTIVE_INTERVAL 반환."""
-        coord = DummyCoordinator(mock_conn, mock_leader, mock_notify)
+        coord = DummyCoordinator(mock_conn, mock_leader, mock_subscriber)
 
         coord.accelerate()
 
         assert coord._get_interval() == coord.ACTIVE_INTERVAL
 
     def test_get_interval_returns_idle_when_inactive(
-        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_notify: AsyncMock
+        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_subscriber: AsyncMock
     ) -> None:
         """Inactive 상태 → IDLE_INTERVAL 반환."""
-        coord = DummyCoordinator(mock_conn, mock_leader, mock_notify)
+        coord = DummyCoordinator(mock_conn, mock_leader, mock_subscriber)
 
         # 만료 상태로 설정
         coord._active_until = time.time() - 1
@@ -108,17 +108,17 @@ class TestWaitForNotify:
 
     @pytest.mark.asyncio
     async def test_wait_for_notify_accelerates_on_message(
-        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_notify: AsyncMock
+        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_subscriber: AsyncMock
     ) -> None:
         """Redis 메시지 수신 시 accelerate() 호출."""
-        coord = DummyCoordinator(mock_conn, mock_leader, mock_notify)
+        coord = DummyCoordinator(mock_conn, mock_leader, mock_subscriber)
 
         # 만료 상태로 설정
         coord._active_until = time.time() - 1
         assert coord.is_active is False
 
         # 메시지 수신 시뮬레이션
-        mock_notify.get_message = AsyncMock(return_value="wc:wake")
+        mock_subscriber.get_message = AsyncMock(return_value="wc:wake")
 
         await coord._wait_for_notify(10.0)
 
@@ -127,17 +127,17 @@ class TestWaitForNotify:
 
     @pytest.mark.asyncio
     async def test_wait_for_notify_no_accelerate_without_message(
-        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_notify: AsyncMock
+        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_subscriber: AsyncMock
     ) -> None:
         """메시지 없으면 accelerate 안 함."""
-        coord = DummyCoordinator(mock_conn, mock_leader, mock_notify)
+        coord = DummyCoordinator(mock_conn, mock_leader, mock_subscriber)
 
         # 만료 상태로 설정
         coord._active_until = time.time() - 1
         assert coord.is_active is False
 
         # 메시지 없음
-        mock_notify.get_message = AsyncMock(return_value=None)
+        mock_subscriber.get_message = AsyncMock(return_value=None)
 
         await coord._wait_for_notify(0.01)
 
@@ -150,10 +150,10 @@ class TestThrottle:
 
     @pytest.mark.asyncio
     async def test_throttle_waits_min_interval(
-        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_notify: AsyncMock
+        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_subscriber: AsyncMock
     ) -> None:
         """MIN_INTERVAL 미만이면 대기."""
-        coord = DummyCoordinator(mock_conn, mock_leader, mock_notify)
+        coord = DummyCoordinator(mock_conn, mock_leader, mock_subscriber)
 
         # 방금 tick 실행한 것처럼 설정
         coord._last_tick = time.time()
@@ -167,10 +167,10 @@ class TestThrottle:
 
     @pytest.mark.asyncio
     async def test_throttle_no_wait_after_interval(
-        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_notify: AsyncMock
+        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_subscriber: AsyncMock
     ) -> None:
         """MIN_INTERVAL 이후면 대기 없음."""
-        coord = DummyCoordinator(mock_conn, mock_leader, mock_notify)
+        coord = DummyCoordinator(mock_conn, mock_leader, mock_subscriber)
 
         # MIN_INTERVAL 이전에 tick 실행한 것처럼 설정
         coord._last_tick = time.time() - coord.MIN_INTERVAL - 0.1
@@ -188,10 +188,10 @@ class TestEnsureLeadership:
 
     @pytest.mark.asyncio
     async def test_ensure_leadership_acquires_on_first_call(
-        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_notify: AsyncMock
+        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_subscriber: AsyncMock
     ) -> None:
         """첫 호출 시 리더십 획득 시도."""
-        coord = DummyCoordinator(mock_conn, mock_leader, mock_notify)
+        coord = DummyCoordinator(mock_conn, mock_leader, mock_subscriber)
 
         result = await coord._ensure_leadership()
 
@@ -200,10 +200,10 @@ class TestEnsureLeadership:
 
     @pytest.mark.asyncio
     async def test_ensure_leadership_skips_if_recently_verified(
-        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_notify: AsyncMock
+        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_subscriber: AsyncMock
     ) -> None:
         """최근 검증했으면 스킵."""
-        coord = DummyCoordinator(mock_conn, mock_leader, mock_notify)
+        coord = DummyCoordinator(mock_conn, mock_leader, mock_subscriber)
 
         # 이미 리더이고 최근 검증됨
         coord._last_verify = time.time()
@@ -215,13 +215,13 @@ class TestEnsureLeadership:
 
     @pytest.mark.asyncio
     async def test_ensure_leadership_returns_false_if_not_acquired(
-        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_notify: AsyncMock
+        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_subscriber: AsyncMock
     ) -> None:
         """리더십 획득 실패 시 False 반환."""
         mock_leader.try_acquire = AsyncMock(return_value=False)
         mock_leader.is_leader = False
 
-        coord = DummyCoordinator(mock_conn, mock_leader, mock_notify)
+        coord = DummyCoordinator(mock_conn, mock_leader, mock_subscriber)
         coord.LEADER_RETRY_INTERVAL = 0.01  # 빠른 테스트를 위해
 
         result = await coord._ensure_leadership()

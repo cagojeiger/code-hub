@@ -1,7 +1,7 @@
 """Redis ZSET for activity tracking.
 
 Uses Sorted Set for efficient bulk operations and range queries.
-Key: last_access (single ZSET)
+Key: codehub:activity (single ZSET)
 Member: workspace_id
 Score: timestamp (float)
 
@@ -20,13 +20,13 @@ from codehub.infra.redis import get_redis
 logger = logging.getLogger(__name__)
 
 # ZSET key name (single key for all workspaces)
-ACTIVITY_KEY = "last_access"
+ACTIVITY_KEY = "codehub:activity"
 
 
 class ActivityStore:
     """Manages workspace activity timestamps in Redis ZSET.
 
-    Key: last_access (single ZSET)
+    Key: codehub:activity (single ZSET)
     Member: workspace_id
     Score: timestamp
 

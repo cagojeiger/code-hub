@@ -14,11 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from codehub.app.config import get_settings
 from codehub.core.interfaces.leader import LeaderElection
-from codehub.infra.redis_pubsub import NotifySubscriber, WakeTarget
+from codehub.infra.redis_pubsub import ChannelSubscriber
 
 logger = logging.getLogger(__name__)
 
-_coordinator_config = get_settings().coordinator
+_settings = get_settings()
+_coordinator_config = _settings.coordinator
+_channel_config = _settings.redis_channel
 
 
 class CoordinatorType(StrEnum):
@@ -66,17 +68,17 @@ class CoordinatorBase(ABC):
     ACTIVE_DURATION: float = _coordinator_config.active_duration
 
     COORDINATOR_TYPE: CoordinatorType
-    WAKE_TARGET: WakeTarget | None = None  # Set to receive wake messages
+    WAKE_TARGET: str | None = None  # e.g., "ob", "wc", "gc" - receives wake from this target
 
     def __init__(
         self,
         conn: SAConnection,
         leader: LeaderElection,
-        notify: NotifySubscriber,
+        subscriber: ChannelSubscriber,
     ) -> None:
         self._conn = conn  # Shared with Advisory Lock - see ADR-012
         self._leader = leader
-        self._notify = notify
+        self._subscriber = subscriber
         self._running = False
         self._subscribed = False
         self._active_until = time.time() + self.ACTIVE_DURATION
@@ -161,9 +163,10 @@ class CoordinatorBase(ABC):
         return True
 
     async def _ensure_subscribed(self) -> None:
-        """Subscribe to wake stream if not already subscribed."""
+        """Subscribe to wake channel if not already subscribed."""
         if not self._subscribed and self.WAKE_TARGET:
-            await self._notify.subscribe(self.WAKE_TARGET)
+            channel = f"{_channel_config.wake_prefix}:{self.WAKE_TARGET}"
+            await self._subscriber.subscribe(channel)
             self._subscribed = True
 
     async def _throttle(self) -> None:
@@ -201,8 +204,8 @@ class CoordinatorBase(ABC):
             return
 
         try:
-            msg = await self._notify.get_message(timeout=interval)
-            if msg:
+            msg = await self._subscriber.get_message(timeout=interval)
+            if msg is not None:  # Empty string "" is valid wake signal
                 self.accelerate()
         except asyncio.CancelledError:
             raise
@@ -214,7 +217,7 @@ class CoordinatorBase(ABC):
         """Release notify subscription."""
         if self._subscribed and self.WAKE_TARGET:
             try:
-                await self._notify.unsubscribe()
+                await self._subscriber.unsubscribe()
             except Exception as e:
                 logger.warning("[%s] Error unsubscribing: %s", self.name, e)
             self._subscribed = False

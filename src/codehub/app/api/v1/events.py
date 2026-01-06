@@ -1,10 +1,15 @@
 """SSE Events API endpoint.
 
 Provides real-time workspace updates via Server-Sent Events.
-Uses SSEStreamReader (Redis Streams) for reliable message delivery.
+Uses ChannelSubscriber (Redis PUB/SUB) for event delivery.
+
+Data flow:
+  PG TRIGGER -> EventListener (DB query) -> Redis PUB/SUB -> SSE endpoint
+
+No DB queries in this module - full workspace data comes from EventListener.
+Frontend checks deleted_at field to determine if workspace was deleted.
 
 Configuration via SSEConfig (SSE_ env prefix).
-
 Reference: docs/architecture_v2/event-listener.md
 """
 
@@ -15,14 +20,12 @@ from typing import Annotated, AsyncGenerator
 
 from fastapi import APIRouter, Cookie, Depends, Request
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codehub.app.config import get_settings
 from codehub.app.proxy.auth import get_user_id_from_session
-from codehub.core.models import Workspace
-from codehub.infra import get_redis, get_session, get_session_factory
-from codehub.infra.redis_streams import SSEStreamReader
+from codehub.infra import get_redis, get_session
+from codehub.infra.redis_pubsub import ChannelSubscriber
 
 logger = logging.getLogger(__name__)
 
@@ -30,56 +33,9 @@ router = APIRouter(tags=["events"])
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 
-_sse_config = get_settings().sse
-
-# SSE payload fields (subset of Workspace)
-SSE_WORKSPACE_FIELDS = {
-    "id",
-    "owner_user_id",
-    "name",
-    "description",
-    "memo",
-    "image_ref",
-    "phase",
-    "operation",
-    "desired_state",
-    "archive_key",
-    "error_reason",
-    "error_count",
-    "created_at",
-    "updated_at",
-    "last_access_at",
-    "phase_changed_at",  # TTL 계산용
-}
-
-
-def _workspace_to_dict(ws: Workspace) -> dict:
-    """Convert workspace model to SSE payload dict.
-
-    Uses Pydantic's model_dump with mode='json' for automatic:
-    - datetime → ISO string conversion
-    - Enum → value conversion
-
-    Note: progress is calculated in frontend (state.js).
-    """
-    return ws.model_dump(mode="json", include=SSE_WORKSPACE_FIELDS)
-
-
-async def _get_workspace_by_id(workspace_id: str) -> Workspace | None:
-    """Fetch workspace by ID using a fresh session.
-
-    Creates a new session for each query to ensure fresh data,
-    as SSE connections are long-lived.
-    """
-    session_factory = get_session_factory()
-    async with session_factory() as db:
-        result = await db.execute(
-            select(Workspace).where(
-                Workspace.id == workspace_id,
-                Workspace.deleted_at.is_(None),
-            )
-        )
-        return result.scalar_one_or_none()
+_settings = get_settings()
+_sse_config = _settings.sse
+_channel_config = _settings.redis_channel
 
 
 async def _event_generator(
@@ -88,22 +44,26 @@ async def _event_generator(
 ) -> AsyncGenerator[str, None]:
     """Generate SSE events for a user.
 
-    Uses SSEStreamReader to read from 'events:{user_id}' and yields:
-    - workspace_updated: when phase/operation changes
-    - workspace_deleted: when workspace is soft-deleted
+    Uses ChannelSubscriber (PUB/SUB) to receive events from '{sse_prefix}:{user_id}'.
+    Yields:
+    - workspace: full workspace data (frontend checks deleted_at)
     - heartbeat: every 30 seconds
 
     Includes deduplication to filter consecutive identical events.
+    No DB queries - full data comes from EventListener via Redis PUB/SUB.
     """
-    reader = SSEStreamReader(get_redis(), user_id)
+    subscriber = ChannelSubscriber(get_redis())
+    channel = f"{_channel_config.sse_prefix}:{user_id}"
 
     # Deduplication: track last sent state per workspace
-    # Key: workspace_id, Value: (phase, operation, error_reason)
-    last_sent_state: dict[str, tuple[str, str, str | None]] = {}
+    # Key: workspace_id, Value: (phase, operation, error_reason, name, desc, memo)
+    last_sent_state: dict[str, tuple] = {}
 
-    logger.info("[SSE] User %s connected", user_id)
+    logger.info("[SSE] User %s connected (channel=%s)", user_id, channel)
 
     try:
+        await subscriber.subscribe(channel)
+
         loop = asyncio.get_running_loop()
         last_heartbeat = loop.time()
 
@@ -115,48 +75,41 @@ async def _event_generator(
             if await request.is_disconnected():
                 break
 
-            # Read messages using SSEStreamReader
+            # Read message using ChannelSubscriber (PUB/SUB)
             try:
-                messages = await reader.read()
+                payload = await subscriber.get_message(timeout=1.0)
             except Exception as e:
                 logger.warning("[SSE] Redis read error: %s", e)
                 await asyncio.sleep(1)
                 continue
 
-            for _msg_id, fields in messages:
+            if payload is not None:
+                logger.info("[SSE] Received message for user %s", user_id)
                 try:
-                    # Get data field (may be bytes)
-                    data_raw = fields.get(b"data") or fields.get("data")
-                    if isinstance(data_raw, bytes):
-                        data_raw = data_raw.decode()
-
-                    data = json.loads(data_raw)
+                    data = json.loads(payload)
                     workspace_id = data.get("id")
 
-                    if data.get("deleted"):
-                        # Workspace deleted event
+                    # Check if deleted (deleted_at is set)
+                    if data.get("deleted_at"):
+                        # Deleted - always send, remove from dedup cache
                         last_sent_state.pop(workspace_id, None)
-                        yield f"event: workspace_deleted\ndata: {json.dumps({'id': workspace_id})}\n\n"
+                        yield f"event: workspace\ndata: {payload}\n\n"
                     else:
-                        # Workspace updated - fetch full data
-                        workspace = await _get_workspace_by_id(workspace_id)
-                        if workspace:
-                            # Deduplication check (includes metadata fields)
-                            current_state = (
-                                workspace.phase,
-                                workspace.operation,
-                                workspace.error_reason,
-                                workspace.name,
-                                workspace.description,
-                                workspace.memo,
-                            )
-                            if last_sent_state.get(workspace_id) == current_state:
-                                continue
+                        # Update - apply deduplication
+                        current_state = (
+                            data.get("phase"),
+                            data.get("operation"),
+                            data.get("error_reason"),
+                            data.get("name"),
+                            data.get("description"),
+                            data.get("memo"),
+                        )
+                        if last_sent_state.get(workspace_id) == current_state:
+                            continue
 
-                            # Update cache and send
-                            last_sent_state[workspace_id] = current_state
-                            ws_data = _workspace_to_dict(workspace)
-                            yield f"event: workspace_updated\ndata: {json.dumps(ws_data)}\n\n"
+                        # Update cache and send
+                        last_sent_state[workspace_id] = current_state
+                        yield f"event: workspace\ndata: {payload}\n\n"
 
                 except json.JSONDecodeError as e:
                     logger.warning("[SSE] Invalid JSON in message: %s", e)
@@ -170,6 +123,7 @@ async def _event_generator(
     except asyncio.CancelledError:
         pass
     finally:
+        await subscriber.unsubscribe()
         logger.info("[SSE] User %s disconnected", user_id)
 
 
@@ -182,13 +136,12 @@ async def sse_events(
     """SSE endpoint for real-time workspace updates.
 
     Streams events:
-    - workspace_updated: Full workspace object when phase/operation changes
-    - workspace_deleted: {id: string} when workspace is deleted
+    - workspace: Full workspace object (frontend checks deleted_at field)
     - heartbeat: {} every 30 seconds
 
     Requires valid session cookie.
 
-    Uses Redis Streams for reliable message delivery.
+    Uses Redis PUB/SUB for event delivery.
     """
     user_id = await get_user_id_from_session(db, session)
 

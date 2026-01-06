@@ -168,14 +168,14 @@ export function connectSSE(loadWorkspacesCallback) {
       stopPolling();
     };
 
-    state.eventSource.addEventListener('workspace_updated', (event) => {
+    // Single event handler - check deleted_at to determine action
+    state.eventSource.addEventListener('workspace', (event) => {
       const data = JSON.parse(event.data);
-      handleWorkspaceUpdate(data);
-    });
-
-    state.eventSource.addEventListener('workspace_deleted', (event) => {
-      const data = JSON.parse(event.data);
-      handleWorkspaceDeleted(data.id);
+      if (data.deleted_at) {
+        handleWorkspaceDeleted(data.id);
+      } else {
+        handleWorkspaceUpdate(data);
+      }
     });
 
     state.eventSource.addEventListener('heartbeat', () => {

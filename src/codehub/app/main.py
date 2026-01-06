@@ -43,11 +43,10 @@ from codehub.infra import (
     get_redis,
     get_s3_client,
     init_db,
-    init_publisher,
     init_redis,
     init_storage,
 )
-from codehub.infra.redis_pubsub import NotifyPublisher, NotifySubscriber
+from codehub.infra.redis_pubsub import ChannelPublisher, ChannelSubscriber
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -93,7 +92,6 @@ async def _ensure_admin_user() -> None:
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await init_db()
     await init_redis()
-    init_publisher()  # Initialize global NotifyPublisher for API
     await init_storage()
     await _ensure_admin_user()
 
@@ -131,7 +129,7 @@ async def _run_coordinators() -> None:
     sp = S3StorageProvider()
 
     # Redis wrappers
-    wake_publisher = NotifyPublisher(redis_client)
+    publisher = ChannelPublisher(redis_client)
     activity_store = get_activity_store()
 
     def make_runner(coordinator_cls: type, *args) -> callable:
@@ -143,21 +141,21 @@ async def _run_coordinators() -> None:
         async def runner() -> None:
             async with engine.connect() as conn:
                 leader = SQLAlchemyLeaderElection(conn, coordinator_cls.COORDINATOR_TYPE)
-                notify = NotifySubscriber(redis_client)
-                coordinator = coordinator_cls(conn, leader, notify, *args)
+                subscriber = ChannelSubscriber(redis_client)
+                coordinator = coordinator_cls(conn, leader, subscriber, *args)
                 await coordinator.run()
         return runner
 
     async def event_listener_runner() -> None:
         """Run EventListener.
 
-        Uses direct psycopg connection (not SQLAlchemy) for PG LISTEN support.
+        Uses asyncpg connection for PG LISTEN support.
         Uses PostgreSQL Advisory Lock for leader election (only 1 instance writes).
         """
         settings = get_settings()
         # Convert SQLAlchemy URL to asyncpg URL (remove +asyncpg suffix)
         db_url = settings.database.url.replace("+asyncpg", "")
-        listener = EventListener(db_url, redis_client, wake_publisher=wake_publisher)
+        listener = EventListener(db_url, redis_client)
         await listener.run()
 
     async def activity_buffer_flush_loop() -> None:
@@ -183,7 +181,7 @@ async def _run_coordinators() -> None:
         await asyncio.gather(
             make_runner(ObserverCoordinator, ic, sp)(),
             make_runner(WorkspaceController, ic, sp)(),
-            make_runner(TTLManager, activity_store, wake_publisher)(),
+            make_runner(TTLManager, activity_store, publisher)(),
             make_runner(ArchiveGC, sp, ic)(),
             event_listener_runner(),
             activity_buffer_flush_loop(),

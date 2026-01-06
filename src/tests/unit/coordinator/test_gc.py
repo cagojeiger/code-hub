@@ -31,13 +31,13 @@ def mock_leader() -> MagicMock:
 
 
 @pytest.fixture
-def mock_notify() -> MagicMock:
-    """Mock NotifySubscriber."""
-    notify = MagicMock()
-    notify.subscribe = AsyncMock()
-    notify.unsubscribe = AsyncMock()
-    notify.get_message = AsyncMock(return_value=None)
-    return notify
+def mock_subscriber() -> MagicMock:
+    """Mock ChannelSubscriber."""
+    subscriber = MagicMock()
+    subscriber.subscribe = AsyncMock()
+    subscriber.unsubscribe = AsyncMock()
+    subscriber.get_message = AsyncMock(return_value=None)
+    return subscriber
 
 
 @pytest.fixture
@@ -65,12 +65,12 @@ def mock_ic() -> MagicMock:
 def archive_gc(
     mock_conn: MagicMock,
     mock_leader: MagicMock,
-    mock_notify: MagicMock,
+    mock_subscriber: MagicMock,
     mock_storage: MagicMock,
     mock_ic: MagicMock,
 ) -> ArchiveGC:
     """Create ArchiveGC with mocked dependencies."""
-    return ArchiveGC(mock_conn, mock_leader, mock_notify, mock_storage, mock_ic)
+    return ArchiveGC(mock_conn, mock_leader, mock_subscriber, mock_storage, mock_ic)
 
 
 class TestArchiveGCConfig:

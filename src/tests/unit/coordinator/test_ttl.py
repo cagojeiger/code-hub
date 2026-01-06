@@ -9,7 +9,7 @@ import pytest
 
 from codehub.control.coordinator.ttl import TTLManager
 from codehub.infra.redis_kv import ActivityStore
-from codehub.infra.redis_pubsub import NotifyPublisher
+from codehub.infra.redis_pubsub import ChannelPublisher
 
 
 @pytest.fixture
@@ -31,13 +31,13 @@ def mock_leader() -> AsyncMock:
 
 
 @pytest.fixture
-def mock_notify() -> AsyncMock:
-    """Mock NotifySubscriber."""
-    notify = AsyncMock()
-    notify.subscribe = AsyncMock()
-    notify.unsubscribe = AsyncMock()
-    notify.get_message = AsyncMock(return_value=None)
-    return notify
+def mock_subscriber() -> AsyncMock:
+    """Mock ChannelSubscriber."""
+    subscriber = AsyncMock()
+    subscriber.subscribe = AsyncMock()
+    subscriber.unsubscribe = AsyncMock()
+    subscriber.get_message = AsyncMock(return_value=None)
+    return subscriber
 
 
 @pytest.fixture
@@ -50,23 +50,23 @@ def mock_activity() -> AsyncMock:
 
 
 @pytest.fixture
-def mock_wake() -> AsyncMock:
-    """Mock NotifyPublisher."""
-    wake = AsyncMock(spec=NotifyPublisher)
-    wake.wake_wc = AsyncMock()
-    return wake
+def mock_publisher() -> AsyncMock:
+    """Mock ChannelPublisher."""
+    publisher = AsyncMock(spec=ChannelPublisher)
+    publisher.publish = AsyncMock()
+    return publisher
 
 
 @pytest.fixture
 def ttl_manager(
     mock_conn: AsyncMock,
     mock_leader: AsyncMock,
-    mock_notify: AsyncMock,
+    mock_subscriber: AsyncMock,
     mock_activity: AsyncMock,
-    mock_wake: AsyncMock,
+    mock_publisher: AsyncMock,
 ) -> TTLManager:
     """Create TTLManager with mocked dependencies."""
-    return TTLManager(mock_conn, mock_leader, mock_notify, mock_activity, mock_wake)
+    return TTLManager(mock_conn, mock_leader, mock_subscriber, mock_activity, mock_publisher)
 
 
 class TestTTLManagerConfig:
@@ -230,7 +230,7 @@ class TestTick:
         self,
         ttl_manager: TTLManager,
         mock_conn: AsyncMock,
-        mock_wake: AsyncMock,
+        mock_publisher: AsyncMock,
         mock_activity: AsyncMock,
     ):
         """tick() does not wake WC when no expired workspaces."""
@@ -243,7 +243,7 @@ class TestTick:
         await ttl_manager.tick()
 
         # Should not wake WC
-        mock_wake.wake_wc.assert_not_called()
+        mock_publisher.publish.assert_not_called()
         # Should commit
         mock_conn.commit.assert_called_once()
 
@@ -251,7 +251,7 @@ class TestTick:
         self,
         ttl_manager: TTLManager,
         mock_conn: AsyncMock,
-        mock_wake: AsyncMock,
+        mock_publisher: AsyncMock,
         mock_activity: AsyncMock,
     ):
         """tick() wakes WC when standby_ttl expired."""
@@ -269,13 +269,13 @@ class TestTick:
         await ttl_manager.tick()
 
         # Should wake WC
-        mock_wake.wake_wc.assert_called_once()
+        mock_publisher.publish.assert_called_once()
 
     async def test_tick_with_archive_expired(
         self,
         ttl_manager: TTLManager,
         mock_conn: AsyncMock,
-        mock_wake: AsyncMock,
+        mock_publisher: AsyncMock,
         mock_activity: AsyncMock,
     ):
         """tick() wakes WC when archive_ttl expired."""
@@ -293,4 +293,4 @@ class TestTick:
         await ttl_manager.tick()
 
         # Should wake WC
-        mock_wake.wake_wc.assert_called_once()
+        mock_publisher.publish.assert_called_once()

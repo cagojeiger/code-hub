@@ -19,11 +19,10 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
 from codehub.control.coordinator.base import (
+    ChannelSubscriber,
     CoordinatorBase,
     CoordinatorType,
     LeaderElection,
-    NotifySubscriber,
-    WakeTarget,
 )
 from codehub.core.interfaces.instance import ContainerInfo, InstanceController
 from codehub.core.interfaces.storage import ArchiveInfo, StorageProvider, VolumeInfo
@@ -83,17 +82,17 @@ class ObserverCoordinator(CoordinatorBase):
     """Observer - conditions, observed_at 컬럼 소유."""
 
     COORDINATOR_TYPE = CoordinatorType.OBSERVER
-    WAKE_TARGET = WakeTarget.OB
+    WAKE_TARGET = "ob"
 
     def __init__(
         self,
         conn: AsyncConnection,
         leader: LeaderElection,
-        notify: NotifySubscriber,
+        subscriber: ChannelSubscriber,
         ic: InstanceController,
         sp: StorageProvider,
     ) -> None:
-        super().__init__(conn, leader, notify)
+        super().__init__(conn, leader, subscriber)
         self._observer = BulkObserver(ic, sp)
 
     async def tick(self) -> None:

@@ -2,8 +2,7 @@
 
 Provides global Redis client lifecycle management.
 All Redis operations are in separate modules:
-- redis_pubsub: PUB/SUB for coordinator wake-up
-- redis_streams: Streams for SSE events
+- redis_pubsub: PUB/SUB for coordinator wake-up and SSE events
 - redis_kv: Key-Value for activity tracking
 
 Configuration via RedisConfig (REDIS_ env prefix).
@@ -48,11 +47,7 @@ async def close_redis() -> None:
 
         # Reset dependent modules
         from codehub.infra.redis_kv import reset_activity_store
-        from codehub.infra.redis_pubsub import reset_publisher
-        from codehub.infra.redis_streams import reset_sse_publisher
 
-        reset_publisher()
-        reset_sse_publisher()
         reset_activity_store()
 
 

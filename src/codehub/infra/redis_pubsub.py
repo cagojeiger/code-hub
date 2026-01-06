@@ -1,105 +1,82 @@
-"""Redis PUB/SUB for Coordinator wake-up notifications.
+"""Redis PUB/SUB abstraction.
 
-Provides NotifyPublisher/Subscriber for broadcasting wake messages
-to all Coordinator instances. Uses PUB/SUB pattern (no durability).
+Provides generic ChannelPublisher/Subscriber for PUB/SUB operations.
+Channel naming is the responsibility of the caller (service layer).
 
-Key pattern: {target}:wake (e.g., ob:wake, wc:wake, gc:wake)
+This is a pure infrastructure abstraction - no application-specific logic.
 """
 
-import asyncio
 import logging
-from enum import StrEnum
 
 import redis.asyncio as redis
-
-from codehub.infra.redis import get_redis
 
 logger = logging.getLogger(__name__)
 
 
-class WakeTarget(StrEnum):
-    """Wake target identifiers for PUB/SUB channels."""
+class ChannelPublisher:
+    """Generic Redis PUB/SUB publisher.
 
-    OB = "ob"
-    WC = "wc"
-    GC = "gc"
-
-
-def _get_wake_channel(target: WakeTarget) -> str:
-    """Get PUB/SUB channel name for wake target."""
-    return f"{target}:wake"
-
-
-class NotifyPublisher:
-    """Publishes notifications to wake up Coordinators via Redis PUB/SUB.
-
-    Uses PUBLISH to broadcast wake messages to all subscribers.
+    Publishes messages to a specified channel.
+    Channel naming convention is determined by the caller.
     """
 
     def __init__(self, client: redis.Redis) -> None:
+        """Initialize publisher.
+
+        Args:
+            client: Redis client instance.
+        """
         self._client = client
 
-    async def publish(self, target: WakeTarget) -> int:
-        """Publish wake message to PUB/SUB channel.
+    async def publish(self, channel: str, payload: str = "") -> int:
+        """Publish message to channel.
 
-        Returns the number of subscribers that received the message.
-        """
-        channel = _get_wake_channel(target)
-        count = await self._client.publish(channel, "wake")
-        logger.debug("Published wake to %s (subscribers=%d)", channel, count)
-        return count
-
-    async def wake_ob(self) -> int:
-        return await self.publish(WakeTarget.OB)
-
-    async def wake_wc(self) -> int:
-        return await self.publish(WakeTarget.WC)
-
-    async def wake_gc(self) -> int:
-        return await self.publish(WakeTarget.GC)
-
-    async def wake_ob_wc(self) -> tuple[int, int]:
-        """Wake both OB and WC in parallel.
-
-        Reduces 2 RTT to 1 RTT by using asyncio.gather.
+        Args:
+            channel: Full channel name (e.g., "codehub:sse:user123").
+            payload: Message payload (default: empty string for signals).
 
         Returns:
-            Tuple of (ob_subscribers, wc_subscribers).
+            Number of subscribers that received the message.
         """
-        ob_count, wc_count = await asyncio.gather(
-            self.wake_ob(),
-            self.wake_wc(),
-        )
-        return ob_count, wc_count
+        count = await self._client.publish(channel, payload)
+        logger.debug("PUBLISH %s (subscribers=%d)", channel, count)
+        return count
 
 
-class NotifySubscriber:
-    """Subscribes to wake channel using Redis PUB/SUB.
+class ChannelSubscriber:
+    """Generic Redis PUB/SUB subscriber.
 
-    Uses PUB/SUB for broadcasting - all subscribers receive all messages.
-    This ensures every coordinator instance gets wake-up notifications.
+    Subscribes to a specified channel and receives messages.
+    Channel naming convention is determined by the caller.
     """
 
     def __init__(self, client: redis.Redis) -> None:
         """Initialize subscriber.
 
         Args:
-            client: Redis client.
+            client: Redis client instance.
         """
         self._client = client
         self._pubsub: redis.client.PubSub | None = None
-        self._target: WakeTarget | None = None
+        self._channel: str | None = None
 
-    async def subscribe(self, target: WakeTarget) -> None:
-        """Subscribe to wake channel for a specific target.
+    @property
+    def channel(self) -> str | None:
+        """Get the subscribed channel name."""
+        return self._channel
 
-        Creates PubSub connection and subscribes to the target's channel.
+    async def subscribe(self, channel: str) -> None:
+        """Subscribe to channel.
+
+        Creates PubSub connection and subscribes to the channel.
+
+        Args:
+            channel: Full channel name to subscribe to.
         """
-        self._target = target
-        channel = _get_wake_channel(target)
+        self._channel = channel
         self._pubsub = self._client.pubsub()
         await self._pubsub.subscribe(channel)
-        logger.info("Subscribed to %s (target=%s)", channel, target)
+        logger.debug("SUBSCRIBE %s", channel)
 
     async def unsubscribe(self) -> None:
         """Unsubscribe and close PubSub connection."""
@@ -110,14 +87,19 @@ class NotifySubscriber:
             except Exception as e:
                 logger.warning("Error closing pubsub: %s", e)
             self._pubsub = None
-        self._target = None
+        self._channel = None
 
     async def get_message(self, timeout: float = 0.0) -> str | None:
-        """Read wake message from PUB/SUB channel.
+        """Read message from channel.
 
-        Returns the target if a message was received, None otherwise.
+        Args:
+            timeout: Maximum time to wait for message (seconds).
+                     0.0 means non-blocking.
+
+        Returns:
+            Message payload if received, None otherwise.
         """
-        if not self._pubsub or not self._target:
+        if not self._pubsub:
             return None
 
         try:
@@ -126,50 +108,24 @@ class NotifySubscriber:
                 timeout=timeout,
             )
             if msg and msg["type"] == "message":
-                logger.debug("Received wake (target=%s)", self._target)
-                return str(self._target)
+                data = msg["data"]
+                if isinstance(data, bytes):
+                    data = data.decode()
+                logger.debug("RECEIVED from %s", self._channel)
+                return data
             return None
 
         except redis.ConnectionError as e:
             logger.warning(
-                "Redis connection error in pubsub: %s",
+                "Redis connection error: %s",
                 e,
-                extra={"error_type": "connection", "target": str(self._target)},
+                extra={"error_type": "connection", "channel": self._channel},
             )
             return None
         except Exception as e:
             logger.warning(
                 "Error reading from pubsub: %s",
                 e,
-                extra={"error_type": type(e).__name__, "target": str(self._target)},
+                extra={"error_type": type(e).__name__, "channel": self._channel},
             )
             return None
-
-
-# =============================================================================
-# Global Instance Management
-# =============================================================================
-
-_publisher: NotifyPublisher | None = None
-
-
-def init_publisher() -> NotifyPublisher:
-    """Initialize NotifyPublisher with the current Redis client."""
-    global _publisher
-
-    client = get_redis()
-    _publisher = NotifyPublisher(client)
-    return _publisher
-
-
-def get_publisher() -> NotifyPublisher:
-    """Get the global NotifyPublisher instance."""
-    if _publisher is None:
-        raise RuntimeError("NotifyPublisher not initialized. Call init_publisher() first.")
-    return _publisher
-
-
-def reset_publisher() -> None:
-    """Reset publisher (for testing or reconnection)."""
-    global _publisher
-    _publisher = None

@@ -67,13 +67,13 @@ def mock_leader() -> AsyncMock:
 
 
 @pytest.fixture
-def mock_notify() -> AsyncMock:
-    """Mock NotifySubscriber."""
-    notify = AsyncMock()
-    notify.subscribe = AsyncMock()
-    notify.unsubscribe = AsyncMock()
-    notify.get_message = AsyncMock(return_value=None)
-    return notify
+def mock_subscriber() -> AsyncMock:
+    """Mock ChannelSubscriber."""
+    subscriber = AsyncMock()
+    subscriber.subscribe = AsyncMock()
+    subscriber.unsubscribe = AsyncMock()
+    subscriber.get_message = AsyncMock(return_value=None)
+    return subscriber
 
 
 def make_workspace(
@@ -120,11 +120,11 @@ class TestSelectOperation:
         self,
         mock_conn: AsyncMock,
         mock_leader: AsyncMock,
-        mock_notify: AsyncMock,
+        mock_subscriber: AsyncMock,
         mock_ic: AsyncMock,
         mock_sp: AsyncMock,
     ) -> WorkspaceController:
-        return WorkspaceController(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
+        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
 
     def test_pending_to_running(self, wc: WorkspaceController):
         """PENDING → RUNNING: PROVISIONING."""
@@ -186,11 +186,11 @@ class TestCheckCompletion:
         self,
         mock_conn: AsyncMock,
         mock_leader: AsyncMock,
-        mock_notify: AsyncMock,
+        mock_subscriber: AsyncMock,
         mock_ic: AsyncMock,
         mock_sp: AsyncMock,
     ) -> WorkspaceController:
-        return WorkspaceController(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
+        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
 
     def test_provisioning_complete(self, wc: WorkspaceController):
         """PROVISIONING 완료: volume_ready=True."""
@@ -249,11 +249,11 @@ class TestPlan:
         self,
         mock_conn: AsyncMock,
         mock_leader: AsyncMock,
-        mock_notify: AsyncMock,
+        mock_subscriber: AsyncMock,
         mock_ic: AsyncMock,
         mock_sp: AsyncMock,
     ) -> WorkspaceController:
-        return WorkspaceController(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
+        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
 
     def test_already_converged(self, wc: WorkspaceController):
         """이미 수렴됨 → no-op."""
@@ -367,11 +367,11 @@ class TestExecute:
         self,
         mock_conn: AsyncMock,
         mock_leader: AsyncMock,
-        mock_notify: AsyncMock,
+        mock_subscriber: AsyncMock,
         mock_ic: AsyncMock,
         mock_sp: AsyncMock,
     ) -> WorkspaceController:
-        return WorkspaceController(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
+        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
 
     async def test_provisioning(self, wc: WorkspaceController, mock_sp: AsyncMock):
         """PROVISIONING → sp.provision()."""
@@ -451,11 +451,11 @@ class TestPhaseFromDesired:
         self,
         mock_conn: AsyncMock,
         mock_leader: AsyncMock,
-        mock_notify: AsyncMock,
+        mock_subscriber: AsyncMock,
         mock_ic: AsyncMock,
         mock_sp: AsyncMock,
     ) -> WorkspaceController:
-        return WorkspaceController(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
+        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
 
     def test_running(self, wc: WorkspaceController):
         assert wc._phase_from_desired(DesiredState.RUNNING) == Phase.RUNNING
@@ -494,12 +494,12 @@ class TestTickParallel:
         self,
         mock_conn: AsyncMock,
         mock_leader: AsyncMock,
-        mock_notify: AsyncMock,
+        mock_subscriber: AsyncMock,
         mock_ic: AsyncMock,
         mock_sp: AsyncMock,
     ):
         """여러 ws 동시 처리."""
-        wc = WorkspaceController(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
+        wc = WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
 
         # _load_for_reconcile가 빈 리스트 반환하도록 mock
         wc._load_for_reconcile = AsyncMock(return_value=[])
@@ -512,12 +512,12 @@ class TestTickParallel:
         self,
         mock_conn: AsyncMock,
         mock_leader: AsyncMock,
-        mock_notify: AsyncMock,
+        mock_subscriber: AsyncMock,
         mock_ic: AsyncMock,
         mock_sp: AsyncMock,
     ):
         """한 ws Execute 실패해도 나머지 계속 처리됨."""
-        wc = WorkspaceController(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
+        wc = WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
 
         # PENDING -> RUNNING 워크스페이스 (PROVISIONING 필요)
         ws1 = make_workspace(id="ws-1", phase=Phase.PENDING, desired_state=DesiredState.RUNNING)
@@ -557,11 +557,11 @@ class TestCasUpdate:
         self,
         mock_conn: AsyncMock,
         mock_leader: AsyncMock,
-        mock_notify: AsyncMock,
+        mock_subscriber: AsyncMock,
         mock_ic: AsyncMock,
         mock_sp: AsyncMock,
     ) -> WorkspaceController:
-        return WorkspaceController(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
+        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
 
     async def test_cas_success_when_operation_matches(
         self,

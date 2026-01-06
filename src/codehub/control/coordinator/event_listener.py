@@ -2,44 +2,61 @@
 
 Reference: docs/architecture_v2/event-listener.md
 
-Uses psycopg3 AsyncConnection for native LISTEN/NOTIFY support.
-No keep-alive needed - notifies() generator handles idle connections.
+Architecture:
+- notify_conn (psycopg3): LISTEN/NOTIFY only (no other queries!)
+- sa_conn (SQLAlchemy): Advisory Lock + SELECT queries
 
-Listens to 3 PostgreSQL NOTIFY channels:
-- ws_sse: phase/operation changes -> SSEStreamPublisher.publish_update()
-- ws_wake: desired_state changes -> PUBLISH ob:wake, wc:wake (PUB/SUB)
-- ws_deleted: soft deletes -> SSEStreamPublisher.publish_deleted()
+Uses asyncio.Queue to decouple NOTIFY receiving from processing.
+This prevents psycopg3's notifies() generator from being blocked by queries.
+
+Listens to 2 PostgreSQL NOTIFY channels:
+- ws_sse: UI-visible field changes -> query DB -> publish full data
+- ws_wake: desired_state changes -> PUBLISH to wake channels
 
 Note: Requires leader election - only 1 EventListener should write to prevent duplicates.
-Uses PostgreSQL Advisory Lock for leader election.
 """
 
 import asyncio
 import json
 import logging
+from datetime import datetime
 
 import psycopg
 import redis.asyncio as redis
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
+from sqlalchemy.ext.asyncio import create_async_engine
 
-from codehub.infra.pg_leader import PsycopgLeaderElection
-from codehub.infra.redis_pubsub import NotifyPublisher
-from codehub.infra.redis_streams import SSEStreamPublisher
+from codehub.app.config import get_settings
+from codehub.infra.pg_leader import SQLAlchemyLeaderElection
+from codehub.infra.redis_pubsub import ChannelPublisher
 
 logger = logging.getLogger(__name__)
 
+_channel_config = get_settings().redis_channel
+
+# SQL query to fetch workspace data for SSE (SQLAlchemy :param style)
+_FETCH_WORKSPACE_SQL = """
+    SELECT id, owner_user_id, name, description, memo, image_ref,
+           phase, operation, desired_state, archive_key,
+           error_reason, error_count, created_at, updated_at,
+           last_access_at, phase_changed_at, deleted_at
+    FROM workspaces
+    WHERE id = :workspace_id
+"""
+
 
 class EventListener:
-    """PG NOTIFY -> Redis Streams transformer.
+    """PG NOTIFY -> Redis PUB/SUB transformer.
 
     Runs in FastAPI lifespan as a background task.
-    Uses psycopg3's notifies() generator for reliable notification delivery.
-    Uses PostgreSQL Advisory Lock for leader election (only 1 instance writes).
+    Uses psycopg3's notifies() for OS-level wait (real-time notification).
+    Uses SQLAlchemy for leader election and queries (same pattern as other Coordinators).
     """
 
     # PG NOTIFY channels
     CHANNEL_SSE = "ws_sse"
     CHANNEL_WAKE = "ws_wake"
-    CHANNEL_DELETED = "ws_deleted"
 
     # Advisory lock key (consistent across all instances)
     LOCK_KEY = "event_listener"
@@ -51,43 +68,54 @@ class EventListener:
         self,
         database_url: str,
         redis_client: redis.Redis,
-        sse_publisher: SSEStreamPublisher | None = None,
-        wake_publisher: NotifyPublisher | None = None,
+        publisher: ChannelPublisher | None = None,
     ) -> None:
         """Initialize EventListener.
 
         Args:
-            database_url: PostgreSQL connection URL (psycopg format).
-            redis_client: Redis client (fallback for creating publishers).
-            sse_publisher: SSEStreamPublisher for Streams operations.
-                          If None, creates one from redis_client.
-            wake_publisher: NotifyPublisher for wake notifications.
-                           If None, creates one from redis_client.
+            database_url: PostgreSQL connection URL.
+            redis_client: Redis client (fallback for creating publisher).
+            publisher: ChannelPublisher for PUB/SUB operations.
+                      If None, creates one from redis_client.
         """
         self._database_url = database_url
-        self._sse = sse_publisher or SSEStreamPublisher(redis_client)
-        self._wake = wake_publisher or NotifyPublisher(redis_client)
+        self._publisher = publisher or ChannelPublisher(redis_client)
         self._running = False
         self._log_prefix = self.__class__.__name__
+
+        # Dual connections
+        self._notify_conn: psycopg.AsyncConnection | None = None  # LISTEN only
+        self._sa_conn: SAConnection | None = None  # Advisory Lock + SELECT
+        self._engine = None
+
+        # Event queue for decoupling NOTIFY receiving from processing
+        self._event_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
 
     async def run(self) -> None:
         """Start listening to PG NOTIFY channels.
 
         This method blocks until stop() is called or cancelled.
-        Uses psycopg3's notifies() generator for native notification support.
-        Uses unified LeaderElection for leader election.
+        Uses psycopg3's notifies() for LISTEN/NOTIFY only.
+        Uses SQLAlchemy for leader election and queries.
         """
         self._running = True
 
-        # psycopg3 async connection (autocommit required for NOTIFY)
-        aconn = await psycopg.AsyncConnection.connect(
+        # 1. psycopg3 connection (LISTEN only - NO other queries!)
+        self._notify_conn = await psycopg.AsyncConnection.connect(
             self._database_url,
             autocommit=True,
         )
-        logger.info("[%s] Connected to PostgreSQL", self._log_prefix)
+        logger.info("[%s] Connected to PostgreSQL (psycopg3 for LISTEN)", self._log_prefix)
 
-        # Use PsycopgLeaderElection for psycopg3 connection
-        leader = PsycopgLeaderElection(aconn, self.LOCK_KEY)
+        # 2. SQLAlchemy connection (Advisory Lock + SELECT)
+        # Convert postgresql:// to postgresql+asyncpg:// for SQLAlchemy async
+        sa_url = self._database_url.replace("postgresql://", "postgresql+asyncpg://")
+        self._engine = create_async_engine(sa_url)
+        self._sa_conn = await self._engine.connect()
+        logger.info("[%s] Connected to PostgreSQL (SQLAlchemy for queries)", self._log_prefix)
+
+        # 3. Use SQLAlchemyLeaderElection (same as other Coordinators)
+        leader = SQLAlchemyLeaderElection(self._sa_conn, self.LOCK_KEY)
 
         try:
             # Wait for leadership
@@ -97,31 +125,71 @@ class EventListener:
             if not self._running:
                 return
 
-            # Subscribe to channels using SQL LISTEN (leader only)
-            await aconn.execute(f"LISTEN {self.CHANNEL_SSE}")
-            await aconn.execute(f"LISTEN {self.CHANNEL_WAKE}")
-            await aconn.execute(f"LISTEN {self.CHANNEL_DELETED}")
+            logger.info("[%s] Acquired leadership", self._log_prefix)
+
+            # Register LISTEN channels (psycopg3 only!)
+            await self._notify_conn.execute(f"LISTEN {self.CHANNEL_SSE}")
+            await self._notify_conn.execute(f"LISTEN {self.CHANNEL_WAKE}")
             logger.info(
-                "[%s] Leader: Listening to %s, %s, %s",
+                "[%s] Listening to %s, %s",
                 self._log_prefix,
                 self.CHANNEL_SSE,
                 self.CHANNEL_WAKE,
-                self.CHANNEL_DELETED,
             )
 
-            # Generator-based notification loop (no keep-alive needed)
-            async for notify in aconn.notifies():
-                if not self._running:
-                    break
-                await self._dispatch(notify.channel, notify.payload)
+            # Start worker task
+            worker_task = asyncio.create_task(self._worker_loop())
+
+            try:
+                # notifies loop - ONLY put to queue (no SELECT, no blocking!)
+                async for notify in self._notify_conn.notifies():
+                    if not self._running:
+                        break
+                    logger.info(
+                        "[%s] NOTIFY received: channel=%s, payload=%s",
+                        self._log_prefix,
+                        notify.channel,
+                        notify.payload[:100] if notify.payload else "",
+                    )
+                    await self._event_queue.put((notify.channel, notify.payload or ""))
+            finally:
+                worker_task.cancel()
+                try:
+                    await worker_task
+                except asyncio.CancelledError:
+                    pass
 
         except asyncio.CancelledError:
             logger.info("[%s] Cancelled, cleaning up", self._log_prefix)
         except Exception as e:
             logger.exception("[%s] Error: %s", self._log_prefix, e)
         finally:
-            await aconn.close()
-            logger.info("[%s] Stopped", self._log_prefix)
+            await self._close_connections()
+
+    async def _worker_loop(self) -> None:
+        """Queue consumer worker - SELECT queries and Redis publish."""
+        while True:
+            try:
+                channel, payload = await self._event_queue.get()
+                await self._dispatch(channel, payload)
+                self._event_queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.exception("[%s] Worker error: %s", self._log_prefix, e)
+
+    async def _close_connections(self) -> None:
+        """Close all connections."""
+        if self._notify_conn:
+            await self._notify_conn.close()
+            self._notify_conn = None
+        if self._sa_conn:
+            await self._sa_conn.close()
+            self._sa_conn = None
+        if self._engine:
+            await self._engine.dispose()
+            self._engine = None
+        logger.info("[%s] Stopped", self._log_prefix)
 
     async def _dispatch(self, channel: str, payload: str) -> None:
         """Dispatch event to appropriate handler."""
@@ -130,8 +198,6 @@ class EventListener:
                 await self._handle_sse(payload)
             elif channel == self.CHANNEL_WAKE:
                 await self._handle_wake()
-            elif channel == self.CHANNEL_DELETED:
-                await self._handle_deleted(payload)
         except Exception as e:
             logger.exception("[%s] Error handling %s: %s", self._log_prefix, channel, e)
 
@@ -140,24 +206,45 @@ class EventListener:
         self._running = False
 
     async def _handle_sse(self, payload: str) -> None:
-        """Handle SSE event - publish to user-specific stream.
+        """Handle SSE event - query DB and publish full workspace data.
 
         Payload: {"id": "...", "owner_user_id": "..."}
-        Publishes to: events:{owner_user_id}
+        Queries DB for full workspace data, publishes to: {sse_prefix}:{owner_user_id}
+        Frontend uses deleted_at field to determine if workspace was deleted.
         """
         try:
             data = json.loads(payload)
+            workspace_id = data.get("id")
             user_id = data.get("owner_user_id")
-            if not user_id:
+            if not workspace_id or not user_id:
                 logger.warning(
-                    "[%s] SSE payload missing owner_user_id: %s",
+                    "[%s] SSE payload missing id or owner_user_id: %s",
                     self._log_prefix,
                     payload,
                 )
                 return
 
-            await self._sse.publish_update(user_id, payload)
-            logger.debug("[%s] SSE -> publish_update user=%s", self._log_prefix, user_id)
+            # Query DB for full workspace data (using SQLAlchemy connection)
+            workspace_data = await self._fetch_workspace(workspace_id)
+            if workspace_data is None:
+                # Hard deleted - skip (no notification needed)
+                logger.debug(
+                    "[%s] SSE workspace not found (hard deleted): %s",
+                    self._log_prefix,
+                    workspace_id,
+                )
+                return
+
+            # Publish full workspace data (including deleted_at for soft deletes)
+            channel = f"{_channel_config.sse_prefix}:{user_id}"
+            await self._publisher.publish(channel, json.dumps(workspace_data))
+            logger.info(
+                "[%s] SSE -> publish user=%s ws=%s deleted=%s",
+                self._log_prefix,
+                user_id,
+                workspace_id,
+                workspace_data.get("deleted_at") is not None,
+            )
         except json.JSONDecodeError as e:
             logger.warning(
                 "[%s] Invalid SSE payload: %s (%s)", self._log_prefix, payload, e
@@ -165,40 +252,59 @@ class EventListener:
         except Exception as e:
             logger.exception("[%s] SSE error: %s", self._log_prefix, e)
 
+    async def _fetch_workspace(self, workspace_id: str) -> dict | None:
+        """Fetch workspace data from DB using SQLAlchemy connection.
+
+        Returns:
+            Workspace data as dict, or None if not found.
+        """
+        if self._sa_conn is None:
+            logger.error("[%s] DB connection not available", self._log_prefix)
+            return None
+
+        result = await self._sa_conn.execute(
+            text(_FETCH_WORKSPACE_SQL),
+            {"workspace_id": workspace_id},
+        )
+        row = result.fetchone()
+
+        if row is None:
+            return None
+
+        # Convert SQLAlchemy Row to dict with proper JSON serialization
+        columns = [
+            "id", "owner_user_id", "name", "description", "memo", "image_ref",
+            "phase", "operation", "desired_state", "archive_key",
+            "error_reason", "error_count", "created_at", "updated_at",
+            "last_access_at", "phase_changed_at", "deleted_at",
+        ]
+        data = {}
+        for i, col in enumerate(columns):
+            value = row[i]
+            # Convert datetime to ISO format string for JSON serialization
+            if isinstance(value, datetime):
+                data[col] = value.isoformat()
+            else:
+                data[col] = value
+        return data
+
     async def _handle_wake(self) -> None:
         """Handle wake event - PUBLISH to wake channels.
 
-        Uses NotifyPublisher.wake_ob_wc() for parallel execution (1 RTT).
+        Publishes to both OB and WC channels in parallel (1 RTT).
         """
         try:
-            await self._wake.wake_ob_wc()
-            logger.debug("[%s] Wake -> wake_ob_wc()", self._log_prefix)
-        except Exception as e:
-            logger.exception("[%s] Wake error: %s", self._log_prefix, e)
-
-    async def _handle_deleted(self, payload: str) -> None:
-        """Handle delete event - publish deleted event to user stream.
-
-        Payload: {"id": "...", "owner_user_id": "..."}
-        Publishes to: events:{owner_user_id} with deleted=true
-        """
-        try:
-            data = json.loads(payload)
-            user_id = data.get("owner_user_id")
-            workspace_id = data.get("id")
-            if not user_id or not workspace_id:
-                logger.warning(
-                    "[%s] Deleted payload missing owner_user_id or id: %s",
-                    self._log_prefix,
-                    payload,
-                )
-                return
-
-            await self._sse.publish_deleted(user_id, workspace_id)
-            logger.debug("[%s] Deleted -> publish_deleted user=%s ws=%s", self._log_prefix, user_id, workspace_id)
-        except json.JSONDecodeError as e:
-            logger.warning(
-                "[%s] Invalid deleted payload: %s (%s)", self._log_prefix, payload, e
+            ob_channel = f"{_channel_config.wake_prefix}:ob"
+            wc_channel = f"{_channel_config.wake_prefix}:wc"
+            ob_count, wc_count = await asyncio.gather(
+                self._publisher.publish(ob_channel),
+                self._publisher.publish(wc_channel),
+            )
+            logger.info(
+                "[%s] Wake -> ob=%d, wc=%d",
+                self._log_prefix,
+                ob_count,
+                wc_count,
             )
         except Exception as e:
-            logger.exception("[%s] Deleted error: %s", self._log_prefix, e)
+            logger.exception("[%s] Wake error: %s", self._log_prefix, e)

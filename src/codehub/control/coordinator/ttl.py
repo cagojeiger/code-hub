@@ -19,14 +19,16 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
 from codehub.control.coordinator.base import (
+    ChannelSubscriber,
     CoordinatorBase,
     CoordinatorType,
     LeaderElection,
-    NotifySubscriber,
 )
 from codehub.core.domain.workspace import DesiredState, Operation, Phase
 from codehub.infra.redis_kv import ActivityStore
-from codehub.infra.redis_pubsub import NotifyPublisher
+from codehub.infra.redis_pubsub import ChannelPublisher
+
+_channel_config = get_settings().redis_channel
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +55,13 @@ class TTLManager(CoordinatorBase):
         self,
         conn: AsyncConnection,
         leader: LeaderElection,
-        notify: NotifySubscriber,
+        subscriber: ChannelSubscriber,
         activity_store: ActivityStore,
-        wake_publisher: NotifyPublisher,
+        publisher: ChannelPublisher,
     ) -> None:
-        super().__init__(conn, leader, notify)
+        super().__init__(conn, leader, subscriber)
         self._activity = activity_store
-        self._wake = wake_publisher
+        self._publisher = publisher
 
         # Use module-level cached settings
         self._standby_ttl = _settings.ttl.standby_seconds
@@ -78,7 +80,8 @@ class TTLManager(CoordinatorBase):
 
         # WC 깨우기 (expired 있으면)
         if standby_expired or archive_expired:
-            await self._wake.wake_wc()
+            wc_channel = f"{_channel_config.wake_prefix}:wc"
+            await self._publisher.publish(wc_channel)
             logger.info(
                 "[%s] TTL expired: standby=%d, archive=%d",
                 self.name,

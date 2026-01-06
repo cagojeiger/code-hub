@@ -314,20 +314,19 @@ class TestJitteredVerifyInterval:
     """_jittered_verify_interval() 테스트 (CoordinatorBase)."""
 
     def test_jitter_within_range(
-        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_notify: AsyncMock
+        self, mock_conn: AsyncMock, mock_leader: AsyncMock, mock_subscriber: AsyncMock
     ) -> None:
         """Jitter가 ±30% 범위 내."""
         from codehub.control.coordinator.base import CoordinatorBase, CoordinatorType
-        from codehub.infra.redis_pubsub import WakeTarget
 
         class TestCoordinator(CoordinatorBase):
             COORDINATOR_TYPE = CoordinatorType.WC
-            WAKE_TARGET = WakeTarget.WC
+            WAKE_TARGET = "wc"
 
             async def tick(self) -> None:
                 pass
 
-        coord = TestCoordinator(mock_conn, mock_leader, mock_notify)
+        coord = TestCoordinator(mock_conn, mock_leader, mock_subscriber)
 
         # 100회 반복하여 모두 범위 내인지 확인
         min_expected = coord.VERIFY_INTERVAL * (1.0 - coord.VERIFY_JITTER)

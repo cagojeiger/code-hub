@@ -174,7 +174,7 @@ class TestActivityStore:
         await store.update({"ws-1": 1704067200.0, "ws-2": 1704067300.0})
 
         mock_redis.zadd.assert_called_once_with(
-            "last_access",
+            "codehub:activity",
             {"ws-1": 1704067200.0, "ws-2": 1704067300.0},
             gt=True,
         )
@@ -189,7 +189,7 @@ class TestActivityStore:
 
         assert result == {}
         mock_redis.zrange.assert_called_once_with(
-            "last_access", 0, -1, withscores=True
+            "codehub:activity", 0, -1, withscores=True
         )
 
     async def test_scan_all_uses_zrange(self):
@@ -208,7 +208,7 @@ class TestActivityStore:
             "ws-2": 1704067300.0,
         }
         mock_redis.zrange.assert_called_once_with(
-            "last_access", 0, -1, withscores=True
+            "codehub:activity", 0, -1, withscores=True
         )
 
     async def test_delete_empty_list(self):
@@ -230,7 +230,7 @@ class TestActivityStore:
         count = await store.delete(["ws-1", "ws-2"])
 
         assert count == 2
-        mock_redis.zrem.assert_called_once_with("last_access", "ws-1", "ws-2")
+        mock_redis.zrem.assert_called_once_with("codehub:activity", "ws-1", "ws-2")
 
     async def test_get_expired(self):
         """get_expired() uses ZRANGEBYSCORE."""
@@ -242,7 +242,7 @@ class TestActivityStore:
 
         assert result == ["ws-1", "ws-2"]
         mock_redis.zrangebyscore.assert_called_once_with(
-            "last_access", min="-inf", max=1704060000.0
+            "codehub:activity", min="-inf", max=1704060000.0
         )
 
 

@@ -21,11 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
 from codehub.control.coordinator.base import (
+    ChannelSubscriber,
     CoordinatorBase,
     CoordinatorType,
     LeaderElection,
-    NotifySubscriber,
-    WakeTarget,
 )
 from codehub.control.coordinator.judge import JudgeInput, JudgeOutput, judge
 from codehub.core.domain.conditions import ConditionInput
@@ -69,7 +68,7 @@ class WorkspaceController(CoordinatorBase):
     """
 
     COORDINATOR_TYPE = CoordinatorType.WC
-    WAKE_TARGET = WakeTarget.WC
+    WAKE_TARGET = "wc"
 
     # Operation timeout from config
     OPERATION_TIMEOUT = _coordinator_config.operation_timeout
@@ -78,11 +77,11 @@ class WorkspaceController(CoordinatorBase):
         self,
         conn: AsyncConnection,
         leader: LeaderElection,
-        notify: NotifySubscriber,
+        subscriber: ChannelSubscriber,
         ic: InstanceController,
         sp: StorageProvider,
     ) -> None:
-        super().__init__(conn, leader, notify)
+        super().__init__(conn, leader, subscriber)
         self._ic = ic
         self._sp = sp
 

@@ -82,14 +82,14 @@ class TestObserverTick:
         mock_sp.list_archives.return_value = []
 
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         # Act: Run tick directly
         async with test_db_engine.connect() as conn:
             observer = ObserverCoordinator(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_ic,
                 mock_sp,
             )
@@ -139,13 +139,13 @@ class TestObserverTick:
         mock_sp.list_archives.return_value = []
 
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         async with test_db_engine.connect() as conn:
             observer = ObserverCoordinator(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_ic,
                 mock_sp,
             )
@@ -180,13 +180,13 @@ class TestObserverTick:
         mock_ic = AsyncMock()
         mock_ic.list_all.return_value = []
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         async with test_db_engine.connect() as conn:
             observer = ObserverCoordinator(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_ic,
                 mock_sp,
             )
@@ -238,13 +238,13 @@ class TestObserverTick:
         mock_sp.list_archives.return_value = []
 
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         async with test_db_engine.connect() as conn:
             observer = ObserverCoordinator(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_ic,
                 mock_sp,
             )
@@ -278,13 +278,13 @@ class TestObserverTick:
         mock_sp.list_archives.return_value = []
 
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         async with test_db_engine.connect() as conn:
             observer = ObserverCoordinator(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_ic,
                 mock_sp,
             )
@@ -325,13 +325,13 @@ class TestObserverTick:
         mock_sp.list_archives.return_value = []
 
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         async with test_db_engine.connect() as conn:
             observer = ObserverCoordinator(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_ic,
                 mock_sp,
             )
@@ -450,14 +450,14 @@ class TestConcurrentCoordinators:
         mock_sp_obs.list_archives.return_value = []
 
         mock_leader_obs = AsyncMock()
-        mock_notify_obs = AsyncMock()
+        mock_subscriber_obs = AsyncMock()
 
         # Mock adapters for WC
         mock_ic_wc = AsyncMock()
         mock_ic_wc.start.return_value = None
         mock_sp_wc = AsyncMock()
         mock_leader_wc = AsyncMock()
-        mock_notify_wc = AsyncMock()
+        mock_subscriber_wc = AsyncMock()
 
         # Track completion
         observer_done = False
@@ -469,7 +469,7 @@ class TestConcurrentCoordinators:
                 observer = ObserverCoordinator(
                     conn,
                     mock_leader_obs,
-                    mock_notify_obs,
+                    mock_subscriber_obs,
                     mock_ic_obs,
                     mock_sp_obs,
                 )
@@ -482,7 +482,7 @@ class TestConcurrentCoordinators:
                 wc = WorkspaceController(
                     conn,
                     mock_leader_wc,
-                    mock_notify_wc,
+                    mock_subscriber_wc,
                     mock_ic_wc,
                     mock_sp_wc,
                 )
@@ -563,14 +563,14 @@ class TestConcurrentCoordinators:
         mock_sp.list_archives.return_value = []
 
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         # Run 3 consecutive ticks with same connection
         async with test_db_engine.connect() as conn:
             observer = ObserverCoordinator(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_ic,
                 mock_sp,
             )

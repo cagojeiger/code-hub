@@ -11,7 +11,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from codehub.control.coordinator.wc import WorkspaceController
-from codehub.control.coordinator.base import NotifySubscriber
 from codehub.core.models import Workspace, User
 from codehub.core.domain.workspace import Phase, Operation, DesiredState
 
@@ -72,11 +71,11 @@ class TestWCReconcile:
         mock_sp = AsyncMock()
         mock_sp.provision.return_value = None
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         # Act: Run tick
         async with test_db_engine.connect() as conn:
-            wc = WorkspaceController(conn, mock_leader, mock_notify, mock_ic, mock_sp)
+            wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
             await wc.tick()
 
         # Assert: Check DB state
@@ -129,10 +128,10 @@ class TestWCReconcile:
         mock_ic.start.return_value = None
         mock_sp = AsyncMock()
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         async with test_db_engine.connect() as conn:
-            wc = WorkspaceController(conn, mock_leader, mock_notify, mock_ic, mock_sp)
+            wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
             await wc.tick()
 
         async with AsyncSession(test_db_engine) as session:
@@ -187,10 +186,10 @@ class TestWCReconcile:
         mock_ic.delete.return_value = None
         mock_sp = AsyncMock()
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         async with test_db_engine.connect() as conn:
-            wc = WorkspaceController(conn, mock_leader, mock_notify, mock_ic, mock_sp)
+            wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
             await wc.tick()
 
         async with AsyncSession(test_db_engine) as session:
@@ -244,10 +243,10 @@ class TestWCReconcile:
         mock_ic = AsyncMock()
         mock_sp = AsyncMock()
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         async with test_db_engine.connect() as conn:
-            wc = WorkspaceController(conn, mock_leader, mock_notify, mock_ic, mock_sp)
+            wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
             await wc.tick()
 
         # No operations should be called
@@ -286,10 +285,10 @@ class TestWCReconcile:
         mock_sp = AsyncMock()
         mock_sp.create_empty_archive.return_value = "test-ws-wc-005/op-123/home.tar.zst"
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         async with test_db_engine.connect() as conn:
-            wc = WorkspaceController(conn, mock_leader, mock_notify, mock_ic, mock_sp)
+            wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
             await wc.tick()
 
         async with AsyncSession(test_db_engine) as session:
@@ -340,10 +339,10 @@ class TestWCReconcile:
         mock_sp = AsyncMock()
         mock_sp.delete_volume.return_value = None
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         async with test_db_engine.connect() as conn:
-            wc = WorkspaceController(conn, mock_leader, mock_notify, mock_ic, mock_sp)
+            wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
             await wc.tick()
 
         async with AsyncSession(test_db_engine) as session:
@@ -421,11 +420,11 @@ class TestPhaseChangedAt:
         mock_ic.start.return_value = None
         mock_sp = AsyncMock()
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         # Run tick - phase should change from STANDBY to RUNNING
         async with test_db_engine.connect() as conn:
-            wc = WorkspaceController(conn, mock_leader, mock_notify, mock_ic, mock_sp)
+            wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
             await wc.tick()
 
         # Check phase_changed_at was set
@@ -484,11 +483,11 @@ class TestPhaseChangedAt:
         mock_ic = AsyncMock()
         mock_sp = AsyncMock()
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         # Run tick - phase should stay RUNNING (already converged)
         async with test_db_engine.connect() as conn:
-            wc = WorkspaceController(conn, mock_leader, mock_notify, mock_ic, mock_sp)
+            wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
             await wc.tick()
 
         # Check phase_changed_at was NOT modified
@@ -583,10 +582,10 @@ class TestWCLoadWorkspaces:
         mock_ic = AsyncMock()
         mock_sp = AsyncMock()
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
 
         async with test_db_engine.connect() as conn:
-            wc = WorkspaceController(conn, mock_leader, mock_notify, mock_ic, mock_sp)
+            wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
             workspaces = await wc._load_for_reconcile()
 
         ws_ids = [ws.id for ws in workspaces]

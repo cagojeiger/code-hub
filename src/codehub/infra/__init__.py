@@ -19,18 +19,7 @@ from codehub.infra.postgresql import (
 )
 from codehub.infra.redis import close_redis, get_redis, init_redis
 from codehub.infra.redis_kv import ActivityStore, get_activity_store
-from codehub.infra.redis_pubsub import (
-    NotifyPublisher,
-    NotifySubscriber,
-    WakeTarget,
-    get_publisher,
-    init_publisher,
-)
-from codehub.infra.redis_streams import (
-    SSEStreamPublisher,
-    SSEStreamReader,
-    get_sse_publisher,
-)
+from codehub.infra.redis_pubsub import ChannelPublisher, ChannelSubscriber
 
 __all__ = [
     # Cache
@@ -51,16 +40,10 @@ __all__ = [
     "init_redis",
     "close_redis",
     "get_redis",
-    "init_publisher",
-    "get_publisher",
-    "get_sse_publisher",
     "get_activity_store",
     # Redis - classes
-    "WakeTarget",
-    "NotifyPublisher",
-    "NotifySubscriber",
-    "SSEStreamPublisher",
-    "SSEStreamReader",
+    "ChannelPublisher",
+    "ChannelSubscriber",
     "ActivityStore",
     # Storage
     "init_storage",

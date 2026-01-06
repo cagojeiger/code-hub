@@ -90,20 +90,20 @@ class TestTTLManagerSync:
 
         # Mock dependencies
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
         mock_activity = AsyncMock()
         mock_activity.scan_all.return_value = {ws_id: now_ts}
         mock_activity.delete = AsyncMock()
-        mock_wake = AsyncMock()
+        mock_publisher = AsyncMock()
 
         # Act: _sync_to_db() 실행 (실제 SQL 실행)
         async with test_db_engine.connect() as conn:
             ttl = TTLManager(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_activity,
-                mock_wake,
+                mock_publisher,
             )
             synced = await ttl._sync_to_db()
             await conn.commit()
@@ -124,18 +124,18 @@ class TestTTLManagerSync:
     ):
         """TTL-INT-002: activity가 없을 때 SQL 실행 안 함."""
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
         mock_activity = AsyncMock()
         mock_activity.scan_all.return_value = {}  # Empty
-        mock_wake = AsyncMock()
+        mock_publisher = AsyncMock()
 
         async with test_db_engine.connect() as conn:
             ttl = TTLManager(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_activity,
-                mock_wake,
+                mock_publisher,
             )
             synced = await ttl._sync_to_db()
 
@@ -173,20 +173,20 @@ class TestTTLManagerSync:
         activities = {ws_id: now_ts + i for i, ws_id in enumerate(ws_ids)}
 
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
         mock_activity = AsyncMock()
         mock_activity.scan_all.return_value = activities
         mock_activity.delete = AsyncMock()
-        mock_wake = AsyncMock()
+        mock_publisher = AsyncMock()
 
         # Act
         async with test_db_engine.connect() as conn:
             ttl = TTLManager(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_activity,
-                mock_wake,
+                mock_publisher,
             )
             synced = await ttl._sync_to_db()
             await conn.commit()
@@ -264,19 +264,19 @@ class TestTTLManagerStandbyTTL:
         ws_id = expired_workspace.id
 
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
         mock_activity = AsyncMock()
         mock_activity.scan_all.return_value = {}
-        mock_wake = AsyncMock()
+        mock_publisher = AsyncMock()
 
         # Act
         async with test_db_engine.connect() as conn:
             ttl = TTLManager(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_activity,
-                mock_wake,
+                mock_publisher,
             )
             # Override TTL to ensure test passes (1 second)
             ttl._standby_ttl = 1
@@ -319,18 +319,18 @@ class TestTTLManagerStandbyTTL:
             await session.commit()
 
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
         mock_activity = AsyncMock()
         mock_activity.scan_all.return_value = {}
-        mock_wake = AsyncMock()
+        mock_publisher = AsyncMock()
 
         async with test_db_engine.connect() as conn:
             ttl = TTLManager(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_activity,
-                mock_wake,
+                mock_publisher,
             )
             ttl._standby_ttl = 1
             expired = await ttl._check_standby_ttl()
@@ -407,18 +407,18 @@ class TestTTLManagerArchiveTTL:
         ws_id = standby_workspace.id
 
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
         mock_activity = AsyncMock()
         mock_activity.scan_all.return_value = {}
-        mock_wake = AsyncMock()
+        mock_publisher = AsyncMock()
 
         async with test_db_engine.connect() as conn:
             ttl = TTLManager(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_activity,
-                mock_wake,
+                mock_publisher,
             )
             # Override TTL to ensure test passes (1 second)
             ttl._archive_ttl = 1
@@ -460,18 +460,18 @@ class TestTTLManagerArchiveTTL:
             await session.commit()
 
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
         mock_activity = AsyncMock()
         mock_activity.scan_all.return_value = {}
-        mock_wake = AsyncMock()
+        mock_publisher = AsyncMock()
 
         async with test_db_engine.connect() as conn:
             ttl = TTLManager(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_activity,
-                mock_wake,
+                mock_publisher,
             )
             ttl._archive_ttl = 1
             expired = await ttl._check_archive_ttl()
@@ -549,27 +549,27 @@ class TestTTLManagerTick:
             await session.commit()
 
         mock_leader = AsyncMock()
-        mock_notify = AsyncMock()
+        mock_subscriber = AsyncMock()
         mock_activity = AsyncMock()
         mock_activity.scan_all.return_value = {}
         mock_activity.delete = AsyncMock()
-        mock_wake = AsyncMock()
+        mock_publisher = AsyncMock()
 
         # Act
         async with test_db_engine.connect() as conn:
             ttl = TTLManager(
                 conn,
                 mock_leader,
-                mock_notify,
+                mock_subscriber,
                 mock_activity,
-                mock_wake,
+                mock_publisher,
             )
             ttl._standby_ttl = 1
             ttl._archive_ttl = 1
             await ttl.tick()
 
-        # Assert: wake_wc called (since workspaces expired)
-        mock_wake.wake_wc.assert_called_once()
+        # Assert: publish called (since workspaces expired)
+        mock_publisher.publish.assert_called_once()
 
         # Assert: DB states updated
         async with AsyncSession(test_db_engine) as session:

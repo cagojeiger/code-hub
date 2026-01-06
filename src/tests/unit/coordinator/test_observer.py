@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from codehub.core.interfaces.leader import LeaderElection
-from codehub.infra.redis_pubsub import NotifySubscriber
+from codehub.infra.redis_pubsub import ChannelSubscriber
 from codehub.control.coordinator.observer import BulkObserver, ObserverCoordinator
 from codehub.core.interfaces.instance import ContainerInfo, InstanceController
 from codehub.core.interfaces.storage import StorageProvider, VolumeInfo
@@ -89,19 +89,19 @@ def mock_leader() -> MagicMock:
 
 
 @pytest.fixture
-def mock_notify() -> MagicMock:
-    return MagicMock(spec=NotifySubscriber)
+def mock_subscriber() -> MagicMock:
+    return MagicMock(spec=ChannelSubscriber)
 
 
 @pytest.fixture
 def coordinator(
     mock_conn: MagicMock,
     mock_leader: MagicMock,
-    mock_notify: MagicMock,
+    mock_subscriber: MagicMock,
     mock_ic: AsyncMock,
     mock_sp: AsyncMock,
 ) -> ObserverCoordinator:
-    return ObserverCoordinator(mock_conn, mock_leader, mock_notify, mock_ic, mock_sp)
+    return ObserverCoordinator(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
 
 
 class TestObserverTick:
