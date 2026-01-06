@@ -20,13 +20,9 @@ class Workspace(SQLModel, table=True):
 
     __tablename__ = "workspaces"
 
-    # Primary key
-    id: str = Field(primary_key=True)  # UUID
-
-    # Foreign keys
+    id: str = Field(primary_key=True)
     owner_user_id: str = Field(foreign_key="users.id", index=True)
 
-    # Basic fields
     name: str = Field(max_length=255)
     description: str | None = Field(default=None, max_length=500)
     memo: str | None = Field(default=None, sa_column=Column(Text))
@@ -36,7 +32,6 @@ class Workspace(SQLModel, table=True):
     home_store_key: str = Field(max_length=512)  # codehub-ws-{id}-home
     home_ctx: dict | None = Field(default=None, sa_column=Column(JSONB))
 
-    # M2 state fields
     conditions: dict = Field(
         default_factory=dict,
         sa_column=Column(JSONB, nullable=False, server_default="{}"),
@@ -61,7 +56,6 @@ class Workspace(SQLModel, table=True):
     error_reason: str | None = None  # ErrorReason enum value
     error_count: int = Field(default=0)
 
-    # Timestamps
     created_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     updated_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     deleted_at: datetime | None = Field(

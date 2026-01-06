@@ -17,14 +17,8 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 
-# Default image from settings
 _settings = get_settings()
 _default_image = _settings.docker.default_image
-
-
-# =============================================================================
-# Request/Response Models
-# =============================================================================
 
 
 class CreateWorkspaceRequest(BaseModel):
@@ -78,19 +72,9 @@ class WorkspaceListResponse(BaseModel):
     total: int
 
 
-# =============================================================================
-# Helper
-# =============================================================================
-
-
 def _to_response(ws) -> WorkspaceResponse:
     """Convert workspace model to response."""
     return WorkspaceResponse.model_validate(ws)
-
-
-# =============================================================================
-# Endpoints
-# =============================================================================
 
 
 @router.post("", response_model=WorkspaceResponse, status_code=201)

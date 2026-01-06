@@ -45,7 +45,6 @@ async def close_redis() -> None:
         _client = None
         logger.info("Redis disconnected")
 
-        # Reset dependent modules
         from codehub.infra.redis_kv import reset_activity_store
 
         reset_activity_store()

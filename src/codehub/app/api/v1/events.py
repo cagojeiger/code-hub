@@ -71,11 +71,9 @@ async def _event_generator(
         yield "event: connected\ndata: {}\n\n"
 
         while True:
-            # Check if client disconnected
             if await request.is_disconnected():
                 break
 
-            # Read message using ChannelSubscriber (PUB/SUB)
             try:
                 payload = await subscriber.get_message(timeout=1.0)
             except Exception as e:
@@ -89,13 +87,10 @@ async def _event_generator(
                     data = json.loads(payload)
                     workspace_id = data.get("id")
 
-                    # Check if deleted (deleted_at is set)
                     if data.get("deleted_at"):
-                        # Deleted - always send, remove from dedup cache
                         last_sent_state.pop(workspace_id, None)
                         yield f"event: workspace\ndata: {payload}\n\n"
                     else:
-                        # Update - apply deduplication
                         current_state = (
                             data.get("phase"),
                             data.get("operation"),
@@ -107,14 +102,12 @@ async def _event_generator(
                         if last_sent_state.get(workspace_id) == current_state:
                             continue
 
-                        # Update cache and send
                         last_sent_state[workspace_id] = current_state
                         yield f"event: workspace\ndata: {payload}\n\n"
 
                 except json.JSONDecodeError as e:
                     logger.warning("[SSE] Invalid JSON in message: %s", e)
 
-            # Send heartbeat
             now = loop.time()
             if now - last_heartbeat >= _sse_config.heartbeat_interval:
                 yield "event: heartbeat\ndata: {}\n\n"

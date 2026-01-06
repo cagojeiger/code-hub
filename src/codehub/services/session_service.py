@@ -148,7 +148,6 @@ class SessionService:
         Returns:
             True if session is valid
         """
-        # Check if revoked
         if session.revoked_at is not None:
             return False
 
@@ -161,5 +160,4 @@ class SessionService:
         if expires_at.tzinfo is not None:
             expires_at = expires_at.replace(tzinfo=None)
 
-        # Check if expired (expires_at must be in the future)
         return expires_at > now

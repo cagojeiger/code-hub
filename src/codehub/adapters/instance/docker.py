@@ -61,10 +61,8 @@ class DockerInstanceController(InstanceController):
         """Start container for workspace."""
         container_name = self._container_name(workspace_id)
 
-        # Check if container already exists
         existing = await self._containers.inspect(container_name)
         if existing:
-            # Container exists, just start it
             await self._containers.start(container_name)
             logger.info("Started existing container: %s", container_name)
             return
@@ -73,7 +71,6 @@ class DockerInstanceController(InstanceController):
         image = image_ref or self._config.default_image
         await self._images.ensure(image)
 
-        # Create new container with full configuration
         port = self._config.container_port
         config = ContainerConfig(
             image=image,
@@ -98,8 +95,6 @@ class DockerInstanceController(InstanceController):
 
         # Stop first (ignore errors if not running)
         await self._containers.stop(container_name)
-
-        # Remove container
         await self._containers.remove(container_name)
 
     async def is_running(self, workspace_id: str) -> bool:

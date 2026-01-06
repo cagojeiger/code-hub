@@ -29,9 +29,9 @@ T = TypeVar("T")
 class CircuitState(Enum):
     """Circuit breaker states."""
 
-    CLOSED = "closed"  # Normal operation
-    OPEN = "open"  # Circuit tripped, fail fast
-    HALF_OPEN = "half_open"  # Testing recovery
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
 
 
 class CircuitOpenError(Exception):
@@ -166,10 +166,6 @@ class CircuitBreaker:
                     )
                     self._state = CircuitState.OPEN
 
-
-# =============================================================================
-# Global singleton instances
-# =============================================================================
 
 _circuit_breakers: dict[str, CircuitBreaker] = {}
 

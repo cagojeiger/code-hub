@@ -15,7 +15,6 @@ from codehub.core.errors import (
 )
 from codehub.core.models import Workspace
 
-# Load settings once at module level
 _settings = get_settings()
 
 
@@ -320,15 +319,12 @@ async def request_start(
     """
     workspace = await get_workspace(db, workspace_id, user_id)
 
-    # Idempotent: already starting
     if workspace.desired_state == DesiredState.RUNNING.value:
         return workspace
 
-    # Check running limit
     if not await _can_start_workspace(db, user_id):
         raise RunningLimitExceededError()
 
-    # Update desired_state
     workspace.desired_state = DesiredState.RUNNING.value
     workspace.updated_at = datetime.now(UTC)
 

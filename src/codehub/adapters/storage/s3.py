@@ -124,7 +124,7 @@ class S3StorageProvider(StorageProvider):
                 if len(parts) < 3:
                     continue
 
-                ws_prefix_part = parts[0]  # ws-{workspace_id}
+                ws_prefix_part = parts[0]
                 if not ws_prefix_part.startswith(prefix):
                     continue
 
@@ -145,11 +145,10 @@ class S3StorageProvider(StorageProvider):
             )
             return results
 
-        # Find latest archive per workspace (in memory)
+        # Find latest archive per workspace
         for workspace_id, archives in workspace_archives.items():
             if not archives:
                 continue
-            # Sort by last_modified descending
             archives.sort(key=lambda x: x[1], reverse=True)
             latest_key = archives[0][0]
 

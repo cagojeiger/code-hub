@@ -48,8 +48,6 @@ class ActivityStore:
         if not activities:
             return
 
-        # ZADD key GT score member [score member ...]
-        # GT: Only update if new score > existing score
         await self._client.zadd(ACTIVITY_KEY, activities, gt=True)
         logger.debug("Activity ZADD GT %d workspaces", len(activities))
 
@@ -61,7 +59,6 @@ class ActivityStore:
 
         Complexity: O(1) RTT regardless of N workspaces.
         """
-        # ZRANGE key 0 -1 WITHSCORES -> [(member, score), ...]
         items = await self._client.zrange(ACTIVITY_KEY, 0, -1, withscores=True)
         return dict(items)
 
@@ -77,7 +74,6 @@ class ActivityStore:
         if not workspace_ids:
             return 0
 
-        # ZREM key member [member ...]
         count = await self._client.zrem(ACTIVITY_KEY, *workspace_ids)
         logger.debug("Activity ZREM %d members", count)
         return count
@@ -93,7 +89,6 @@ class ActivityStore:
         Returns:
             List of workspace IDs.
         """
-        # ZRANGEBYSCORE key -inf cutoff
         return await self._client.zrangebyscore(
             ACTIVITY_KEY, min="-inf", max=cutoff_timestamp
         )

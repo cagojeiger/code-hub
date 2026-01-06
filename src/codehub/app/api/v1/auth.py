@@ -63,7 +63,6 @@ async def login(
     if user is None:
         raise UnauthorizedError("Invalid username or password")
 
-    # Check if account is locked
     now = datetime.now(UTC)
     if user.locked_until:
         # Ensure timezone-aware comparison
@@ -79,13 +78,10 @@ async def login(
                 message=f"Too many failed attempts. Try again in {retry_after} seconds.",
             )
 
-    # Verify password
     if not verify_password(body.password, user.password_hash):
-        # Record failed attempt
         user.failed_login_attempts += 1
         user.last_failed_at = now
 
-        # Calculate and set lockout if threshold exceeded
         lockout_seconds = calculate_lockout_duration(user.failed_login_attempts)
         if lockout_seconds > 0:
             user.locked_until = now + timedelta(seconds=lockout_seconds)
@@ -93,7 +89,6 @@ async def login(
         await db.commit()
         raise UnauthorizedError("Invalid username or password")
 
-    # Login successful - reset rate limiting fields
     user.failed_login_attempts = 0
     user.locked_until = None
     user.last_failed_at = None

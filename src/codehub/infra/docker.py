@@ -107,7 +107,6 @@ class DockerClient:
     def _create_client(self) -> httpx.AsyncClient:
         """Create a new HTTP client."""
         if self._host.startswith("unix://"):
-            # Unix socket
             socket_path = self._host.replace("unix://", "")
             transport = httpx.AsyncHTTPTransport(uds=socket_path)
             return httpx.AsyncClient(
@@ -116,7 +115,6 @@ class DockerClient:
                 timeout=_docker_config.api_timeout,
             )
         else:
-            # TCP (docker-proxy)
             base_url = self._host
             if base_url.startswith("tcp://"):
                 base_url = base_url.replace("tcp://", "http://")
@@ -403,7 +401,6 @@ class VolumeAPI:
         client = await self._docker.get()
         resp = await client.post("/volumes/create", json=config.to_api())
         if resp.status_code == 409:
-            # Volume already exists
             logger.debug("Volume already exists: %s", config.name)
             return
         resp.raise_for_status()
