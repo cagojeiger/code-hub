@@ -44,8 +44,7 @@
 | **archive_key** | VARCHAR(512) | YES | NULL | Archive 경로 |
 | **observed_at** | TIMESTAMP | YES | NULL | 마지막 관측 시점 |
 | **last_access_at** | TIMESTAMP | YES | NULL | 마지막 접속 시각 |
-| **standby_ttl_seconds** | INT | NO | 300 | RUNNING→STANDBY TTL |
-| **archive_ttl_seconds** | INT | NO | 86400 | STANDBY→ARCHIVED TTL |
+| **phase_changed_at** | TIMESTAMP | YES | NULL | phase 변경 시각 (TTL 계산용) |
 | **error_reason** | VARCHAR(50) | YES | NULL | 에러 분류 코드 |
 | **error_count** | INT | NO | 0 | 연속 실패 횟수 |
 | created_at | TIMESTAMP | NO | NOW() | 생성 시각 |
@@ -184,6 +183,7 @@
 | conditions | Condition 상태 (JSONB) |
 | observed_at | 마지막 관측 시점 |
 | phase | 파생 상태 (conditions에서 계산, 인덱스용 캐시) |
+| phase_changed_at | phase 변경 시각 (TTL 계산용) |
 | operation | 진행 중인 작업 |
 | op_started_at | operation 시작 시점 |
 | op_id | 작업 고유 ID |
@@ -198,11 +198,11 @@
 |------|------|
 | desired_state | 목표 상태 (API만 변경 가능) |
 | deleted_at | Soft Delete 시각 |
-| standby_ttl_seconds | RUNNING→STANDBY TTL |
-| archive_ttl_seconds | STANDBY→ARCHIVED TTL |
 | last_access_at | 마지막 접속 시각 |
 
 > **desired_state 단일 소유자**: TTL Manager/Proxy(Auto-wake)는 내부 서비스 레이어를 통해 API 호출
+>
+> **TTL 설정**: 워크스페이스별 TTL 컬럼은 제거됨. 환경변수 기반 TtlConfig 사용 (TTL_STANDBY_SECONDS, TTL_ARCHIVE_SECONDS)
 
 ---
 
@@ -251,7 +251,6 @@ is_terminal = error_reason in TERMINAL_REASONS or error_count >= MAX_RETRY
 | idx_workspaces_user_running | 사용자별 RUNNING 제한 | `owner_user_id, phase = RUNNING` |
 | idx_workspaces_running | 전역 RUNNING 카운트 | `phase = RUNNING` |
 | idx_workspaces_error | ERROR 상태 조회 | `phase = ERROR` |
-| idx_workspaces_archived | ARCHIVED 상태 조회 | `phase = ARCHIVED` |
 
 > 모든 인덱스는 `deleted_at IS NULL` 조건 포함
 > **phase 캐시 활용**: JSONB 쿼리 대신 phase ENUM 인덱스 사용

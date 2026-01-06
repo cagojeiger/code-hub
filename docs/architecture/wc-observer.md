@@ -75,9 +75,9 @@ flowchart TB
 
 | 모드 | 주기 | 조건 |
 |------|------|------|
-| Idle | 10s | - |
-| Active | 2s | - |
-| Hint | 즉시 | Redis `ob:wake` 수신 |
+| Idle | 15s | (`COORDINATOR_IDLE_INTERVAL`) |
+| Active | 1s | (`COORDINATOR_ACTIVE_INTERVAL`) |
+| Hint | 즉시 | Redis `codehub:wake:ob` 수신 |
 
 ---
 
@@ -85,8 +85,8 @@ flowchart TB
 
 | Channel | Publisher | Subscriber | 동작 |
 |---------|-----------|------------|------|
-| `ob:wake` | API, Proxy | Observer | 즉시 관측 |
-| `wc:wake` | Observer | WC | conditions 저장 후 WC 깨움 |
+| `codehub:wake:ob` | EventListener | Observer | 즉시 관측 |
+| `codehub:wake:wc` | EventListener, Observer | WC | conditions 저장 후 WC 깨움 |
 
 ---
 
@@ -110,5 +110,5 @@ flowchart TB
 ## 참조
 
 - [wc.md](./wc.md) - WC 전체 설계
-- [00-contracts.md](../spec_v2/00-contracts.md) - 계약 #1 (Reality vs DB), #3 (Single Writer)
-- [04-control-plane.md](../spec_v2/04-control-plane.md) - Coordinator 정의
+- [00-contracts.md](../spec/00-contracts.md) - 계약 #1 (Reality vs DB), #3 (Single Writer)
+- [04-control-plane.md](../spec/04-control-plane.md) - Coordinator 정의

@@ -34,11 +34,13 @@ Coordinator는 모든 백그라운드 프로세스를 관리하는 **단일 리�
 flowchart TB
     subgraph Coordinator["Coordinator Process<br/>(pg_advisory_lock 보유)"]
         EL["EventListener<br/>(실시간)"]
-        WC["WorkspaceController<br/>(10s 주기)"]
-        TTL["TTL Manager<br/>(1m 주기)"]
-        GC["Archive GC<br/>(1h 주기)"]
+        WC["WorkspaceController<br/>(idle=15s, active=1s)"]
+        TTL["TTL Manager<br/>(60s 주기)"]
+        GC["Archive GC<br/>(4h 주기)"]
     end
 ```
+
+> **설정 위치**: `CoordinatorConfig` (config.py) - 환경변수로 오버라이드 가능
 
 ### 컴포넌트 역할
 
@@ -110,10 +112,12 @@ WorkspaceController는 리소스 **관측**, 상태 **판정**, 상태 **수렴*
 
 ### 주기
 
-| 상태 | 주기 | 이유 |
-|------|------|------|
-| 기본 | 10s | 일반 폴링 |
-| operation != NONE | 2s | 적응형 (빠른 완료 감지) |
+| 상태 | 환경변수 | 기본값 | 이유 |
+|------|----------|--------|------|
+| idle | `COORDINATOR_IDLE_INTERVAL` | 15s | 일반 폴링 |
+| active | `COORDINATOR_ACTIVE_INTERVAL` | 1s | 적응형 (빠른 완료 감지) |
+
+> **활성화 조건**: wake 수신 또는 operation != NONE 시 `active_duration` (30s) 동안 active 모드 유지
 
 ### Reconcile 흐름
 
@@ -252,14 +256,16 @@ TTL Manager는 비활성 워크스페이스의 TTL을 체크하고 desired_state
 
 ### TTL 종류
 
-| TTL | 대상 Phase | 기준 컬럼 | 기본값 | 동작 |
-|-----|-----------|----------|--------|------|
-| standby_ttl | RUNNING | last_access_at | 3시간 | desired_state = STANDBY |
-| archive_ttl | STANDBY | phase_changed_at | 24시간 | desired_state = ARCHIVED |
+| TTL | 대상 Phase | 기준 컬럼 | 환경변수 | 기본값 | 동작 |
+|-----|-----------|----------|----------|--------|------|
+| standby_ttl | RUNNING | last_access_at | `TTL_STANDBY_SECONDS` | 600초 (10분) | desired_state = STANDBY |
+| archive_ttl | STANDBY | phase_changed_at | `TTL_ARCHIVE_SECONDS` | 1800초 (30분) | desired_state = ARCHIVED |
+
+> **프로덕션 권장**: standby=10800초 (3시간), archive=86400초 (24시간)
 
 ### 입출력
 
-**읽기**: DB (phase, operation, last_access_at, phase_changed_at, TTL 컬럼), Redis (last_access:*)
+**읽기**: DB (phase, operation, last_access_at, phase_changed_at), Redis (codehub:activity ZSET)
 
 **쓰기**: DB (last_access_at - Redis 동기화), DB (desired_state - TTL 만료 시)
 
@@ -296,7 +302,7 @@ sequenceDiagram
     participant B as Browser
     participant P as Proxy
     participant M as Memory Buffer
-    participant R as Redis
+    participant R as Redis (ZSET)
     participant D as DB
     participant T as TTL Manager
 
@@ -304,25 +310,27 @@ sequenceDiagram
     P->>M: record(workspace_id)
     Note over M: 즉시 (dict 덮어쓰기)
 
-    loop 30초마다
-        M->>R: MSET last_access:*
+    loop 30초마다 (ActivityConfig.flush_interval)
+        M->>R: ZADD codehub:activity GT ws1 ts1 ws2 ts2 ...
         Note over M: 버퍼 비우기
     end
 
-    loop 60초마다
-        T->>R: SCAN last_access:*
-        R-->>T: {ws_id: timestamp}
-        T->>D: UPDATE last_access_at
-        T->>R: DEL last_access:*
+    loop 60초마다 (CoordinatorConfig.ttl_interval)
+        T->>R: ZRANGE codehub:activity 0 -1 WITHSCORES
+        R-->>T: [(ws_id, timestamp), ...]
+        T->>D: UPDATE last_access_at WHERE id IN (...)
+        T->>R: ZREM codehub:activity ws1 ws2 ...
     end
 ```
+
+> **ZSET 패턴**: score=timestamp로 자동 정렬, GT 옵션으로 동일 ws_id는 최신 timestamp만 유지
 
 ### 3단계 버퍼링
 
 | 단계 | 주기 | 동작 |
 |------|------|------|
 | 1. 메모리 | 즉시 | WebSocket 메시지/HTTP 요청 시 record() |
-| 2. Redis | 30초 | 메모리 → Redis MSET |
+| 2. Redis | 30초 | 메모리 → Redis ZADD (ZSET) |
 | 3. DB | 60초 | Redis → DB last_access_at UPDATE |
 
 ### 활동으로 감지되는 행동
@@ -337,10 +345,12 @@ sequenceDiagram
 
 ### TTL 기본값
 
-| TTL | 기본값 | 의미 |
-|-----|--------|------|
-| standby_ttl | 3시간 | 마지막 활동 후 STANDBY 전환 |
-| archive_ttl | 24시간 | STANDBY 후 ARCHIVED 전환 |
+| TTL | 환경변수 | 기본값 | 프로덕션 권장 | 의미 |
+|-----|----------|--------|--------------|------|
+| standby_ttl | `TTL_STANDBY_SECONDS` | 600초 (10분) | 10800초 (3시간) | 마지막 활동 후 STANDBY 전환 |
+| archive_ttl | `TTL_ARCHIVE_SECONDS` | 1800초 (30분) | 86400초 (24시간) | STANDBY 후 ARCHIVED 전환 |
+
+> **설정 위치**: `TtlConfig` (config.py) - 환경변수로 오버라이드 가능
 
 ### 설계 결정
 
@@ -349,7 +359,7 @@ sequenceDiagram
 | 항목 | ws_conn (연결 수) | last_access_at (timestamp) |
 |------|------------------|---------------------------|
 | Redis 재시작 | 데이터 손실 위험 | DB에 영속 보장 |
-| 복잡도 | INCR/DECR + idle timer | 단순 덮어쓰기 |
+| 복잡도 | INCR/DECR + idle timer | ZSET 단일 키 |
 | 정확도 | 실시간 | 최대 90초 지연 |
 
 > **선택**: 안정성과 단순함을 위해 last_access_at 방식 채택
@@ -360,7 +370,7 @@ sequenceDiagram
 
 상태 변경 시 UI에 실시간 알림을 전달합니다 (CDC 패턴).
 
-> **상세 아키텍처**: [docs/architecture_v2/event-listener.md](../architecture_v2/event-listener.md)
+> **상세 아키텍처**: [event-listener.md](../architecture/event-listener.md)
 
 ### 이벤트 전달 흐름
 
@@ -376,7 +386,7 @@ sequenceDiagram
     W->>DB: UPDATE workspaces SET ...
     Note over DB: Trigger 실행
     DB-->>EL: pg_notify('ws_sse', ...)
-    EL->>Redis: PUBLISH events:{user_id}
+    EL->>Redis: PUBLISH codehub:sse:{user_id}
     Redis-->>SSE: 메시지 수신
     SSE-->>UI: workspace_updated
 ```
@@ -385,9 +395,11 @@ sequenceDiagram
 
 | 채널 | 트리거 칼럼 | 목적 | Redis 채널 |
 |------|------------|------|-----------|
-| ws_sse | phase, operation, error_reason | UI 실시간 업데이트 | events:{user_id} |
-| ws_wake | desired_state | Coordinator 즉시 깨우기 | ob:wake, wc:wake |
-| ws_deleted | deleted_at (NULL→NOT NULL) | 삭제 알림 | events:{user_id} |
+| ws_sse | phase, operation, error_reason | UI 실시간 업데이트 | codehub:sse:{user_id} |
+| ws_wake | desired_state | Coordinator 즉시 깨우기 | codehub:wake:ob, codehub:wake:wc |
+| ws_deleted | deleted_at (NULL→NOT NULL) | 삭제 알림 | codehub:sse:{user_id} |
+
+> **채널 설정**: `RedisChannelConfig` (config.py) - `REDIS_CHANNEL_SSE_PREFIX`, `REDIS_CHANNEL_WAKE_PREFIX`
 
 ### SSE 엔드포인트
 

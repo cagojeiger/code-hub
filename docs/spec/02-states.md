@@ -387,8 +387,11 @@ sequenceDiagram
 
 | 전환 | TTL | 동작 |
 |------|-----|------|
-| RUNNING → STANDBY | standby_ttl (5분) | API 호출 |
-| STANDBY → ARCHIVED | archive_ttl (1일) | API 호출 |
+| RUNNING → STANDBY | TTL_STANDBY_SECONDS (기본: 10분) | API 호출 |
+| STANDBY → ARCHIVED | TTL_ARCHIVE_SECONDS (기본: 30분) | API 호출 |
+
+> **설정**: 환경변수 기반 TtlConfig 사용 (워크스페이스별 TTL 미지원)
+> **계산 기준**: phase_changed_at 컬럼 사용
 
 ---
 

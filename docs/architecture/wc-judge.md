@@ -65,7 +65,7 @@ archive_ready ────┘
 |------|--------|------|
 | container_ready ∧ !volume_ready | ContainerWithoutVolume | 계약 #6 위반 |
 
-> **Spec 참조**: [03-schema.md#policy.healthy=false 조건](../spec_v2/03-schema.md#policyhealthyfalse-조건)
+> **Spec 참조**: [03-schema.md#policy.healthy=false 조건](../spec/03-schema.md#policyhealthyfalse-조건)
 
 ---
 
@@ -143,7 +143,7 @@ ERROR는 **두 경로**에서 발생합니다.
 | ContainerWithoutVolume | container ∧ !volume | 관측 직후 |
 
 > **즉시 ERROR**: 관측 결과만으로 판단, 작업 시도 없이 ERROR
-> **Spec 참조**: [03-schema.md#policy.healthy=false 조건](../spec_v2/03-schema.md#policyhealthyfalse-조건)
+> **Spec 참조**: [03-schema.md#policy.healthy=false 조건](../spec/03-schema.md#policyhealthyfalse-조건)
 
 ### 경로 2: Control (작업 실패)
 
@@ -151,7 +151,7 @@ Control 단계에서 operation 실행 중 실패 시 ERROR로 전환됩니다.
 
 - Timeout, RetryExceeded, ActionFailed, ImagePullFailed 등
 - **상세**: [wc-control.md](./wc-control.md) 참조
-- **Spec 참조**: [03-schema.md#error_reason 값](../spec_v2/03-schema.md#error_reason-값)
+- **Spec 참조**: [03-schema.md#error_reason 값](../spec/03-schema.md#error_reason-값)
 
 ### ERROR 결정 주체 비교
 
@@ -253,7 +253,7 @@ Control 단계에서 operation 실행 중 실패 시 ERROR로 전환됩니다.
 
 - [wc.md](./wc.md) - 전체 Reconcile Loop
 - [wc-control.md](./wc-control.md) - Control 단계 (ERROR 경로 2 상세)
-- [00-contracts.md](../spec_v2/00-contracts.md) - 핵심 계약 (#1, #6)
-- [02-states.md](../spec_v2/02-states.md) - Phase 정의, calculate_phase()
-- [03-schema.md](../spec_v2/03-schema.md) - policy.healthy, error_reason 정의
-- [04-control-plane.md](../spec_v2/04-control-plane.md) - ERROR 전환 규칙
+- [00-contracts.md](../spec/00-contracts.md) - 핵심 계약 (#1, #6)
+- [02-states.md](../spec/02-states.md) - Phase 정의, calculate_phase()
+- [03-schema.md](../spec/03-schema.md) - policy.healthy, error_reason 정의
+- [04-control-plane.md](../spec/04-control-plane.md) - ERROR 전환 규칙

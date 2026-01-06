@@ -37,7 +37,7 @@ TTL Manager는 두 가지 TTL을 관리합니다:
 sequenceDiagram
     participant P as Proxy
     participant M as Memory Buffer
-    participant R as Redis
+    participant R as Redis (ZSET)
     participant D as DB
     participant T as TTL Manager
 
@@ -46,14 +46,16 @@ sequenceDiagram
     Note right of M: _buffer[ws_id] = now()
 
     Note over M,R: 2. Memory → Redis (30초)
-    M->>R: MSET last_access:ws1 ts1<br/>last_access:ws2 ts2 ...
+    M->>R: ZADD codehub:activity GT ws1 ts1 ws2 ts2 ...
     M->>M: clear buffer
 
     Note over R,D: 3. Redis → DB (60초, TTL Manager)
-    T->>R: SCAN last_access:*
+    T->>R: ZRANGE codehub:activity 0 -1 WITHSCORES
     T->>D: UPDATE last_access_at<br/>WHERE id IN (...)
-    T->>R: DEL last_access:*
+    T->>R: ZREM codehub:activity ws1 ws2 ...
 ```
+
+> **ZSET 패턴**: score=timestamp로 자동 정렬, 동일 ws_id는 최신 timestamp로 덮어쓰기
 
 ### TTL Check Flow
 
@@ -86,32 +88,38 @@ flowchart LR
 ### standby_ttl (RUNNING → STANDBY)
 
 ```sql
-SELECT id FROM workspaces
+UPDATE workspaces
+SET desired_state = 'STANDBY'
 WHERE phase = 'RUNNING'
   AND operation = 'NONE'
   AND deleted_at IS NULL
-  AND NOW() - last_access_at > make_interval(secs := standby_ttl_seconds)
+  AND NOW() - last_access_at > make_interval(secs := :ttl_standby_seconds)
+RETURNING id
 ```
 
 | 필드 | 설명 |
 |------|------|
 | `last_access_at` | 마지막 활동 시점 (Proxy → Buffer → DB) |
-| `standby_ttl_seconds` | 유휴 허용 시간 (기본: 300초) |
+| `TTL_STANDBY_SECONDS` | 환경변수 (기본: 600초 = 10분) |
 
 ### archive_ttl (STANDBY → ARCHIVED)
 
 ```sql
-SELECT id FROM workspaces
+UPDATE workspaces
+SET desired_state = 'ARCHIVED'
 WHERE phase = 'STANDBY'
   AND operation = 'NONE'
   AND deleted_at IS NULL
-  AND NOW() - phase_changed_at > make_interval(secs := archive_ttl_seconds)
+  AND NOW() - phase_changed_at > make_interval(secs := :ttl_archive_seconds)
+RETURNING id
 ```
 
 | 필드 | 설명 |
 |------|------|
 | `phase_changed_at` | STANDBY 전환 시점 (WC 소유) |
-| `archive_ttl_seconds` | STANDBY 허용 시간 (기본: 86400초 = 24시간) |
+| `TTL_ARCHIVE_SECONDS` | 환경변수 (기본: 1800초 = 30분) |
+
+> **TTL 설정**: 워크스페이스별 TTL 컬럼 대신 환경변수 기반 TtlConfig 사용
 
 ---
 
@@ -150,24 +158,21 @@ flowchart TB
         P3["Proxy #3<br/>buffer: {ws3: t4}"]
     end
 
-    subgraph Redis["Redis"]
-        K1["last_access:ws1 = max(t1, t2)"]
-        K2["last_access:ws2 = t3"]
-        K3["last_access:ws3 = t4"]
+    subgraph Redis["Redis ZSET"]
+        ZS["codehub:activity<br/>ws1: max(t1, t2)<br/>ws2: t3<br/>ws3: t4"]
     end
 
-    P1 -->|MSET| K1
-    P2 -->|MSET| K1
-    P2 -->|MSET| K2
-    P3 -->|MSET| K3
+    P1 -->|ZADD| ZS
+    P2 -->|ZADD| ZS
+    P3 -->|ZADD| ZS
 ```
 
 | 상황 | 동작 | 결과 |
 |------|------|------|
-| 같은 ws_id에 여러 Proxy가 MSET | 마지막 MSET 값이 저장 | OK (최신값 보장) |
-| 순서 역전 (t2 < t1이 나중에 도착) | t2가 덮어씀 | 최대 30초 지연 |
+| 같은 ws_id에 여러 Proxy가 ZADD | 더 큰 score(최신 timestamp)가 유지 | OK (최신값 보장) |
+| 순서 역전 (t2 < t1이 나중에 도착) | GT 옵션으로 기존 값 유지 | 순서 역전 방지 |
 
-> **허용 가능**: TTL은 분 단위, 30초 오차는 무시 가능
+> **ZSET GT 옵션**: 새 score > 기존 score일 때만 업데이트
 
 ---
 
@@ -228,7 +233,7 @@ flowchart TD
 
 | 단계 | 메서드 | 동작 |
 |------|--------|------|
-| 1 | `_sync_to_db()` | Redis `last_access:*` → DB `last_access_at` 벌크 업데이트 |
+| 1 | `_sync_to_db()` | Redis ZSET → DB `last_access_at` 벌크 업데이트 (unnest) |
 | 2 | `_check_standby_ttl()` | RUNNING + TTL 만료 → `desired_state = STANDBY` |
 | 3 | `_check_archive_ttl()` | STANDBY + TTL 만료 → `desired_state = ARCHIVED` |
 | 4 | `wake_wc()` | 만료 발견 시 WC에 NOTIFY (빠른 reconcile)
@@ -237,10 +242,12 @@ flowchart TD
 
 ## 주기 및 타이밍
 
-| 컴포넌트 | 주기 | 설명 |
-|----------|------|------|
-| Memory → Redis flush | 30초 | Proxy 인스턴스별 |
-| TTL Manager tick | 60초 | Redis → DB + TTL 체크 |
+| 컴포넌트 | 환경변수 | 기본값 | 설명 |
+|----------|----------|--------|------|
+| Memory → Redis flush | `ACTIVITY_FLUSH_INTERVAL` | 30초 | Proxy 인스턴스별 |
+| TTL Manager tick | `COORDINATOR_TTL_INTERVAL` | 60초 | Redis → DB + TTL 체크 |
+
+> **설정 클래스**: `ActivityConfig`, `CoordinatorConfig` (config.py)
 
 ### 최악의 경우 지연
 
@@ -257,7 +264,7 @@ flowchart TD
 
 | 상황 | 동작 | 결과 |
 |------|------|------|
-| last_access:* 키 손실 | DB last_access_at 기준 | 정상 (최대 90초 지연) |
+| codehub:activity ZSET 손실 | DB last_access_at 기준 | 정상 (최대 90초 지연) |
 
 > TTL 체크는 DB 기준이므로 Redis 재시작 영향 없음
 
@@ -293,4 +300,4 @@ sequenceDiagram
 
 - [wc.md](./wc.md) - WorkspaceController (phase 변경 주체)
 - [coordinator-runtime.md](./coordinator-runtime.md) - Coordinator 공통 인프라
-- [04-control-plane.md](../spec_v2/04-control-plane.md) - Control Plane 스펙
+- [04-control-plane.md](../spec/04-control-plane.md) - Control Plane 스펙

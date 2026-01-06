@@ -86,8 +86,8 @@
 ## 힌트 가속 (Redis PUB/SUB)
 
 ```
-┌─────────┐     PUBLISH "wc:wake"     ┌────────────┐
-│   API   │ ───────────────────────→  │    Redis   │
+┌─────────┐  PUBLISH "codehub:wake:wc"  ┌────────────┐
+│   API   │ ────────────────────────→  │    Redis   │
 │   TTL   │                           │  PUB/SUB   │
 │  Proxy  │                           └─────┬──────┘
 └─────────┘                                 │
@@ -103,8 +103,10 @@
 
 | Channel | Publishers | Subscriber |
 |---------|-----------|------------|
-| `wc:wake` | API, TTL, Proxy | WC |
-| `gc:wake` | API | GC |
+| `codehub:wake:ob` | EventListener | Observer |
+| `codehub:wake:wc` | EventListener, TTL | WC |
+
+> **채널 설정**: `RedisChannelConfig.wake_prefix` (기본: `codehub:wake`)
 
 ### Hybrid Push/Pull
 

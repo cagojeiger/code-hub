@@ -243,9 +243,9 @@ WC가 에러 감지 시 단일 트랜잭션으로 원자적 전환:
 
 | 모드 | 주기 | 조건 |
 |------|------|------|
-| Idle | 10s | operation == NONE |
-| Active | 2s | operation != NONE |
-| Hint | 즉시 | Redis `wc:wake` 수신 |
+| Idle | 15s | operation == NONE (`COORDINATOR_IDLE_INTERVAL`) |
+| Active | 1s | operation != NONE (`COORDINATOR_ACTIVE_INTERVAL`) |
+| Hint | 즉시 | Redis `codehub:wake:wc` 수신 |
 
 ---
 
@@ -299,6 +299,6 @@ WC가 에러 감지 시 단일 트랜잭션으로 원자적 전환:
 
 - [wc-observer.md](./wc-observer.md) - Observer Coordinator 설계
 - [wc-judge.md](./wc-judge.md) - Judge 로직 상세
-- [00-contracts.md](../spec_v2/00-contracts.md) - 핵심 계약
-- [02-states.md](../spec_v2/02-states.md) - 상태 정의
-- [04-control-plane.md](../spec_v2/04-control-plane.md) - WC 스펙
+- [00-contracts.md](../spec/00-contracts.md) - 핵심 계약
+- [02-states.md](../spec/02-states.md) - 상태 정의
+- [04-control-plane.md](../spec/04-control-plane.md) - WC 스펙

@@ -45,10 +45,11 @@
 
 | 컴포넌트 | 소유 컬럼 |
 |---------|----------|
-| WorkspaceController | conditions, observed_at, phase, operation, op_started_at, op_id, archive_key, error_count, error_reason, home_ctx |
-| API | desired_state, deleted_at, standby_ttl_seconds, archive_ttl_seconds, last_access_at |
+| WorkspaceController | conditions, observed_at, phase, phase_changed_at, operation, op_started_at, op_id, archive_key, error_count, error_reason, home_ctx |
+| API | desired_state, deleted_at, last_access_at |
 
 > **단일 컨트롤러**: WC가 관측 + 제어 컬럼 모두 소유 (원자성 보장)
+> **TTL 설정**: 워크스페이스별 TTL 컬럼 대신 환경변수 기반 TtlConfig 사용
 > **컬럼 상세**: [03-schema.md](./03-schema.md)
 
 ---

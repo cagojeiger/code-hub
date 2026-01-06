@@ -1,12 +1,12 @@
 # Event Listener
 
-> DB 변경 감지 (CDC) 및 SSE 스트리밍 - Redis Streams 기반
+> DB 변경 감지 (CDC) 및 SSE 스트리밍 - Redis PUB/SUB 기반
 
 ---
 
 ## 개요
 
-EventListener는 DB 변경사항을 감지하고, Redis Streams를 통해 SSE 클라이언트와 Coordinator에게 실시간으로 전달합니다.
+EventListener는 DB 변경사항을 감지하고, Redis PUB/SUB를 통해 SSE 클라이언트와 Coordinator에게 실시간으로 전달합니다.
 
 ---
 
@@ -16,39 +16,41 @@ EventListener는 DB 변경사항을 감지하고, Redis Streams를 통해 SSE �
 flowchart TB
     subgraph DB["PostgreSQL"]
         Change["INSERT/UPDATE"]
+        Trigger["Trigger → pg_notify()"]
     end
 
     subgraph EventListener["EventListener (Leader)"]
-        EL["DB 변경 감지"]
+        EL["LISTEN ws_sse, ws_wake, ws_deleted"]
         Lock["Advisory Lock"]
     end
 
-    subgraph Redis["Redis Streams"]
-        events["events:{user_id}"]
-        wake["stream:wake"]
+    subgraph Redis["Redis PUB/SUB"]
+        sse["codehub:sse:{user_id}"]
+        wake_ob["codehub:wake:ob"]
+        wake_wc["codehub:wake:wc"]
     end
 
     subgraph Consumers["Consumers"]
-        SSE["SSE Endpoint<br/>(XREAD)"]
-        CG["Consumer Group<br/>(XREADGROUP)"]
+        SSE["SSE Endpoint<br/>(SUBSCRIBE)"]
     end
 
     subgraph Coordinators["Coordinators"]
-        OB["Observer"]
-        WC["WC"]
+        OB["Observer<br/>(SUBSCRIBE)"]
+        WC["WC<br/>(SUBSCRIBE)"]
     end
 
     FE["FE Dashboard"]
 
-    Change --> EL
+    Change --> Trigger
+    Trigger --> EL
     Lock -.->|"1개만 실행"| EL
-    EL -->|"XADD"| events
-    EL -->|"XADD"| wake
+    EL -->|"PUBLISH"| sse
+    EL -->|"PUBLISH"| wake_ob
+    EL -->|"PUBLISH"| wake_wc
 
-    events --> SSE
-    wake --> CG
-    CG --> OB
-    CG --> WC
+    sse --> SSE
+    wake_ob --> OB
+    wake_wc --> WC
 
     SSE --> FE
 ```
@@ -57,15 +59,15 @@ flowchart TB
 
 ## 이벤트 분리
 
-| 구분 | 트리거 조건 | 목적 | Redis Stream |
-|------|------------|------|-------------|
-| **SSE** | phase, operation, error_reason 변경 | UI 실시간 업데이트 | events:{user_id} |
-| **Wake** | desired_state 변경 | Coordinator 즉시 깨우기 | stream:wake |
-| **삭제** | deleted_at 설정 | 삭제 알림 | events:{user_id} |
+| 구분 | PG 채널 | 트리거 조건 | 목적 | Redis 채널 |
+|------|---------|------------|------|-----------|
+| **SSE** | ws_sse | phase, operation, error_reason, name, description, memo 변경 | UI 실시간 업데이트 | codehub:sse:{user_id} |
+| **Wake** | ws_wake | desired_state 변경 | Coordinator 즉시 깨우기 | codehub:wake:ob, codehub:wake:wc |
+| **삭제** | ws_deleted | deleted_at 설정 | 삭제 알림 | codehub:sse:{user_id} |
 
 ### 무한루프 방지
 
-- **SSE**: phase/operation 변경 시에만 발행
+- **SSE**: phase/operation/metadata 변경 시에만 발행
 - **Wake**: desired_state 변경 시에만 발행
 - Coordinator가 phase/operation을 변경해도 Wake는 발행되지 않음
 
@@ -78,7 +80,7 @@ flowchart TB
 | 리더 선출 | 필요 (PostgreSQL Advisory Lock) |
 | DB 연결 | psycopg3 AsyncConnection (SQLAlchemy와 별도) |
 | 실행 위치 | FastAPI lifespan 내 background task |
-| Redis 명령 | XADD (maxlen=1000) |
+| Redis 명령 | PUBLISH |
 
 ### 리더 선출
 
@@ -100,9 +102,9 @@ flowchart TB
 │         ▼                                                    │
 │  async for notify in aconn.notifies():                      │
 │         │                                                    │
-│         ├── channel: ws_sse → XADD events:{user_id}         │
-│         ├── channel: ws_wake → XADD stream:wake             │
-│         └── channel: ws_deleted → XADD events:{user_id}     │
+│         ├── channel: ws_sse → PUBLISH codehub:sse:{user_id} │
+│         ├── channel: ws_wake → PUBLISH codehub:wake:ob/wc   │
+│         └── channel: ws_deleted → PUBLISH codehub:sse:{uid} │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -121,43 +123,85 @@ Cookie: session=xxx
 
 | 이벤트 | 발행 시점 | 페이로드 |
 |--------|----------|---------|
-| workspace_updated | phase/operation 변경 | 전체 workspace 객체 |
+| workspace_updated | phase/operation/metadata 변경 | 전체 workspace 객체 |
 | workspace_deleted | soft delete | `{id: string}` |
 | heartbeat | 30초마다 | `{}` |
 
 ### 메시지 수신 방식
 
-- **이전**: SUBSCRIBE (fire-and-forget, 연결 끊기면 유실)
-- **현재**: XREAD (스트림 읽기, last_id로 위치 추적)
+```python
+pubsub = redis.pubsub()
+await pubsub.subscribe(f"codehub:sse:{user_id}")
 
-### 유실 방지
-
-- `last_id` 추적으로 재연결 시 놓친 메시지 수신 가능
-- 스트림은 최근 1000개 메시지 유지 (maxlen)
+async for message in pubsub.listen():
+    if message["type"] == "message":
+        yield format_sse_event(message["data"])
+```
 
 ### 사용자 격리
 
-- Redis Stream: `events:{user_id}`
-- 각 사용자는 자신의 workspace 이벤트만 수신
+- Redis 채널: `codehub:sse:{user_id}`
+- 각 사용자는 자신의 workspace 이벤트만 구독
+
+### PUB/SUB 특성
+
+| 특성 | 설명 |
+|------|------|
+| Fire-and-forget | 구독자 없으면 메시지 유실 |
+| 브로드캐스트 | 모든 구독자가 동일 메시지 수신 |
+| 재연결 처리 | 클라이언트 재연결 시 초기 상태 로드 필요 |
+
+> **재연결 시**: SSE 엔드포인트가 현재 workspace 목록을 초기 이벤트로 전송
 
 ---
 
 ## Coordinator Wake
 
-### Consumer Group
-
-| 항목 | 값 |
-|------|------|
-| 그룹명 | coordinators |
-| 스트림 | stream:wake |
-| 소비자 | {coordinator_type}-{pid} |
-
 ### 동작 방식
 
-1. EventListener가 `stream:wake`에 `{target: "ob"}` 또는 `{target: "wc"}` XADD
-2. Coordinator가 XREADGROUP으로 자신의 target 메시지 수신
-3. 수신 후 XACK으로 처리 완료 표시
-4. 각 메시지는 1개 Coordinator만 처리 (Consumer Group 특성)
+```mermaid
+sequenceDiagram
+    participant EL as EventListener
+    participant Redis as Redis PUB/SUB
+    participant OB as Observer
+    participant WC as WC
+
+    Note over EL: desired_state 변경 감지
+    EL->>Redis: PUBLISH codehub:wake:ob
+    EL->>Redis: PUBLISH codehub:wake:wc
+
+    par Observer
+        Redis-->>OB: message
+        OB->>OB: wake (idle → active)
+    and WC
+        Redis-->>WC: message
+        WC->>WC: wake (idle → active)
+    end
+```
+
+### 채널 분리
+
+| 채널 | 구독자 | 용도 |
+|------|--------|------|
+| codehub:wake:ob | Observer | 리소스 관측 즉시 시작 |
+| codehub:wake:wc | WC | Reconcile 즉시 시작 |
+
+### Coordinator 구독
+
+```python
+class NotifySubscriber:
+    async def subscribe(self, target: str):
+        channel = f"{wake_prefix}:{target}"  # codehub:wake:ob 또는 codehub:wake:wc
+        await self.pubsub.subscribe(channel)
+
+    async def wait_for_wake(self, timeout: float) -> bool:
+        try:
+            async with asyncio.timeout(timeout):
+                message = await self.pubsub.get_message(ignore_subscribe_messages=True)
+                return message is not None
+        except asyncio.TimeoutError:
+            return False
+```
 
 ---
 
@@ -171,21 +215,21 @@ sequenceDiagram
     participant API
     participant DB
     participant EL as EventListener
-    participant Redis as Redis Streams
+    participant Redis as Redis PUB/SUB
     participant WC as WorkspaceController
     participant SSE
     participant FE
 
     User->>API: Start 클릭
     API->>DB: desired_state='RUNNING'
-    DB-->>EL: 변경 감지
-    EL->>Redis: XADD stream:wake
-    Redis->>WC: XREADGROUP
+    DB-->>EL: pg_notify('ws_wake', ...)
+    EL->>Redis: PUBLISH codehub:wake:wc
+    Redis->>WC: wake message
 
     WC->>DB: phase='PROVISIONING'
-    DB-->>EL: 변경 감지
-    EL->>Redis: XADD events:{uid}
-    Redis->>SSE: XREAD
+    DB-->>EL: pg_notify('ws_sse', ...)
+    EL->>Redis: PUBLISH codehub:sse:{uid}
+    Redis->>SSE: message
     SSE->>FE: workspace_updated
 ```
 
@@ -197,36 +241,36 @@ sequenceDiagram
     participant API
     participant DB
     participant EL as EventListener
-    participant Redis as Redis Streams
+    participant Redis as Redis PUB/SUB
     participant WC
     participant SSE
     participant FE
 
     User->>API: Delete 클릭
     API->>DB: desired_state='DELETED', deleted_at=NOW()
-    DB-->>EL: 변경 감지
+    DB-->>EL: pg_notify 발생
 
     par Wake
-        EL->>Redis: XADD stream:wake
-        Redis->>WC: XREADGROUP
+        EL->>Redis: PUBLISH codehub:wake:wc
+        Redis->>WC: wake message
     and SSE
-        EL->>Redis: XADD events:{uid} (deleted)
-        Redis->>SSE: XREAD
+        EL->>Redis: PUBLISH codehub:sse:{uid}
+        Redis->>SSE: message
         SSE->>FE: workspace_deleted
     end
 ```
 
 ---
 
-## Before/After 비교
+## 설정
 
-| 항목 | Before (PUB/SUB) | After (Streams) |
-|------|-----------------|-----------------|
-| 트리거 방식 | DB 변경 시 자동 | DB 변경 시 자동 |
-| 리더 선출 | 불필요 (PUBLISH 멱등) | 필요 (중복 방지) |
-| 메시지 유실 | 가능 (fire-and-forget) | 방지 (last_id 추적) |
-| 중복 이벤트 | 발생 (worker 수만큼) | 방지 (1개 Leader) |
-| Coordinator wake | SUBSCRIBE 브로드캐스트 | Consumer Group 1회 처리 |
+| 환경변수 | 기본값 | 설명 |
+|----------|--------|------|
+| `REDIS_CHANNEL_SSE_PREFIX` | codehub:sse | SSE 채널 prefix |
+| `REDIS_CHANNEL_WAKE_PREFIX` | codehub:wake | Wake 채널 prefix |
+| `SSE_HEARTBEAT_INTERVAL` | 30초 | Heartbeat 주기 |
+
+> **설정 클래스**: `RedisChannelConfig`, `SSEConfig` (config.py)
 
 ---
 
@@ -234,6 +278,7 @@ sequenceDiagram
 
 | 파일 | 역할 |
 |------|------|
-| `control/coordinator/event_listener.py` | DB 변경 감지 → Redis XADD |
-| `app/api/events.py` | SSE 엔드포인트 (XREAD) |
-| `control/coordinator/base.py` | NotifySubscriber (XREADGROUP) |
+| `control/coordinator/event_listener.py` | DB 변경 감지 → Redis PUBLISH |
+| `app/api/v1/events.py` | SSE 엔드포인트 (SUBSCRIBE) |
+| `control/coordinator/base.py` | NotifySubscriber (SUBSCRIBE) |
+| `infra/redis_pubsub.py` | Redis PUB/SUB 유틸리티 |

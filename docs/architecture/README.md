@@ -7,7 +7,7 @@
 ## 개요
 
 이 폴더는 M2 마일스톤의 **구현 설계** 문서를 포함합니다.
-"What"은 `spec_v2/`에, "How"는 여기에 정의됩니다.
+"What"은 `spec/`에, "How"는 여기에 정의됩니다.
 
 ---
 
@@ -142,24 +142,24 @@ PENDING(0) < ARCHIVED(5) < STANDBY(10) < RUNNING(20)
 
 | 컴포넌트 | 역할 | 상세 문서 |
 |---------|------|----------|
-| **API Server** | REST API, SSE 스트리밍 | [spec_v2/04-control-plane.md](../spec_v2/04-control-plane.md) |
-| **Reverse Proxy** | 워크스페이스 라우팅, 활동 추적 | [spec_v2/05-data-plane.md](../spec_v2/05-data-plane.md) |
-| **InstanceController** | 컨테이너 생명주기 관리 | [spec_v2/05-data-plane.md](../spec_v2/05-data-plane.md) |
-| **StorageProvider** | 볼륨/아카이브 관리 | [spec_v2/05-data-plane.md](../spec_v2/05-data-plane.md) |
+| **API Server** | REST API, SSE 스트리밍 | [spec/04-control-plane.md](../spec/04-control-plane.md) |
+| **Reverse Proxy** | 워크스페이스 라우팅, 활동 추적 | [spec/05-data-plane.md](../spec/05-data-plane.md) |
+| **InstanceController** | 컨테이너 생명주기 관리 | [spec/05-data-plane.md](../spec/05-data-plane.md) |
+| **StorageProvider** | 볼륨/아카이브 관리 | [spec/05-data-plane.md](../spec/05-data-plane.md) |
 
 ### Coordinator 내부
 
 | 컴포넌트 | 역할 | 상세 문서 |
 |---------|------|----------|
 | **WorkspaceController** | Reconcile 루프, 상태 수렴 | [reconciler.md](./reconciler.md) |
-| **TTL Manager** | desired_state 자동 강등 | [spec_v2/04-control-plane.md](../spec_v2/04-control-plane.md) |
-| **Archive GC** | orphan archive 정리 | [spec_v2/05-data-plane.md](../spec_v2/05-data-plane.md) |
-| **EventListener** | CDC (PG → Redis) | [spec_v2/04-control-plane.md](../spec_v2/04-control-plane.md) |
+| **TTL Manager** | desired_state 자동 강등 | [spec/04-control-plane.md](../spec/04-control-plane.md) |
+| **Archive GC** | orphan archive 정리 | [spec/05-data-plane.md](../spec/05-data-plane.md) |
+| **EventListener** | CDC (PG → Redis) | [spec/04-control-plane.md](../spec/04-control-plane.md) |
 
 ### Container Runtime (Docker|K8s)
 
 | 컴포넌트 | 역할 | 상세 문서 |
 |---------|------|----------|
 | **Workspace** | 사용자 개발 환경 (code-server) | - |
-| **Storage Job** | Volume↔Archive 데이터 이동 | [spec_v2/05-data-plane.md](../spec_v2/05-data-plane.md) |
+| **Storage Job** | Volume↔Archive 데이터 이동 | [spec/05-data-plane.md](../spec/05-data-plane.md) |
 
