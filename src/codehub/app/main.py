@@ -14,6 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from codehub import __version__
 from codehub.adapters.instance import DockerInstanceController
 from codehub.adapters.storage import S3StorageProvider
 from codehub.app.api.v1 import auth_router, events_router, workspaces_router
@@ -196,7 +197,7 @@ async def _run_coordinators() -> None:
         await sp.close()
 
 
-app = FastAPI(title="CodeHub", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="CodeHub", version=__version__, lifespan=lifespan)
 
 
 @app.exception_handler(CodeHubError)
@@ -259,6 +260,7 @@ async def health():
 
     return {
         "status": "degraded" if is_degraded else "ok",
+        "version": __version__,
         "services": services,
     }
 

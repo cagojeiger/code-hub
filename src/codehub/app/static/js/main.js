@@ -17,6 +17,22 @@ import { createKeyboardHandler, openWorkspace, handleStart, handlePause, handleA
 import { connectSSE, setupVisibilityHandler } from './sse.js';
 
 /**
+ * Fetch version from /health API and display in header
+ */
+async function loadVersion() {
+  try {
+    const response = await fetch('/health');
+    const data = await response.json();
+    const versionDisplay = document.getElementById('version-display');
+    if (versionDisplay && data.version) {
+      versionDisplay.textContent = `v${data.version}`;
+    }
+  } catch (error) {
+    console.warn('Failed to fetch version:', error);
+  }
+}
+
+/**
  * Load workspaces and update UI
  * Uses loadVersion to prevent race conditions with SSE updates
  */
@@ -223,6 +239,9 @@ function setupEventDelegation() {
  * Initialize the application
  */
 async function init() {
+  // Load version from /health API
+  loadVersion();
+
   // Show skeleton loading
   renderSkeletonCards();
 
