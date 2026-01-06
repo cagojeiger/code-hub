@@ -33,7 +33,8 @@ from codehub.infra.redis_pubsub import ChannelPublisher
 
 logger = logging.getLogger(__name__)
 
-_channel_config = get_settings().redis_channel
+_settings = get_settings()
+_channel_config = _settings.redis_channel
 
 # SQL query to fetch workspace data for SSE (SQLAlchemy :param style)
 _FETCH_WORKSPACE_SQL = """

@@ -28,12 +28,11 @@ from codehub.core.domain.workspace import DesiredState, Operation, Phase
 from codehub.infra.redis_kv import ActivityStore
 from codehub.infra.redis_pubsub import ChannelPublisher
 
-_channel_config = get_settings().redis_channel
-
 logger = logging.getLogger(__name__)
 
-# Module-level settings cache (consistent with Observer pattern)
+# Module-level settings cache (consistent with base.py pattern)
 _settings = get_settings()
+_channel_config = _settings.redis_channel
 
 
 class TTLManager(CoordinatorBase):

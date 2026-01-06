@@ -41,7 +41,9 @@ from codehub.core.retryable import classify_error, with_retry
 
 logger = logging.getLogger(__name__)
 
-_coordinator_config = get_settings().coordinator
+# Module-level settings cache (consistent with base.py pattern)
+_settings = get_settings()
+_coordinator_config = _settings.coordinator
 
 
 class PlanAction(BaseModel):
