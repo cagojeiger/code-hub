@@ -23,12 +23,13 @@ class DockerInstanceController(InstanceController):
         images: ImageAPI | None = None,
     ) -> None:
         settings = get_settings()
-        self._config = settings.docker
+        self._runtime = settings.runtime
+        self._docker = settings.docker
         self._containers = containers or ContainerAPI()
         self._images = images or ImageAPI()
 
     def _container_name(self, workspace_id: str) -> str:
-        return f"{self._config.resource_prefix}{workspace_id}"
+        return f"{self._runtime.resource_prefix}{workspace_id}"
 
     async def list_all(self, prefix: str) -> list[ContainerInfo]:
         """List all containers with given prefix."""
@@ -68,20 +69,20 @@ class DockerInstanceController(InstanceController):
             return
 
         # Ensure image exists (auto-pull if not)
-        image = image_ref or self._config.default_image
+        image = image_ref or self._runtime.default_image
         await self._images.ensure(image)
 
-        port = self._config.container_port
+        port = self._runtime.container_port
         config = ContainerConfig(
             image=image,
             name=container_name,
             cmd=["--auth", "none", "--bind-addr", f"0.0.0.0:{port}"],
-            user=f"{self._config.coder_uid}:{self._config.coder_gid}",
+            user=f"{self._docker.coder_uid}:{self._docker.coder_gid}",
             env=["HOME=/home/coder"],
             exposed_ports={f"{port}/tcp": {}},
             host_config=HostConfig(
-                network_mode=self._config.network_name,
-                binds=[f"{self._config.resource_prefix}{workspace_id}-home:/home/coder"],
+                network_mode=self._docker.network_name,
+                binds=[f"{self._runtime.resource_prefix}{workspace_id}-home:/home/coder"],
             ),
         )
 
@@ -121,5 +122,5 @@ class DockerInstanceController(InstanceController):
         """
         return UpstreamInfo(
             hostname=self._container_name(workspace_id),
-            port=self._config.container_port,
+            port=self._runtime.container_port,
         )

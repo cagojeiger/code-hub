@@ -41,8 +41,8 @@ async def create_workspace(
     now = datetime.now(UTC)
 
     # Use default image if not provided
-    final_image_ref = image_ref or _settings.docker.default_image
-    resource_prefix = _settings.docker.resource_prefix
+    final_image_ref = image_ref or _settings.runtime.default_image
+    resource_prefix = _settings.runtime.resource_prefix
 
     workspace = Workspace(
         id=workspace_id,

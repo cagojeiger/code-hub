@@ -104,7 +104,7 @@ class TestArchiveOrphanCleanup:
         """Orphan archive in S3 is deleted by GC."""
         settings = get_settings()
         bucket = settings.storage.bucket_name
-        prefix = settings.docker.resource_prefix
+        prefix = settings.runtime.resource_prefix
 
         # 1. Create orphan archive in S3 (no matching workspace in DB)
         orphan_ws_id = f"orphan-{uuid.uuid4().hex[:8]}"
@@ -141,7 +141,7 @@ class TestArchiveOrphanCleanup:
         """Archive referenced by workspace is NOT deleted."""
         settings = get_settings()
         bucket = settings.storage.bucket_name
-        prefix = settings.docker.resource_prefix
+        prefix = settings.runtime.resource_prefix
 
         # 0. Ensure test user exists
         await _ensure_test_user(test_db_engine)
@@ -201,7 +201,7 @@ class TestArchiveOrphanCleanup:
         """Archive of soft-deleted workspace IS deleted (user wants deletion)."""
         settings = get_settings()
         bucket = settings.storage.bucket_name
-        prefix = settings.docker.resource_prefix
+        prefix = settings.runtime.resource_prefix
 
         # 0. Ensure test user exists
         await _ensure_test_user(test_db_engine)
@@ -270,7 +270,7 @@ class TestVolumeOrphanCleanup:
     ):
         """Orphan volume is deleted by GC."""
         settings = get_settings()
-        prefix = settings.docker.resource_prefix  # Use actual prefix (ws-)
+        prefix = settings.runtime.resource_prefix  # Use actual prefix (ws-)
 
         # 1. Create orphan volume (no matching workspace in DB)
         # Use unique ID to avoid conflicts with production
@@ -310,7 +310,7 @@ class TestVolumeOrphanCleanup:
     ):
         """Volume with matching workspace is NOT deleted."""
         settings = get_settings()
-        prefix = settings.docker.resource_prefix  # Use actual prefix (ws-)
+        prefix = settings.runtime.resource_prefix  # Use actual prefix (ws-)
 
         # 0. Ensure test user exists
         await _ensure_test_user(test_db_engine)

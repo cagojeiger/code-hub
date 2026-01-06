@@ -38,7 +38,7 @@ class BulkObserver:
     def __init__(self, ic: InstanceController, sp: StorageProvider) -> None:
         self._ic = ic
         self._sp = sp
-        self._prefix = _settings.docker.resource_prefix
+        self._prefix = _settings.runtime.resource_prefix
         self._timeout_s = _settings.observer.timeout_s
 
     async def _safe[T](self, coro: Coroutine[None, None, list[T]], name: str) -> list[T] | None:

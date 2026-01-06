@@ -52,7 +52,7 @@ class ArchiveGC(CoordinatorBase):
         super().__init__(conn, leader, subscriber)
         self._storage = storage
         self._ic = ic
-        self._prefix = _settings.docker.resource_prefix
+        self._prefix = _settings.runtime.resource_prefix
 
     async def tick(self) -> None:
         """Execute one GC cycle.

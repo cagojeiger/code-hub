@@ -18,7 +18,7 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 
 _settings = get_settings()
-_default_image = _settings.docker.default_image
+_default_image = _settings.runtime.default_image
 
 
 class CreateWorkspaceRequest(BaseModel):

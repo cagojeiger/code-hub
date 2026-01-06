@@ -56,7 +56,7 @@ class S3StorageProvider(StorageProvider):
         job_runner: JobRunner | None = None,
     ) -> None:
         settings = get_settings()
-        self._resource_prefix = settings.docker.resource_prefix
+        self._resource_prefix = settings.runtime.resource_prefix
 
         # Lazy imports to avoid circular dependencies
         if volumes is None:

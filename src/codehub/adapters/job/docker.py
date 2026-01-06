@@ -27,9 +27,10 @@ class DockerJobRunner(JobRunner):
         timeout: int | None = None,
     ) -> None:
         settings = get_settings()
-        self._config = settings.docker
+        self._runtime = settings.runtime
+        self._docker = settings.docker
         self._containers = containers or ContainerAPI()
-        self._timeout = timeout or self._config.job_timeout
+        self._timeout = timeout or self._docker.job_timeout
 
     async def run_archive(
         self,
@@ -45,7 +46,7 @@ class DockerJobRunner(JobRunner):
 
         try:
             config = ContainerConfig(
-                image=self._config.storage_job_image,
+                image=self._runtime.storage_job_image,
                 name=helper_name,
                 cmd=["-c", "/usr/local/bin/archive"],
                 env=[
@@ -55,7 +56,7 @@ class DockerJobRunner(JobRunner):
                     f"AWS_SECRET_ACCESS_KEY={s3_secret_key}",
                 ],
                 host_config=HostConfig(
-                    network_mode=self._config.network_name,
+                    network_mode=self._docker.network_name,
                     binds=[f"{volume_name}:/data:ro"],
                 ),
             )
@@ -85,7 +86,7 @@ class DockerJobRunner(JobRunner):
 
         try:
             config = ContainerConfig(
-                image=self._config.storage_job_image,
+                image=self._runtime.storage_job_image,
                 name=helper_name,
                 cmd=["-c", "/usr/local/bin/restore"],
                 env=[
@@ -95,7 +96,7 @@ class DockerJobRunner(JobRunner):
                     f"AWS_SECRET_ACCESS_KEY={s3_secret_key}",
                 ],
                 host_config=HostConfig(
-                    network_mode=self._config.network_name,
+                    network_mode=self._docker.network_name,
                     binds=[f"{volume_name}:/data"],
                 ),
             )

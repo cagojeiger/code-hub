@@ -70,18 +70,28 @@ class StorageConfig(BaseSettings):
     bucket_name: str = Field(default="codehub-archives", validation_alias="S3_BUCKET")
 
 
+class RuntimeConfig(BaseSettings):
+    """Runtime-agnostic common configuration.
+
+    These settings are shared between Docker and K8s runtimes.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="RUNTIME_")
+
+    resource_prefix: str = Field(default="codehub-ws-")
+    container_port: int = Field(default=8080)
+    default_image: str = Field(default="cagojeiger/code-server:4.107.0")
+    storage_job_image: str = Field(default="codehub/storage-job:latest")
+
+
 class DockerConfig(BaseSettings):
-    """Docker-related configuration for workspace containers."""
+    """Docker-specific configuration for workspace containers."""
 
     model_config = SettingsConfigDict(env_prefix="DOCKER_")
 
-    resource_prefix: str = Field(default="codehub-ws-")
     network_name: str = Field(default="codehub-net")
-    container_port: int = Field(default=8080)
     coder_uid: int = Field(default=1000)
     coder_gid: int = Field(default=1000)
-    default_image: str = Field(default="cagojeiger/code-server:4.107.0")
-    storage_job_image: str = Field(default="codehub/storage-job:latest")
 
     # Timeout settings
     api_timeout: float = Field(default=30.0)  # seconds (Docker API calls)
@@ -238,6 +248,7 @@ class Settings(BaseSettings):
     redis: RedisConfig = Field(default_factory=RedisConfig)
     redis_channel: RedisChannelConfig = Field(default_factory=RedisChannelConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     docker: DockerConfig = Field(default_factory=DockerConfig)
     ttl: TtlConfig = Field(default_factory=TtlConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
