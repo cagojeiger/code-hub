@@ -1,12 +1,20 @@
 # ADR-008: Ordered State Machine 패턴 채택
 
 ## 상태
-Proposed
+Partially Superseded by [ADR-011](./011-declarative-conditions.md)
+
+### Superseded 부분
+- observed_status 표현 방식 → ADR-011의 Conditions 패턴으로 대체
+
+### 여전히 유효한 부분
+- desired_state 레벨 개념 (PENDING < STANDBY < RUNNING)
+- step_up/step_down 전이 규칙
+- Active/Archive 분리 모델
 
 ## 컨텍스트
 
 ### 배경
-- M2에서 WARM/COLD 상태 추가로 상태 모델 확장 필요
+- M2에서 STANDBY/ARCHIVED 상태 추가로 상태 모델 확장 필요
 - Reconciler 패턴 (ADR-006) 도입으로 상태 전환 로직 설계 필요
 - 다양한 상태 간 전환 경로 관리 복잡도 증가
 
@@ -49,50 +57,89 @@ flowchart LR
 
 ## 결정
 
-### Ordered State Machine 패턴 채택
+### Ordered State Machine + Active/Archive 분리
 
-상태에 순서(레벨)를 부여하고, 인접 상태로만 전환하는 방식:
+상태를 **Active (활성 리소스)**와 **Archive (아카이브 존재)**로 분리합니다.
 
 ```
-레벨:    0         10        20        30
-       PENDING → COLD → WARM → RUNNING
-               ←      ←      ←
+Active (Ordered):
+  PENDING(0) < STANDBY(10) < RUNNING(20)
+
+Archive (Flag):
+  has_archive: bool (archive_key != NULL)
+
+Display (파생):
+  ARCHIVED = PENDING + has_archive
 ```
 
-> **레벨 간격 10**: 향후 중간 상태 추가를 대비하여 갭을 둠 (예: COLD와 WARM 사이에 레벨 15 삽입 가능)
+### 왜 분리인가?
+
+기존 모델의 모순:
+
+```
+기존: COLD는 status (레벨 10)
+  → PENDING(Lv0) → COLD(Lv10)로 step_up 필요
+  → INITIALIZING 작업이 Archive를 생성해야 함
+  → 하지만 새 워크스페이스는 Archive가 없음
+  → 모순! (COLD에 도달 불가)
+
+신규: ARCHIVED는 파생 상태 (PENDING + has_archive)
+  → Archive는 ARCHIVING 작업으로만 생성
+  → PENDING → STANDBY는 PROVISIONING (Archive 불필요)
+  → 모순 해결!
+```
 
 ### 핵심 원칙
 
-1. **순서 기반 전환**: 상태는 정수 레벨을 가짐
+1. **순서 기반 전환**: Active 상태는 정수 레벨을 가짐
 2. **인접 전환만 허용**: 한 번에 한 칸씩만 이동
-3. **방향 판단 단순화**: `target_level - current_level`로 방향 결정
+3. **Archive는 별도 축**: status와 독립적으로 존재
 4. **순차 실행**: 목표까지 step-by-step 이동
 
 ### 상태 정의
 
-#### 안정 상태 (Stable States)
-Reconciler의 `desired_state`로 설정 가능한 상태
+#### Active 상태 (Ordered)
 
-| 상태 | 레벨 | Container | Volume | Object Storage | 설명 |
-|------|------|-----------|--------|----------------|------|
-| PENDING | 0 | - | - | - | 최초 생성, 리소스 없음 |
-| COLD | 10 | - | - | ✅ (또는 없음) | 아카이브됨 |
-| WARM | 20 | - | ✅ | - | Volume만 존재 |
-| RUNNING | 30 | ✅ | ✅ | - | 실행 중 |
+| 상태 | 레벨 | Container | Volume | 설명 |
+|------|------|-----------|--------|------|
+| PENDING | 0 | - | - | 활성 리소스 없음 |
+| STANDBY | 10 | - | ✅ | Volume만 존재 |
+| RUNNING | 20 | ✅ | ✅ | 컨테이너 실행 중 |
 
-#### 전이 상태 (Transitional States)
-전환 진행 중을 나타내는 상태
+```
+레벨:    0           10         20
+       PENDING → STANDBY → RUNNING
+               ←         ←
+```
 
-| 상태 | 전환 | 설명 |
-|------|------|------|
-| INITIALIZING | PENDING → COLD | 최초 리소스 준비 |
-| RESTORING | COLD → WARM | 아카이브에서 복원 중 |
-| STARTING | WARM → RUNNING | 컨테이너 시작 중 |
-| STOPPING | RUNNING → WARM | 컨테이너 정지 중 |
-| ARCHIVING | WARM → COLD | 아카이브 생성 중 |
-| DELETING | * → DELETED | 삭제 진행 중 |
+#### Archive 속성 (별도 축)
+
+| 속성 | 판단 기준 | 설명 |
+|------|----------|------|
+| `has_archive` | `archive_key != NULL` | Object Storage에 아카이브 존재 |
+
+#### 파생 상태 (Display)
+
+| 조건 | Display | 설명 |
+|------|---------|------|
+| status=PENDING, has_archive=True | **ARCHIVED** | 아카이브됨 |
+| status=PENDING, has_archive=False | PENDING | 새 워크스페이스 |
+| status=STANDBY | STANDBY | Volume 준비됨 |
+| status=RUNNING | RUNNING | 실행 중 |
+
+#### 전이 상태 (Operations)
+
+| Operation | 전환 | 설명 |
+|-----------|------|------|
+| PROVISIONING | PENDING → STANDBY | 빈 Volume 생성 |
+| RESTORING | PENDING(has_archive) → STANDBY | Archive → Volume |
+| STARTING | STANDBY → RUNNING | 컨테이너 시작 |
+| STOPPING | RUNNING → STANDBY | 컨테이너 정지 |
+| ARCHIVING | STANDBY → PENDING + has_archive | Volume → Archive |
+| DELETING | * → DELETED | 전체 삭제 |
 
 #### 최종/예외 상태
+
 | 상태 | 설명 |
 |------|------|
 | DELETED | 소프트 삭제됨 |
@@ -123,8 +170,8 @@ CREATING = 2
 |------|------|
 | **PENDING = 0** | Python + PostgreSQL 환경에서 Protobuf 규칙 불필요 |
 | **DB NOT NULL** | 상태 컬럼은 항상 값이 있어야 함 |
-| **명시적 초기 상태** | PENDING이 명확한 의미를 가짐 (리소스 없음) |
-| **레벨 간격 10** | 향후 중간 상태 추가 대비 (0, 10, 20, 30) |
+| **명시적 초기 상태** | PENDING이 명확한 의미를 가짐 (활성 리소스 없음) |
+| **레벨 간격 10** | 향후 중간 상태 추가 대비 (0, 10, 20) |
 
 ### ERROR 상태의 특수성
 
@@ -133,7 +180,7 @@ ERROR는 순서 체계(Ordered) 밖에서 별도 처리:
 ```mermaid
 flowchart TB
     subgraph ordered["정상 흐름 (Ordered)"]
-        P[PENDING] <--> C[COLD] <--> W[WARM] <--> R[RUNNING]
+        P[PENDING] <--> S[STANDBY] <--> R[RUNNING]
     end
 
     subgraph unordered["예외 흐름 (Unordered)"]
@@ -154,19 +201,26 @@ flowchart TB
 
 ### 전환 알고리즘
 
-#### Reconcile 루프
+#### choose_next_operation()
 
 ```mermaid
 flowchart TD
-    A[Reconcile 시작] --> B{current == target?}
-    B -->|Yes| C[완료]
-    B -->|No| D{current < target?}
-    D -->|Yes| E[step_up 실행]
-    D -->|No| F[step_down 실행]
-    E --> G[current_idx += 1]
-    F --> H[current_idx -= 1]
-    G --> B
-    H --> B
+    A[상태 비교] --> B{observed == desired?}
+    B -->|Yes| C[NONE - 수렴됨]
+    B -->|No| D{step_up 방향?}
+    D -->|Yes| E{observed == PENDING?}
+    D -->|No| F{observed == RUNNING?}
+
+    E -->|Yes| G{archive_key?}
+    G -->|있음| H[RESTORING]
+    G -->|없음| I[PROVISIONING]
+
+    E -->|No| J{observed == STANDBY?}
+    J -->|Yes| K[STARTING]
+
+    F -->|Yes| L[STOPPING]
+    F -->|No| M{observed == STANDBY<br/>desired == PENDING?}
+    M -->|Yes| N[ARCHIVING]
 ```
 
 #### Step Up (활성화 방향)
@@ -174,34 +228,32 @@ flowchart TD
 ```mermaid
 flowchart LR
     subgraph "step_up()"
-        P[PENDING] -->|initialize| C[COLD]
-        C -->|restore/provision| W[WARM]
-        W -->|start container| R[RUNNING]
+        P[PENDING] -->|PROVISIONING| S[STANDBY]
+        P2["PENDING<br/>(has_archive)"] -->|RESTORING| S2[STANDBY]
+        S3[STANDBY] -->|STARTING| R[RUNNING]
     end
 ```
 
-| 전환 | 동작 |
-|------|------|
-| PENDING → COLD | 초기화 (메타데이터 생성) |
-| COLD → WARM | archive_key 있으면 restore, 없으면 provision |
-| WARM → RUNNING | 컨테이너 시작 |
+| 전환 | Operation | 동작 |
+|------|-----------|------|
+| PENDING → STANDBY | PROVISIONING | 빈 Volume 생성 |
+| PENDING(has_archive) → STANDBY | RESTORING | Archive → Volume 복원 |
+| STANDBY → RUNNING | STARTING | 컨테이너 시작 |
 
 #### Step Down (비활성화 방향)
 
 ```mermaid
 flowchart RL
     subgraph "step_down()"
-        R[RUNNING] -->|stop container| W[WARM]
-        W -->|archive| C[COLD]
-        C -->|cleanup| P[PENDING]
+        R[RUNNING] -->|STOPPING| S[STANDBY]
+        S2[STANDBY] -->|ARCHIVING| P["PENDING<br/>(has_archive)"]
     end
 ```
 
-| 전환 | 동작 |
-|------|------|
-| RUNNING → WARM | 컨테이너 정지 |
-| WARM → COLD | Volume을 Object Storage에 아카이브 |
-| COLD → PENDING | 일반적으로 사용 안 함 |
+| 전환 | Operation | 동작 |
+|------|-----------|------|
+| RUNNING → STANDBY | STOPPING | 컨테이너 정지 |
+| STANDBY → PENDING | ARCHIVING | Volume → Archive |
 
 ### 상태 다이어그램
 
@@ -211,25 +263,21 @@ stateDiagram-v2
 
     [*] --> PENDING: 생성
 
-    PENDING --> COLD: step_up
-    COLD --> WARM: step_up
-    WARM --> RUNNING: step_up
+    PENDING --> STANDBY: step_up (PROVISIONING/RESTORING)
+    STANDBY --> RUNNING: step_up (STARTING)
 
-    RUNNING --> WARM: step_down
-    WARM --> COLD: step_down
-    COLD --> PENDING: step_down
+    RUNNING --> STANDBY: step_down (STOPPING)
+    STANDBY --> PENDING: step_down (ARCHIVING)
 
     PENDING --> DELETED: delete
-    COLD --> DELETED: delete
-    WARM --> DELETED: delete
+    STANDBY --> DELETED: delete
     RUNNING --> DELETED: delete
 
     DELETED --> [*]
 
-    note right of PENDING: Level 0<br/>리소스 없음
-    note right of COLD: Level 10<br/>Object Storage
-    note right of WARM: Level 20<br/>Volume
-    note right of RUNNING: Level 30<br/>Container + Volume
+    note right of PENDING: Level 0<br/>활성 리소스 없음<br/>(has_archive면 ARCHIVED)
+    note right of STANDBY: Level 10<br/>Volume
+    note right of RUNNING: Level 20<br/>Container + Volume
 ```
 
 #### 예외 상태
@@ -258,15 +306,16 @@ stateDiagram-v2
 | **중간 실패 안전** | 실패 시 현재 상태에서 멈춤, 다음 reconcile에서 재시도 |
 | **확장 용이** | 새 상태 추가 시 2개 함수만 추가 |
 | **디버깅 용이** | 단계별 상태 추적 가능 |
-| **테스트 단순화** | step_up/step_down 각각 단위 테스트 |
+| **테스트 단순화** | operation별 단위 테스트 |
+| **모순 해결** | Active/Archive 분리로 COLD 도달 불가 문제 해결 |
 
 ### 단점
 
 | 단점 | 설명 | 대응 |
 |------|------|------|
-| **건너뛰기 불가** | COLD→RUNNING 직접 전환 불가 | 순차 실행으로 자연스럽게 처리 |
+| **건너뛰기 불가** | ARCHIVED→RUNNING 직접 전환 불가 | 순차 실행으로 자연스럽게 처리 |
 | **전환 시간 증가** | 여러 단계 거쳐야 함 | 각 단계가 빠르면 무시 가능 |
-| **중간 상태 노출** | COLD→RUNNING 중 WARM 상태 노출 | 전이 상태로 표현 |
+| **중간 상태 노출** | ARCHIVED→RUNNING 중 STANDBY 상태 노출 | operation으로 표현 |
 
 ### 업계 사례
 
@@ -284,8 +333,18 @@ stateDiagram-v2
 | **직접 전환** | 조합 폭발, 중간 실패 복구 복잡 |
 | **이벤트 기반 FSM** | 이벤트 유실 시 상태 불일치 |
 | **그래프 기반 FSM** | 복잡한 경로 탐색 필요 |
+| **COLD를 별도 status로** | PENDING → COLD 전환 시 Archive 생성 모순 |
+
+## 변경 이력
+
+| 날짜 | 변경 내용 |
+|------|----------|
+| 초기 | Proposed |
+| 2025-01 | Active + Archive 분리 모델로 수정, COLD→ARCHIVED(파생), WARM→STANDBY, INITIALIZING→PROVISIONING |
+| 2026-01 | Partially Superseded by ADR-011 (observed_status 표현 방식만 대체) |
 
 ## 참고 자료
 - [Kubernetes Pod Lifecycle](https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/)
 - [Finite State Machine](https://en.wikipedia.org/wiki/Finite-state_machine)
 - [Gitpod Workspace Phases](https://github.com/gitpod-io/gitpod/blob/main/components/ws-manager-api/go/crd/v1/workspace_types.go)
+- [ADR-009: Status와 Operation 분리](./009-status-operation-separation.md)

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Restoring Workspace - CodeHub</title>
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <link rel="stylesheet" href="/static/css/animations.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            vscode: {
+              bg: '#1e1e1e',
+              sidebar: '#252526',
+              hover: '#2a2d2e',
+              border: '#3c3c3c',
+              text: '#cccccc',
+              accent: '#007acc',
+              success: '#89d185',
+              warning: '#cca700',
+              error: '#f14c4c',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border: 3px solid rgba(255,255,255,0.1);
+      border-left-color: #007acc;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body class="bg-vscode-bg text-vscode-text min-h-screen flex items-center justify-center">
+  <div class="text-center px-4 w-full max-w-md">
+    <div class="spinner mx-auto mb-6"></div>
+    <h1 class="text-xl font-semibold text-white mb-2">Restoring Workspace</h1>
+    <p id="workspace-name" class="text-vscode-accent font-medium mb-4"></p>
+
+    <!-- Progress bar -->
+    <div class="mb-4">
+      <div class="flex items-center justify-between mb-2">
+        <p id="status" class="text-sm text-vscode-text">Preparing...</p>
+        <span id="progress-step" class="text-xs text-gray-500"></span>
+      </div>
+      <div class="h-1.5 bg-vscode-border rounded-full overflow-hidden">
+        <div id="progress-bar" class="h-full bg-vscode-accent rounded-full transition-all duration-300" style="width: 0%"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/proxy.js"></script>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const workspaceId = params.get('id');
+    const workspaceName = params.get('name') || 'Workspace';
+
+    document.getElementById('workspace-name').textContent = workspaceName;
+
+    // Poll for workspace status
+    ProxyPage.pollStatus(workspaceId, 'status');
+  </script>
+</body>
+</html>

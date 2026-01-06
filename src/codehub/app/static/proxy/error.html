@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workspace Error - CodeHub</title>
+  <link rel="stylesheet" href="/static/css/theme.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            vscode: {
+              bg: '#1e1e1e',
+              sidebar: '#252526',
+              hover: '#2a2d2e',
+              border: '#3c3c3c',
+              text: '#cccccc',
+              accent: '#007acc',
+              success: '#89d185',
+              warning: '#cca700',
+              error: '#f14c4c',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-vscode-bg text-vscode-text min-h-screen flex items-center justify-center">
+  <div class="text-center px-4 max-w-md">
+    <div id="icon" class="text-5xl mb-4"></div>
+    <h1 id="title" class="text-xl font-semibold text-white mb-2"></h1>
+    <p id="workspace-name" class="text-vscode-accent font-medium mb-4"></p>
+    <p id="message" class="text-sm mb-4"></p>
+
+    <div id="error-detail" class="hidden bg-red-900/20 border border-vscode-error rounded-lg p-4 mb-6 text-left text-sm text-vscode-error">
+    </div>
+
+    <a href="/" class="inline-block bg-vscode-accent hover:bg-blue-600 text-white px-6 py-2 rounded font-medium transition-colors">
+      Go to Dashboard
+    </a>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const phase = params.get('phase') || 'UNKNOWN';
+    const workspaceName = params.get('name') || 'Workspace';
+    const errorReason = params.get('error') || '';
+
+    document.getElementById('workspace-name').textContent = workspaceName;
+
+    const config = {
+      'PENDING': { icon: '⏳', title: 'Workspace Pending', message: 'This workspace has not been started yet.' },
+      'ERROR': { icon: '❌', title: 'Workspace Error', message: 'An error occurred with this workspace.' },
+      'DELETED': { icon: '🗑️', title: 'Workspace Deleted', message: 'This workspace has been deleted.' },
+    };
+
+    const cfg = config[phase] || { icon: '🔌', title: 'Workspace Unavailable', message: `Workspace is in ${phase} state.` };
+
+    document.getElementById('icon').textContent = cfg.icon;
+    document.getElementById('title').textContent = cfg.title;
+    document.getElementById('message').textContent = cfg.message;
+
+    if (errorReason && phase === 'ERROR') {
+      const detailEl = document.getElementById('error-detail');
+      detailEl.textContent = errorReason;
+      detailEl.classList.remove('hidden');
+    }
+  </script>
+</body>
+</html>

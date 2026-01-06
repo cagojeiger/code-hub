@@ -1,0 +1,109 @@
+"""Instance controller interface for container orchestration."""
+
+from abc import ABC, abstractmethod
+
+from pydantic import BaseModel
+
+
+class ContainerInfo(BaseModel):
+    """Container observation result."""
+
+    workspace_id: str
+    running: bool
+    reason: str
+    message: str
+
+    model_config = {"frozen": True}
+
+
+class UpstreamInfo(BaseModel):
+    """Upstream address for proxy routing.
+
+    Docker: container_name:port (e.g., ws-abc123:8080)
+    K8s: service.namespace.svc.cluster.local:port
+    """
+
+    hostname: str
+    port: int
+
+    @property
+    def url(self) -> str:
+        """HTTP URL for upstream."""
+        return f"http://{self.hostname}:{self.port}"
+
+    @property
+    def ws_url(self) -> str:
+        """WebSocket URL for upstream."""
+        return f"ws://{self.hostname}:{self.port}"
+
+    model_config = {"frozen": True}
+
+
+class InstanceController(ABC):
+    """Interface for container orchestration.
+
+    Implementations: DockerInstanceController, K8sInstanceController (future)
+    """
+
+    @abstractmethod
+    async def list_all(self, prefix: str) -> list[ContainerInfo]:
+        """Bulk observe all containers with given prefix.
+
+        Args:
+            prefix: Container name prefix (e.g., "ws-")
+
+        Returns:
+            List of ContainerInfo for all containers
+        """
+        ...
+
+    @abstractmethod
+    async def start(self, workspace_id: str, image_ref: str) -> None:
+        """Start container for workspace.
+
+        Args:
+            workspace_id: Workspace ID
+            image_ref: Container image reference
+        """
+        ...
+
+    @abstractmethod
+    async def delete(self, workspace_id: str) -> None:
+        """Delete container for workspace.
+
+        Args:
+            workspace_id: Workspace ID
+        """
+        ...
+
+    @abstractmethod
+    async def is_running(self, workspace_id: str) -> bool:
+        """Check if container is running and ready to receive traffic.
+
+        Args:
+            workspace_id: Workspace ID
+
+        Returns:
+            True if container is running
+        """
+        ...
+
+    @abstractmethod
+    async def close(self) -> None:
+        """Close controller and release resources."""
+        ...
+
+    @abstractmethod
+    async def resolve_upstream(self, workspace_id: str) -> UpstreamInfo | None:
+        """Resolve upstream address for proxy.
+
+        Docker: container_name:port
+        K8s: service_name.namespace.svc.cluster.local:port
+
+        Args:
+            workspace_id: Workspace ID
+
+        Returns:
+            UpstreamInfo if ready, None if not found/not ready
+        """
+        ...
