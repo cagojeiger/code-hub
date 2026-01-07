@@ -110,13 +110,19 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     logger.info("[main] Starting application")
 
     coordinator_task = asyncio.create_task(_run_coordinators())
+    metrics_task = asyncio.create_task(_metrics_updater_loop())
 
     yield
 
     logger.info("[main] Shutting down application")
     coordinator_task.cancel()
+    metrics_task.cancel()
     try:
         await coordinator_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await metrics_task
     except asyncio.CancelledError:
         pass
 
@@ -289,10 +295,21 @@ def _update_db_pool_metrics() -> None:
         DB_UP.set(0)
 
 
+async def _metrics_updater_loop() -> None:
+    """Update metrics periodically in background.
+
+    Runs in each worker to keep pool metrics fresh.
+    Interval is configured via METRICS_UPDATE_INTERVAL.
+    """
+    interval = get_settings().metrics.update_interval
+    while True:
+        _update_db_pool_metrics()
+        await asyncio.sleep(interval)
+
+
 @app.get("/metrics", include_in_schema=False)
 async def metrics():
     """Prometheus metrics endpoint."""
-    _update_db_pool_metrics()
     return get_metrics_response()
 
 

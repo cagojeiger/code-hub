@@ -245,6 +245,7 @@ class MetricsConfig(BaseSettings):
 
     enabled: bool = Field(default=True)
     multiproc_dir: str = Field(default="/tmp/prometheus_metrics")
+    update_interval: float = Field(default=10.0)  # seconds
 
 
 class Settings(BaseSettings):
