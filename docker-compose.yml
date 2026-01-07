@@ -201,6 +201,52 @@ services:
         max-size: "50m"
         max-file: "5"
 
+  # Prometheus - Metrics collection
+  prometheus:
+    image: prom/prometheus:v2.50.0
+    container_name: codehub-prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    networks:
+      - codehub-net
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    profiles:
+      - monitoring
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+
+  # Grafana - Metrics visualization
+  grafana:
+    image: grafana/grafana:12.1.1
+    container_name: codehub-grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - codehub-net
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+
 networks:
   codehub-net:
     name: codehub-net
@@ -209,3 +255,5 @@ networks:
 volumes:
   postgres_data:
   minio_data:
+  prometheus_data:
+  grafana_data:
