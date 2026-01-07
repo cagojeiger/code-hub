@@ -1,7 +1,6 @@
 """Prometheus metrics module with multiprocess support."""
 
 import os
-import shutil
 from pathlib import Path
 
 from prometheus_client import (
@@ -16,12 +15,10 @@ from starlette.responses import Response
 def setup_metrics(multiproc_dir: str) -> None:
     """Initialize multiprocess metrics directory.
 
-    Must be called before any metrics are created.
-    Cleans up stale files from previous runs.
+    Note: Directory is created by collector.py at import time.
+    This function is kept for future cleanup logic if needed.
     """
     path = Path(multiproc_dir)
-    if path.exists():
-        shutil.rmtree(path)
     path.mkdir(parents=True, exist_ok=True)
     os.environ["PROMETHEUS_MULTIPROC_DIR"] = str(path)
 
