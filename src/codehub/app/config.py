@@ -238,6 +238,15 @@ class ActivityConfig(BaseSettings):
     throttle_sec: float = Field(default=1.0)  # seconds (per-workspace throttle)
 
 
+class MetricsConfig(BaseSettings):
+    """Prometheus metrics configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="METRICS_")
+
+    enabled: bool = Field(default=True)
+    multiproc_dir: str = Field(default="/tmp/prometheus_metrics")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CODEHUB_",
@@ -260,6 +269,7 @@ class Settings(BaseSettings):
     sse: SSEConfig = Field(default_factory=SSEConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     activity: ActivityConfig = Field(default_factory=ActivityConfig)
+    metrics: MetricsConfig = Field(default_factory=MetricsConfig)
 
 
 @lru_cache

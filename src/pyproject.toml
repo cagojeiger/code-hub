@@ -32,6 +32,8 @@ dependencies = [
     "cachetools-async>=0.0.5",
     # Compression
     "zstandard>=0.23.0",
+    # Metrics
+    "prometheus-client>=0.21.0",
 ]
 
 [project.optional-dependencies]

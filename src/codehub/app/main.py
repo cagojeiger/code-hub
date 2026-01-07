@@ -26,6 +26,13 @@ from codehub.core.security import hash_password
 from codehub.app.proxy import router as proxy_router
 from codehub.app.proxy.activity import get_activity_buffer
 from codehub.app.proxy.client import close_http_client
+from codehub.app.metrics import setup_metrics, get_metrics_response
+from codehub.app.metrics.collector import (
+    DB_UP,
+    DB_POOL_CHECKEDIN,
+    DB_POOL_CHECKEDOUT,
+    DB_POOL_OVERFLOW,
+)
 from codehub.control.coordinator import (
     ArchiveGC,
     EventListener,
@@ -91,6 +98,10 @@ async def _ensure_admin_user() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    settings = get_settings()
+    if settings.metrics.enabled:
+        setup_metrics(settings.metrics.multiproc_dir)
+
     await init_db()
     await init_redis()
     await init_storage()
@@ -263,6 +274,26 @@ async def health():
         "version": __version__,
         "services": services,
     }
+
+
+def _update_db_pool_metrics() -> None:
+    """Update database pool metrics."""
+    try:
+        engine = get_engine()
+        pool = engine.pool
+        DB_UP.set(1)
+        DB_POOL_CHECKEDIN.set(pool.checkedin())
+        DB_POOL_CHECKEDOUT.set(pool.checkedout())
+        DB_POOL_OVERFLOW.set(pool.overflow())
+    except Exception:
+        DB_UP.set(0)
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics():
+    """Prometheus metrics endpoint."""
+    _update_db_pool_metrics()
+    return get_metrics_response()
 
 
 STATIC_DIR = Path(__file__).parent / "static"
