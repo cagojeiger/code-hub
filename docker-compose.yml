@@ -202,7 +202,7 @@ services:
 
   # Prometheus - Metrics collection
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.9.1
     container_name: codehub-prometheus
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -222,7 +222,7 @@ services:
 
   # Grafana - Metrics visualization
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:12.3.1
     container_name: codehub-grafana
     ports:
       - "127.0.0.1:13000:3000"
