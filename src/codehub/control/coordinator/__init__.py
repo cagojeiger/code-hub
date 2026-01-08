@@ -8,6 +8,7 @@ from codehub.control.coordinator.base import (
 )
 from codehub.control.coordinator.event_listener import EventListener
 from codehub.control.coordinator.gc import ArchiveGC
+from codehub.control.coordinator.metrics import MetricsCollector
 from codehub.control.coordinator.observer import ObserverCoordinator
 from codehub.control.coordinator.ttl import TTLManager
 from codehub.control.coordinator.wc import WorkspaceController
@@ -20,6 +21,7 @@ __all__ = [
     "CoordinatorType",
     "EventListener",
     "LeaderElection",
+    "MetricsCollector",
     "ObserverCoordinator",
     "WorkspaceController",
     "TTLManager",

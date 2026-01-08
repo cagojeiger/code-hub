@@ -21,6 +21,12 @@ from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import TypeVar
 
+from codehub.app.metrics.collector import (
+    CIRCUIT_BREAKER_FAILURES,
+    CIRCUIT_BREAKER_REJECTIONS,
+    CIRCUIT_BREAKER_STATE,
+)
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -71,6 +77,9 @@ class CircuitBreaker:
         self._last_failure_time: float | None = None
         self._lock = asyncio.Lock()
 
+        # Initialize metrics
+        CIRCUIT_BREAKER_STATE.labels(name=self.name).set(0)  # CLOSED
+
     @property
     def state(self) -> CircuitState:
         """Current circuit state."""
@@ -102,6 +111,7 @@ class CircuitBreaker:
                     self.name,
                     max(0, retry_after),
                 )
+                CIRCUIT_BREAKER_REJECTIONS.labels(name=self.name).inc()
                 raise CircuitOpenError(self.name, max(0, retry_after))
 
         try:
@@ -125,6 +135,7 @@ class CircuitBreaker:
                 )
                 self._state = CircuitState.HALF_OPEN
                 self._success_count = 0
+                CIRCUIT_BREAKER_STATE.labels(name=self.name).set(1)  # HALF_OPEN
 
     async def _on_success(self) -> None:
         """Handle successful operation."""
@@ -140,6 +151,7 @@ class CircuitBreaker:
                     )
                     self._state = CircuitState.CLOSED
                     self._failure_count = 0
+                    CIRCUIT_BREAKER_STATE.labels(name=self.name).set(0)  # CLOSED
             elif self._state == CircuitState.CLOSED:
                 # Reset failure count on success
                 self._failure_count = 0
@@ -149,6 +161,7 @@ class CircuitBreaker:
         async with self._lock:
             self._failure_count += 1
             self._last_failure_time = time.time()
+            CIRCUIT_BREAKER_FAILURES.labels(name=self.name).inc()
 
             if self._state == CircuitState.HALF_OPEN:
                 logger.warning(
@@ -156,6 +169,7 @@ class CircuitBreaker:
                     self.name,
                 )
                 self._state = CircuitState.OPEN
+                CIRCUIT_BREAKER_STATE.labels(name=self.name).set(2)  # OPEN
             elif self._state == CircuitState.CLOSED:
                 if self._failure_count >= self.failure_threshold:
                     logger.warning(
@@ -165,6 +179,7 @@ class CircuitBreaker:
                         self._failure_count,
                     )
                     self._state = CircuitState.OPEN
+                    CIRCUIT_BREAKER_STATE.labels(name=self.name).set(2)  # OPEN
 
 
 _circuit_breakers: dict[str, CircuitBreaker] = {}

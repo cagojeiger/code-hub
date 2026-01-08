@@ -20,25 +20,17 @@ from codehub.adapters.storage import S3StorageProvider
 from codehub.app.api.v1 import auth_router, events_router, workspaces_router
 from codehub.app.config import get_settings
 from codehub.app.logging import setup_logging
-from codehub.core.domain.workspace import Operation, Phase
 from codehub.core.errors import CodeHubError
-from codehub.core.models import User, Workspace
+from codehub.core.models import User
 from codehub.core.security import hash_password
 from codehub.app.proxy import router as proxy_router
 from codehub.app.proxy.activity import get_activity_buffer
 from codehub.app.proxy.client import close_http_client
 from codehub.app.metrics import setup_metrics, get_metrics_response
-from codehub.app.metrics.collector import (
-    DB_UP,
-    DB_POOL_CHECKEDIN,
-    DB_POOL_CHECKEDOUT,
-    DB_POOL_OVERFLOW,
-    WORKSPACE_COUNT_BY_OPERATION,
-    WORKSPACE_COUNT_BY_STATE,
-)
 from codehub.control.coordinator import (
     ArchiveGC,
     EventListener,
+    MetricsCollector,
     ObserverCoordinator,
     TTLManager,
     WorkspaceController,
@@ -113,19 +105,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     logger.info("[main] Starting application")
 
     coordinator_task = asyncio.create_task(_run_coordinators())
-    metrics_task = asyncio.create_task(_metrics_updater_loop())
 
     yield
 
     logger.info("[main] Shutting down application")
     coordinator_task.cancel()
-    metrics_task.cancel()
     try:
         await coordinator_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await metrics_task
     except asyncio.CancelledError:
         pass
 
@@ -204,6 +190,7 @@ async def _run_coordinators() -> None:
             make_runner(WorkspaceController, ic, sp)(),
             make_runner(TTLManager, activity_store, publisher)(),
             make_runner(ArchiveGC, sp, ic)(),
+            make_runner(MetricsCollector)(),
             event_listener_runner(),
             activity_buffer_flush_loop(),
         )
@@ -283,76 +270,6 @@ async def health():
         "version": __version__,
         "services": services,
     }
-
-
-def _update_db_pool_metrics() -> None:
-    """Update database pool metrics."""
-    try:
-        engine = get_engine()
-        pool = engine.pool
-        DB_UP.set(1)
-        DB_POOL_CHECKEDIN.set(pool.checkedin())
-        DB_POOL_CHECKEDOUT.set(pool.checkedout())
-        DB_POOL_OVERFLOW.set(pool.overflow())
-    except Exception:
-        DB_UP.set(0)
-
-
-async def _update_workspace_count_metrics() -> None:
-    """Update workspace count gauges."""
-    try:
-        engine = get_engine()
-        async with engine.connect() as conn:
-            # Count by phase
-            stmt = (
-                select(Workspace.phase, func.count(Workspace.id))
-                .where(Workspace.deleted_at.is_(None))
-                .group_by(Workspace.phase)
-            )
-            result = await conn.execute(stmt)
-
-            # Reset all to 0 first (handle phases with no workspaces)
-            for phase in Phase:
-                WORKSPACE_COUNT_BY_STATE.labels(phase=phase.name).set(0)
-
-            for phase_value, count in result.fetchall():
-                WORKSPACE_COUNT_BY_STATE.labels(phase=Phase(phase_value).name).set(count)
-
-            # Count by operation
-            stmt = (
-                select(Workspace.operation, func.count(Workspace.id))
-                .where(
-                    Workspace.deleted_at.is_(None),
-                    Workspace.operation != Operation.NONE.value,
-                )
-                .group_by(Workspace.operation)
-            )
-            result = await conn.execute(stmt)
-
-            # Reset all to 0
-            for op in Operation:
-                if op != Operation.NONE:
-                    WORKSPACE_COUNT_BY_OPERATION.labels(operation=op.name).set(0)
-
-            for operation_value, count in result.fetchall():
-                WORKSPACE_COUNT_BY_OPERATION.labels(
-                    operation=Operation(operation_value).name
-                ).set(count)
-    except Exception as e:
-        logger.warning("Failed to update workspace count metrics: %s", e)
-
-
-async def _metrics_updater_loop() -> None:
-    """Update metrics periodically in background.
-
-    Runs in each worker to keep pool metrics fresh.
-    Interval is configured via METRICS_UPDATE_INTERVAL.
-    """
-    interval = get_settings().metrics.update_interval
-    while True:
-        _update_db_pool_metrics()
-        await _update_workspace_count_metrics()
-        await asyncio.sleep(interval)
 
 
 @app.get("/metrics", include_in_schema=False)

@@ -23,6 +23,7 @@ from codehub.app.config import get_settings
 from codehub.app.metrics.collector import (
     COORDINATOR_WC_CAS_FAILURES,
     COORDINATOR_WC_RECONCILE_QUEUE,
+    WORKSPACE_LAST_OPERATION_TIMESTAMP,
     WORKSPACE_OPERATION_DURATION,
     WORKSPACE_OPERATIONS,
     WORKSPACE_STATE_TRANSITIONS,
@@ -484,6 +485,12 @@ class WorkspaceController(CoordinatorBase):
                     operation=ws.operation,
                     status=status,
                 ).inc()
+
+                # Record last operation timestamp for successful operations
+                if status == "success":
+                    WORKSPACE_LAST_OPERATION_TIMESTAMP.labels(
+                        operation=ws.operation
+                    ).set_to_current_time()
 
     # =================================================================
     # DB Operations (WC-owned columns, CAS pattern)

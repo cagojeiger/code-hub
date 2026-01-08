@@ -233,6 +233,7 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana-datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+      - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards:ro
     networks:
       - codehub-net
     depends_on:

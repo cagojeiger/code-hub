@@ -17,24 +17,24 @@ os.environ["PROMETHEUS_MULTIPROC_DIR"] = _multiproc_dir
 DB_UP = Gauge(
     "codehub_db_up",
     "Database connection status (1=connected, 0=disconnected)",
-    multiprocess_mode="livesum",
+    multiprocess_mode="max",
 )
 
 DB_POOL_CHECKEDIN = Gauge(
     "codehub_db_pool_checkedin",
-    "Database connections idle in pool",
+    "Database connections idle in pool (sum across all workers in leader pod)",
     multiprocess_mode="livesum",
 )
 
 DB_POOL_CHECKEDOUT = Gauge(
     "codehub_db_pool_checkedout",
-    "Database connections in use",
+    "Database connections in use (sum across all workers in leader pod)",
     multiprocess_mode="livesum",
 )
 
 DB_POOL_OVERFLOW = Gauge(
     "codehub_db_pool_overflow",
-    "Database overflow connections",
+    "Database overflow connections (sum across all workers in leader pod)",
     multiprocess_mode="livesum",
 )
 
@@ -84,14 +84,14 @@ WORKSPACE_OPERATION_DURATION = Histogram(
 
 WORKSPACE_COUNT_BY_STATE = Gauge(
     "codehub_workspace_count_by_state",
-    "Current number of workspaces by state",
+    "Current number of workspaces by state (only leader updates)",
     ["phase"],
     multiprocess_mode="livesum",
 )
 
 WORKSPACE_COUNT_BY_OPERATION = Gauge(
     "codehub_workspace_count_by_operation",
-    "Current number of workspaces by active operation",
+    "Current number of workspaces by active operation (only leader updates)",
     ["operation"],
     multiprocess_mode="livesum",
 )
@@ -100,6 +100,13 @@ WORKSPACE_TTL_EXPIRY = Counter(
     "codehub_workspace_ttl_expiry_total",
     "Total TTL expiry events",
     ["ttl_type"],
+)
+
+WORKSPACE_LAST_OPERATION_TIMESTAMP = Gauge(
+    "codehub_workspace_last_operation_timestamp",
+    "Timestamp of last operation execution (seconds since epoch)",
+    ["operation"],
+    multiprocess_mode="max",
 )
 
 # Coordinator metrics
@@ -127,7 +134,7 @@ COORDINATOR_LEADER_STATUS = Gauge(
 
 COORDINATOR_WC_RECONCILE_QUEUE = Gauge(
     "codehub_coordinator_wc_reconcile_queue",
-    "Number of workspaces needing reconciliation",
+    "Number of workspaces needing reconciliation (only leader updates)",
     multiprocess_mode="livesum",
 )
 
@@ -153,4 +160,26 @@ COORDINATOR_GC_ORPHANS_DELETED = Counter(
     "codehub_coordinator_gc_orphans_deleted_total",
     "Total orphaned resources deleted",
     ["resource_type"],
+)
+
+# Circuit Breaker metrics
+# These metrics track circuit breaker state and failures for external services
+
+CIRCUIT_BREAKER_STATE = Gauge(
+    "codehub_circuit_breaker_state",
+    "Circuit breaker state (0=CLOSED, 1=HALF_OPEN, 2=OPEN)",
+    ["name"],
+    multiprocess_mode="max",
+)
+
+CIRCUIT_BREAKER_FAILURES = Counter(
+    "codehub_circuit_breaker_failures_total",
+    "Total circuit breaker failures",
+    ["name"],
+)
+
+CIRCUIT_BREAKER_REJECTIONS = Counter(
+    "codehub_circuit_breaker_rejections_total",
+    "Total circuit breaker rejections (circuit open)",
+    ["name"],
 )

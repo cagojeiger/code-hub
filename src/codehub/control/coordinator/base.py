@@ -35,6 +35,7 @@ class CoordinatorType(StrEnum):
     WC = "wc"
     GC = "gc"
     TTL = "ttl"
+    METRICS = "metrics"
 
 
 class CoordinatorBase(ABC):
