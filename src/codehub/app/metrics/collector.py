@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from prometheus_client import Gauge
+from prometheus_client import Counter, Gauge, Histogram
 
 # Ensure multiprocess directory exists before creating gauges
 # This is required because multiprocess_mode gauges need the directory at import time
@@ -36,4 +36,26 @@ DB_POOL_OVERFLOW = Gauge(
     "codehub_db_pool_overflow",
     "Database overflow connections",
     multiprocess_mode="livesum",
+)
+
+# WebSocket metrics
+# These metrics track WebSocket proxy performance and connection health
+
+WS_ACTIVE_CONNECTIONS = Gauge(
+    "codehub_ws_active_connections",
+    "Currently active WebSocket connections",
+    multiprocess_mode="livesum",
+)
+
+WS_MESSAGE_LATENCY = Histogram(
+    "codehub_ws_message_latency_seconds",
+    "WebSocket message relay latency",
+    ["direction"],
+    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0),
+)
+
+WS_ERRORS = Counter(
+    "codehub_ws_errors_total",
+    "WebSocket connection errors",
+    ["error_type"],
 )
