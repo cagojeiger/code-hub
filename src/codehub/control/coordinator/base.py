@@ -13,6 +13,11 @@ from enum import StrEnum
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from codehub.app.config import get_settings
+from codehub.app.metrics.collector import (
+    COORDINATOR_LEADER_STATUS,
+    COORDINATOR_TICK_DURATION,
+    COORDINATOR_TICK_TOTAL,
+)
 from codehub.core.interfaces.leader import LeaderElection
 from codehub.infra.redis_pubsub import ChannelSubscriber
 
@@ -160,6 +165,9 @@ class CoordinatorBase(ABC):
             return False
 
         self._last_verify = now
+        COORDINATOR_LEADER_STATUS.labels(coordinator_type=self.COORDINATOR_TYPE.value).set(
+            1 if self._leader.is_leader else 0
+        )
         return True
 
     async def _ensure_subscribed(self) -> None:
@@ -185,13 +193,28 @@ class CoordinatorBase(ABC):
             await self._release_subscription()
             return True  # Continue loop to re-acquire leadership
 
+        start = time.time()
         try:
             await self.tick()
+            duration = time.time() - start
+            COORDINATOR_TICK_DURATION.labels(
+                coordinator_type=self.COORDINATOR_TYPE.value
+            ).observe(duration)
+            COORDINATOR_TICK_TOTAL.labels(
+                coordinator_type=self.COORDINATOR_TYPE.value, status="success"
+            ).inc()
             self._last_tick = time.time()
             return True
         except asyncio.CancelledError:
             return False
         except Exception as e:
+            duration = time.time() - start
+            COORDINATOR_TICK_DURATION.labels(
+                coordinator_type=self.COORDINATOR_TYPE.value
+            ).observe(duration)
+            COORDINATOR_TICK_TOTAL.labels(
+                coordinator_type=self.COORDINATOR_TYPE.value, status="error"
+            ).inc()
             logger.exception("[%s] Error in tick: %s", self.name, e)
             await self._safe_rollback()
             self._last_tick = time.time()

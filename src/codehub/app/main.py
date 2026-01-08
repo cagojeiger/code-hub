@@ -10,7 +10,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,8 +20,9 @@ from codehub.adapters.storage import S3StorageProvider
 from codehub.app.api.v1 import auth_router, events_router, workspaces_router
 from codehub.app.config import get_settings
 from codehub.app.logging import setup_logging
+from codehub.core.domain.workspace import Operation, Phase
 from codehub.core.errors import CodeHubError
-from codehub.core.models import User
+from codehub.core.models import User, Workspace
 from codehub.core.security import hash_password
 from codehub.app.proxy import router as proxy_router
 from codehub.app.proxy.activity import get_activity_buffer
@@ -32,6 +33,8 @@ from codehub.app.metrics.collector import (
     DB_POOL_CHECKEDIN,
     DB_POOL_CHECKEDOUT,
     DB_POOL_OVERFLOW,
+    WORKSPACE_COUNT_BY_OPERATION,
+    WORKSPACE_COUNT_BY_STATE,
 )
 from codehub.control.coordinator import (
     ArchiveGC,
@@ -295,6 +298,50 @@ def _update_db_pool_metrics() -> None:
         DB_UP.set(0)
 
 
+async def _update_workspace_count_metrics() -> None:
+    """Update workspace count gauges."""
+    try:
+        engine = get_engine()
+        async with engine.connect() as conn:
+            # Count by phase
+            stmt = (
+                select(Workspace.phase, func.count(Workspace.id))
+                .where(Workspace.deleted_at.is_(None))
+                .group_by(Workspace.phase)
+            )
+            result = await conn.execute(stmt)
+
+            # Reset all to 0 first (handle phases with no workspaces)
+            for phase in Phase:
+                WORKSPACE_COUNT_BY_STATE.labels(phase=phase.name).set(0)
+
+            for phase_value, count in result.fetchall():
+                WORKSPACE_COUNT_BY_STATE.labels(phase=Phase(phase_value).name).set(count)
+
+            # Count by operation
+            stmt = (
+                select(Workspace.operation, func.count(Workspace.id))
+                .where(
+                    Workspace.deleted_at.is_(None),
+                    Workspace.operation != Operation.NONE.value,
+                )
+                .group_by(Workspace.operation)
+            )
+            result = await conn.execute(stmt)
+
+            # Reset all to 0
+            for op in Operation:
+                if op != Operation.NONE:
+                    WORKSPACE_COUNT_BY_OPERATION.labels(operation=op.name).set(0)
+
+            for operation_value, count in result.fetchall():
+                WORKSPACE_COUNT_BY_OPERATION.labels(
+                    operation=Operation(operation_value).name
+                ).set(count)
+    except Exception as e:
+        logger.warning("Failed to update workspace count metrics: %s", e)
+
+
 async def _metrics_updater_loop() -> None:
     """Update metrics periodically in background.
 
@@ -304,6 +351,7 @@ async def _metrics_updater_loop() -> None:
     interval = get_settings().metrics.update_interval
     while True:
         _update_db_pool_metrics()
+        await _update_workspace_count_metrics()
         await asyncio.sleep(interval)
 
 

@@ -20,6 +20,13 @@ from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
+from codehub.app.metrics.collector import (
+    COORDINATOR_WC_CAS_FAILURES,
+    COORDINATOR_WC_RECONCILE_QUEUE,
+    WORKSPACE_OPERATION_DURATION,
+    WORKSPACE_OPERATIONS,
+    WORKSPACE_STATE_TRANSITIONS,
+)
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
     CoordinatorBase,
@@ -97,6 +104,9 @@ class WorkspaceController(CoordinatorBase):
         logger.info("[%s] tick() started", self.name)
         workspaces = await self._load_for_reconcile()  # DB (순차)
         logger.info("[%s] loaded %d workspaces for reconcile", self.name, len(workspaces))
+
+        # Track reconcile queue size
+        COORDINATOR_WC_RECONCILE_QUEUE.set(len(workspaces))
 
         # 1. Judge + Plan (순수 계산)
         plans: list[tuple[Workspace, PlanAction]] = []
@@ -437,6 +447,7 @@ class WorkspaceController(CoordinatorBase):
 
         if not success:
             logger.info("CAS failed for %s (expected_op=%s), will retry next tick", ws.id, ws_op)
+            COORDINATOR_WC_CAS_FAILURES.inc()
         else:
             logger.debug(
                 "Updated %s: phase=%s, operation=%s",
@@ -444,6 +455,35 @@ class WorkspaceController(CoordinatorBase):
                 action.phase,
                 action.operation,
             )
+
+            # Track state transitions
+            if ws.phase != action.phase.value:
+                WORKSPACE_STATE_TRANSITIONS.labels(
+                    from_state=Phase(ws.phase).name,
+                    to_state=action.phase.name,
+                ).inc()
+
+            # Track operation completion
+            if action.complete:
+                # Calculate operation duration
+                if ws.op_started_at:
+                    duration = (now - ws.op_started_at).total_seconds()
+                    WORKSPACE_OPERATION_DURATION.labels(
+                        operation=ws.operation
+                    ).observe(duration)
+
+                # Record success/failure/timeout
+                if action.error_reason == ErrorReason.TIMEOUT:
+                    status = "timeout"
+                elif action.error_reason:
+                    status = "failure"
+                else:
+                    status = "success"
+
+                WORKSPACE_OPERATIONS.labels(
+                    operation=ws.operation,
+                    status=status,
+                ).inc()
 
     # =================================================================
     # DB Operations (WC-owned columns, CAS pattern)

@@ -11,6 +11,7 @@ Algorithm:
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Coroutine
 
@@ -18,6 +19,10 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
+from codehub.app.metrics.collector import (
+    COORDINATOR_OBSERVER_API_DURATION,
+    COORDINATOR_OBSERVER_API_ERRORS,
+)
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
     CoordinatorBase,
@@ -42,9 +47,17 @@ class BulkObserver:
         self._timeout_s = _settings.observer.timeout_s
 
     async def _safe[T](self, coro: Coroutine[None, None, list[T]], name: str) -> list[T] | None:
+        start = time.time()
         try:
-            return await asyncio.wait_for(coro, timeout=self._timeout_s)
+            result = await asyncio.wait_for(coro, timeout=self._timeout_s)
+            COORDINATOR_OBSERVER_API_DURATION.labels(resource_type=name).observe(
+                time.time() - start
+            )
+            return result
         except asyncio.TimeoutError:
+            COORDINATOR_OBSERVER_API_ERRORS.labels(
+                resource_type=name, error_type="timeout"
+            ).inc()
             logger.warning(
                 "[BulkObserver] %s timeout (%.1fs)",
                 name, self._timeout_s,
@@ -52,6 +65,9 @@ class BulkObserver:
             )
             return None
         except Exception as exc:
+            COORDINATOR_OBSERVER_API_ERRORS.labels(
+                resource_type=name, error_type=type(exc).__name__
+            ).inc()
             logger.exception(
                 "[BulkObserver] %s failed: %s",
                 name, exc,

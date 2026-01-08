@@ -59,3 +59,98 @@ WS_ERRORS = Counter(
     "WebSocket connection errors",
     ["error_type"],
 )
+
+# Workspace Lifecycle metrics
+# These metrics track workspace state transitions and operation execution
+
+WORKSPACE_STATE_TRANSITIONS = Counter(
+    "codehub_workspace_state_transitions_total",
+    "Total workspace state transitions",
+    ["from_state", "to_state"],
+)
+
+WORKSPACE_OPERATIONS = Counter(
+    "codehub_workspace_operations_total",
+    "Total workspace operations initiated",
+    ["operation", "status"],
+)
+
+WORKSPACE_OPERATION_DURATION = Histogram(
+    "codehub_workspace_operation_duration_seconds",
+    "Duration of workspace operations",
+    ["operation"],
+    buckets=(1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0),
+)
+
+WORKSPACE_COUNT_BY_STATE = Gauge(
+    "codehub_workspace_count_by_state",
+    "Current number of workspaces by state",
+    ["phase"],
+    multiprocess_mode="livesum",
+)
+
+WORKSPACE_COUNT_BY_OPERATION = Gauge(
+    "codehub_workspace_count_by_operation",
+    "Current number of workspaces by active operation",
+    ["operation"],
+    multiprocess_mode="livesum",
+)
+
+WORKSPACE_TTL_EXPIRY = Counter(
+    "codehub_workspace_ttl_expiry_total",
+    "Total TTL expiry events",
+    ["ttl_type"],
+)
+
+# Coordinator metrics
+# These metrics track coordinator tick performance and health
+
+COORDINATOR_TICK_DURATION = Histogram(
+    "codehub_coordinator_tick_duration_seconds",
+    "Duration of coordinator reconciliation tick",
+    ["coordinator_type"],
+    buckets=(0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0),
+)
+
+COORDINATOR_TICK_TOTAL = Counter(
+    "codehub_coordinator_tick_total",
+    "Total coordinator ticks executed",
+    ["coordinator_type", "status"],
+)
+
+COORDINATOR_LEADER_STATUS = Gauge(
+    "codehub_coordinator_leader_status",
+    "Leader election status (1=leader, 0=follower)",
+    ["coordinator_type"],
+    multiprocess_mode="max",
+)
+
+COORDINATOR_WC_RECONCILE_QUEUE = Gauge(
+    "codehub_coordinator_wc_reconcile_queue",
+    "Number of workspaces needing reconciliation",
+    multiprocess_mode="livesum",
+)
+
+COORDINATOR_WC_CAS_FAILURES = Counter(
+    "codehub_coordinator_wc_cas_failures_total",
+    "Total CAS update failures in WC",
+)
+
+COORDINATOR_OBSERVER_API_DURATION = Histogram(
+    "codehub_coordinator_observer_api_duration_seconds",
+    "Duration of Observer API calls",
+    ["resource_type"],
+    buckets=(0.1, 0.5, 1.0, 2.0, 5.0),
+)
+
+COORDINATOR_OBSERVER_API_ERRORS = Counter(
+    "codehub_coordinator_observer_api_errors_total",
+    "Total Observer API errors",
+    ["resource_type", "error_type"],
+)
+
+COORDINATOR_GC_ORPHANS_DELETED = Counter(
+    "codehub_coordinator_gc_orphans_deleted_total",
+    "Total orphaned resources deleted",
+    ["resource_type"],
+)
