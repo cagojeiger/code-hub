@@ -3,8 +3,6 @@ services:
   postgres:
     image: postgres:17
     container_name: codehub-postgres
-    ports:
-      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: codehub
       POSTGRES_PASSWORD: codehub
@@ -14,7 +12,7 @@ services:
     networks:
       - codehub-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U codehub"]
+      test: [ "CMD-SHELL", "pg_isready -U codehub" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -31,12 +29,10 @@ services:
   redis:
     image: redis:7
     container_name: codehub-redis
-    ports:
-      - "127.0.0.1:6379:6379"
     networks:
       - codehub-net
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -55,8 +51,7 @@ services:
     container_name: codehub-minio
     command: server /data --console-address ":9001"
     ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
+      - "127.0.0.1:19001:9001"
     environment:
       MINIO_ROOT_USER: codehub
       MINIO_ROOT_PASSWORD: codehub123
@@ -65,7 +60,7 @@ services:
     networks:
       - codehub-net
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: [ "CMD", "mc", "ready", "local" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -112,8 +107,8 @@ services:
     build:
       context: containers/storage-job
     image: codehub/storage-job:latest
-    profiles:
-      - build  # docker compose --profile build build storage-job
+    deploy:
+      replicas: 0 # Build image but don't run container
 
   # Test runner - isolated test environment
   test:
@@ -144,7 +139,7 @@ services:
       - test
     # No restart - runs once and exits
 
-  # Database migration - runs once before control-plane starts
+    # Database migration - runs once before control-plane starts
   migrate:
     build:
       context: src
@@ -160,14 +155,14 @@ services:
       - codehub-net
     # No restart - runs once and exits
 
-  # Control Plane - API, Reconciler, Coordinator
+    # Control Plane - API, Reconciler, Coordinator
   control-plane:
     build:
       context: src
       dockerfile: Dockerfile
     container_name: codehub-control-plane
     ports:
-      - "127.0.0.1:8000:8000"
+      - "0.0.0.0:18000:8000"
     environment:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
@@ -182,6 +177,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_started
       migrate:
         condition: service_completed_successfully
     networks:
@@ -190,7 +189,7 @@ services:
     mem_limit: 512m
     cpus: 1.0
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -201,6 +200,47 @@ services:
         max-size: "50m"
         max-file: "5"
 
+  # Prometheus - Metrics collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: codehub-prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    networks:
+      - codehub-net
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+
+  # Grafana - Metrics visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: codehub-grafana
+    ports:
+      - "127.0.0.1:13000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=qwer1234
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+    networks:
+      - codehub-net
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
+
 networks:
   codehub-net:
     name: codehub-net
@@ -209,3 +249,5 @@ networks:
 volumes:
   postgres_data:
   minio_data:
+  prometheus_data:
+  grafana_data:

@@ -28,5 +28,8 @@ EXPOSE 8000
 # Default workers (can be overridden via environment variable)
 ENV WORKERS=1
 
+# Prometheus multiprocess metrics directory
+ENV PROMETHEUS_MULTIPROC_DIR=/tmp/prometheus_metrics
+
 # Run application with configurable workers
 CMD uv run uvicorn codehub.app.main:app --host 0.0.0.0 --port 8000 --workers ${WORKERS} --no-access-log

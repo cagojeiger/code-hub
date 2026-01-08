@@ -6,6 +6,7 @@ Configuration via ProxyConfig (PROXY_ env prefix).
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import AsyncGenerator
 
 import httpx
@@ -17,6 +18,11 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from websockets.asyncio.client import ClientConnection
 
 from codehub.app.config import get_settings
+from codehub.app.metrics.collector import (
+    WS_ACTIVE_CONNECTIONS,
+    WS_ERRORS,
+    WS_MESSAGE_LATENCY,
+)
 from codehub.core.errors import UpstreamUnavailableError
 from codehub.core.interfaces import UpstreamInfo
 
@@ -38,11 +44,15 @@ async def _relay_client_to_backend(
     while True:
         data = await client_ws.receive()
         if data["type"] == "websocket.receive":
+            start = time.perf_counter()
             _activity_buffer.record(workspace_id)
             if "text" in data:
                 await backend_ws.send(data["text"])
             elif "bytes" in data:
                 await backend_ws.send(data["bytes"])
+            WS_MESSAGE_LATENCY.labels(direction="client_to_backend").observe(
+                time.perf_counter() - start
+            )
         elif data["type"] == "websocket.disconnect":
             break
 
@@ -54,11 +64,15 @@ async def _relay_backend_to_client(
 ) -> None:
     """Relay messages from backend WebSocket to client WebSocket."""
     async for message in backend_ws:
+        start = time.perf_counter()
         _activity_buffer.record(workspace_id)
         if isinstance(message, str):
             await client_ws.send_text(message)
         else:
             await client_ws.send_bytes(message)
+        WS_MESSAGE_LATENCY.labels(direction="backend_to_client").observe(
+            time.perf_counter() - start
+        )
 
 
 async def proxy_http_to_upstream(
@@ -134,19 +148,23 @@ async def proxy_ws_to_upstream(
             max_queue=_proxy_config.ws_max_queue,
         )
     except websockets.InvalidURI as exc:
+        WS_ERRORS.labels(error_type="invalid_uri").inc()
         logger.warning("Invalid WebSocket URI for %s: %s", workspace_id, exc)
         await websocket.close(code=1011, reason="Invalid upstream URI")
         return
     except websockets.InvalidHandshake as exc:
+        WS_ERRORS.labels(error_type="handshake_failed").inc()
         logger.warning("WebSocket handshake failed for %s: %s", workspace_id, exc)
         await websocket.close(code=1011, reason="Upstream handshake failed")
         return
     except Exception as exc:
+        WS_ERRORS.labels(error_type="connection_failed").inc()
         logger.warning("Failed to connect to upstream %s: %s", workspace_id, exc)
         await websocket.close(code=1011, reason="Upstream connection failed")
         return
 
     await websocket.accept()
+    WS_ACTIVE_CONNECTIONS.inc()
 
     try:
         async with backend_ws:
@@ -161,9 +179,11 @@ async def proxy_ws_to_upstream(
             except* WebSocketDisconnect:
                 pass
             except* websockets.ConnectionClosed:
-                pass
+                WS_ERRORS.labels(error_type="connection_closed").inc()
     except Exception as exc:
+        WS_ERRORS.labels(error_type="relay_error").inc()
         logger.error("WebSocket proxy error for %s: %s", workspace_id, exc)
     finally:
+        WS_ACTIVE_CONNECTIONS.dec()
         with contextlib.suppress(Exception):
             await websocket.close()
