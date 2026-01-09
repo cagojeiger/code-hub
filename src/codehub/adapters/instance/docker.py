@@ -2,6 +2,8 @@
 
 import logging
 
+import httpx
+
 from codehub.app.config import get_settings
 from codehub.core.interfaces import ContainerInfo, InstanceController, UpstreamInfo
 from codehub.infra.docker import (
@@ -64,9 +66,18 @@ class DockerInstanceController(InstanceController):
 
         existing = await self._containers.inspect(container_name)
         if existing:
-            await self._containers.start(container_name)
-            logger.info("Started existing container: %s", container_name)
-            return
+            try:
+                await self._containers.start(container_name)
+                logger.info("Started existing container: %s", container_name)
+                return
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    # Container disappeared between inspect and start, recreate it
+                    logger.warning(
+                        "Container disappeared, will recreate: %s", container_name
+                    )
+                else:
+                    raise
 
         # Ensure image exists (auto-pull if not)
         image = image_ref or self._runtime.default_image

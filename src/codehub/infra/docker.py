@@ -13,6 +13,7 @@ import httpx
 from pydantic import BaseModel
 
 from codehub.app.config import get_settings
+from codehub.core.retryable import VolumeInUseError  # noqa: F401 - re-exported
 
 logger = logging.getLogger(__name__)
 
@@ -425,8 +426,7 @@ class VolumeAPI:
             logger.debug("Volume not found: %s", name)
             return
         if resp.status_code == 409:
-            logger.warning("Volume in use, cannot delete: %s", name)
-            return
+            raise VolumeInUseError(f"Volume {name} is in use by a container")
         resp.raise_for_status()
         logger.info("Removed volume: %s", name)
 

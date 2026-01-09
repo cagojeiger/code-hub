@@ -70,6 +70,42 @@ class TestVolumeAPI:
         finally:
             await volume_api.remove(name)
 
+    @pytest.mark.asyncio
+    async def test_volume_remove_409_raises_error(
+        self, volume_api: VolumeAPI, test_prefix: str
+    ):
+        """볼륨 사용 중 삭제 시 VolumeInUseError 발생."""
+        from codehub.infra.docker import ContainerAPI, VolumeInUseError
+
+        container_api = ContainerAPI()
+        vol_name = f"{test_prefix}in-use-vol"
+        container_name = f"{test_prefix}vol-user"
+
+        try:
+            # 볼륨 생성
+            await volume_api.create(VolumeConfig(name=vol_name))
+
+            # 볼륨을 사용하는 컨테이너 생성 (실행 안 함 - Created 상태)
+            config = ContainerConfig(
+                image=TEST_IMAGE,
+                name=container_name,
+                cmd=["echo", "done"],
+                host_config=HostConfig(binds=[f"{vol_name}:/data"]),
+            )
+            await container_api.create(config)
+
+            # 볼륨 삭제 시도 → 409 → VolumeInUseError
+            with pytest.raises(VolumeInUseError) as exc_info:
+                await volume_api.remove(vol_name)
+
+            assert vol_name in str(exc_info.value)
+
+        finally:
+            # 컨테이너 먼저 삭제
+            await container_api.remove(container_name)
+            # 이제 볼륨 삭제 가능
+            await volume_api.remove(vol_name)
+
 
 # Test image - use python:3.13-slim which is already pulled for Dockerfile.test
 TEST_IMAGE = "python:3.13-slim"

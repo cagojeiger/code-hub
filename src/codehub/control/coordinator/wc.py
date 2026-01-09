@@ -366,10 +366,12 @@ class WorkspaceController(CoordinatorBase):
                 await self._ic.delete(ws.id)
 
             case Operation.ARCHIVING:
-                # 2단계 operation: archive → delete_volume (계약 #8)
+                # 3단계 operation: archive → delete container → delete_volume
+                # 컨테이너 삭제 추가: Exited 컨테이너도 볼륨 참조하므로 먼저 삭제 필요
                 op_id = action.op_id or ws.op_id or str(uuid4())
                 archive_key = await self._sp.archive(ws.id, op_id)
                 action.archive_key = archive_key
+                await self._ic.delete(ws.id)  # Exited 컨테이너 정리 (idempotent)
                 await self._sp.delete_volume(ws.id)
 
             case Operation.CREATE_EMPTY_ARCHIVE:

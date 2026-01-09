@@ -108,6 +108,24 @@ class TestS3Retryable:
         assert is_s3_retryable(exc) is False
 
 
+class TestVolumeInUseError:
+    """Tests for Docker VolumeInUseError classification."""
+
+    def test_volume_in_use_is_retryable(self) -> None:
+        """VolumeInUseError should be retryable (container deletion may free volume)."""
+        from codehub.infra.docker import VolumeInUseError
+
+        exc = VolumeInUseError("Volume test-vol is in use by a container")
+        assert is_retryable(exc) is True
+
+    def test_volume_in_use_classified_as_retryable(self) -> None:
+        """VolumeInUseError should be classified as retryable."""
+        from codehub.infra.docker import VolumeInUseError
+
+        exc = VolumeInUseError("Volume test-vol is in use")
+        assert classify_error(exc) == "retryable"
+
+
 class TestClassifyError:
     """Tests for classify_error function."""
 
