@@ -39,7 +39,27 @@
               warning: '#cca700',
               error: '#f14c4c',
             }
-          }
+          },
+          width: {
+            'panel': '384px',
+          },
+          minWidth: {
+            'panel': '280px',
+          },
+          animation: {
+            'slide-in': 'slideIn 0.2s ease-out',
+            'fade-in': 'fadeIn 0.15s ease-out',
+          },
+          keyframes: {
+            slideIn: {
+              from: { transform: 'translateX(100%)' },
+              to: { transform: 'translateX(0)' },
+            },
+            fadeIn: {
+              from: { opacity: '0' },
+              to: { opacity: '1' },
+            },
+          },
         }
       }
     }
@@ -171,8 +191,7 @@
 
     <!-- Slide Panel (Detail) -->
     <aside id="detail-panel"
-      class="hidden bg-vscode-sidebar border-l border-vscode-border shrink-0 slide-in relative flex flex-col"
-      style="width: 384px; min-width: 280px; max-width: 600px;">
+      class="hidden bg-vscode-sidebar border-l border-vscode-border shrink-0 animate-slide-in relative flex flex-col w-panel min-w-panel">
       <!-- Resize Handle -->
       <div id="panel-resize-handle" class="resize-handle"></div>
 
@@ -294,8 +313,8 @@
 
   <!-- Create Workspace Modal -->
   <div id="create-modal"
-    class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 fade-in">
-    <div class="bg-vscode-sidebar border border-vscode-border rounded-lg w-full max-w-md mx-4 slide-in">
+    class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fade-in">
+    <div class="bg-vscode-sidebar border border-vscode-border rounded-lg w-full max-w-md mx-4 animate-slide-in">
       <div class="flex justify-between items-center px-6 py-4 border-b border-vscode-border">
         <h2 class="text-lg font-semibold text-white">New Workspace</h2>
         <button id="close-modal-btn" class="text-vscode-text hover:text-white">
@@ -339,8 +358,8 @@
 
   <!-- Delete Confirmation Modal -->
   <div id="delete-modal"
-    class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 fade-in">
-    <div class="bg-vscode-sidebar border border-vscode-border rounded-lg w-full max-w-md mx-4 slide-in">
+    class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fade-in">
+    <div class="bg-vscode-sidebar border border-vscode-border rounded-lg w-full max-w-md mx-4 animate-slide-in">
       <div class="flex justify-between items-center px-6 py-4 border-b border-vscode-border">
         <h2 class="text-lg font-semibold text-white flex items-center gap-2">
           <svg class="w-5 h-5 text-vscode-error" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -392,8 +411,8 @@
 
   <!-- Keyboard Shortcuts Modal -->
   <div id="shortcuts-modal"
-    class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 fade-in">
-    <div class="bg-vscode-sidebar border border-vscode-border rounded-lg w-full max-w-lg mx-4 slide-in">
+    class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fade-in">
+    <div class="bg-vscode-sidebar border border-vscode-border rounded-lg w-full max-w-lg mx-4 animate-slide-in">
       <div class="flex justify-between items-center px-6 py-4 border-b border-vscode-border">
         <h2 class="text-lg font-semibold text-white">Keyboard Shortcuts</h2>
         <button id="close-shortcuts-modal-btn" class="text-vscode-text hover:text-white">

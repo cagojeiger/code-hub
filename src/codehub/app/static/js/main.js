@@ -142,12 +142,15 @@ function setupPanelResize() {
   document.addEventListener('mousemove', (e) => {
     if (!isResizing) return;
 
-    const containerRight = document.querySelector('main').getBoundingClientRect().right;
+    const mainEl = document.querySelector('main');
+    const containerRight = mainEl.getBoundingClientRect().right;
     const newWidth = containerRight - e.clientX;
 
-    // Respect min/max constraints
+    // Dynamic max-width: leave at least 350px for card grid (1 column + padding)
     const minWidth = 280;
-    const maxWidth = 600;
+    const minGridWidth = 350;
+    const mainWidth = mainEl.getBoundingClientRect().width;
+    const maxWidth = mainWidth - minGridWidth;
     const clampedWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
 
     detailPanel.style.width = `${clampedWidth}px`;

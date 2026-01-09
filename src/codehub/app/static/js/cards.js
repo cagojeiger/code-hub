@@ -190,11 +190,11 @@ export function renderWorkspaceCard(workspace, index) {
       <!-- Line 1: Name only -->
       <h3 class="text-white font-medium truncate mb-2">${escapeHtml(workspace.name)}</h3>
       <!-- Line 2: Badge + Buttons (fixed height to prevent layout jump) -->
-      <div class="flex items-center justify-between mb-2 h-7">
+      <div class="flex items-center justify-between mb-2 h-7 overflow-hidden">
         <span class="px-2 py-1 rounded text-xs font-medium text-white ${config.bgColor} flex items-center shrink-0">
           ${config.icon} ${config.label}${spinnerHtml}
         </span>
-        <div class="flex gap-1 ${hasButtons ? '' : 'invisible'}">
+        <div class="flex gap-1 min-w-0 overflow-hidden shrink ${hasButtons ? '' : 'invisible'}">
           ${buttonsInner}
         </div>
       </div>
