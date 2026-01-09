@@ -9,6 +9,8 @@ x-dns: &dns
   dns:
     - 8.8.8.8
     - 1.1.1.1
+  dns_opt:
+    - use-vc  # Force TCP for DNS queries (more stable with VPN)
 
 x-logging: &logging
   logging:

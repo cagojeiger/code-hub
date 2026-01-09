@@ -33,6 +33,7 @@ class HostConfig(BaseModel):
     network_mode: str = "bridge"
     binds: list[str] = []
     dns: list[str] = []
+    dns_opt: list[str] = []
 
     model_config = {"frozen": True}
 
@@ -44,6 +45,8 @@ class HostConfig(BaseModel):
         }
         if self.dns:
             result["Dns"] = self.dns
+        if self.dns_opt:
+            result["DnsOptions"] = self.dns_opt
         return result
 
 
