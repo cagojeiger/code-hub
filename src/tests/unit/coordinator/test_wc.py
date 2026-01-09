@@ -400,16 +400,46 @@ class TestExecute:
 
         mock_ic.delete.assert_called_once_with(ws.id)
 
-    async def test_archiving(self, wc: WorkspaceController, mock_sp: AsyncMock):
-        """ARCHIVING → sp.archive() + sp.delete_volume()."""
+    async def test_archiving(
+        self, wc: WorkspaceController, mock_ic: AsyncMock, mock_sp: AsyncMock
+    ):
+        """ARCHIVING → sp.archive() + ic.delete() + sp.delete_volume()."""
         ws = make_workspace()
         action = PlanAction(operation=Operation.ARCHIVING, phase=Phase.STANDBY, op_id="op-1")
 
         await wc._execute(ws, action)
 
         mock_sp.archive.assert_called_once_with(ws.id, "op-1")
+        mock_ic.delete.assert_called_once_with(ws.id)  # Exited 컨테이너 정리
         mock_sp.delete_volume.assert_called_once_with(ws.id)
         assert action.archive_key == "ws-1/op-1/home.tar.zst"
+
+    async def test_archiving_call_order(
+        self, wc: WorkspaceController, mock_ic: AsyncMock, mock_sp: AsyncMock
+    ):
+        """ARCHIVING: archive → delete → delete_volume 순서 확인."""
+        call_order: list[str] = []
+
+        async def track_archive(*args):
+            call_order.append("archive")
+            return "ws-1/op-1/home.tar.zst"
+
+        async def track_delete(*args):
+            call_order.append("delete")
+
+        async def track_delete_volume(*args):
+            call_order.append("delete_volume")
+
+        mock_sp.archive.side_effect = track_archive
+        mock_ic.delete.side_effect = track_delete
+        mock_sp.delete_volume.side_effect = track_delete_volume
+
+        ws = make_workspace()
+        action = PlanAction(operation=Operation.ARCHIVING, phase=Phase.STANDBY, op_id="op-1")
+
+        await wc._execute(ws, action)
+
+        assert call_order == ["archive", "delete", "delete_volume"]
 
     async def test_restoring(self, wc: WorkspaceController, mock_sp: AsyncMock):
         """RESTORING → sp.restore()."""
