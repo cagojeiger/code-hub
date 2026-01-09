@@ -70,7 +70,11 @@ class DockerJobRunner(JobRunner):
             return JobResult(exit_code=exit_code, logs=logs.decode("utf-8", errors="replace"))
 
         finally:
-            await self._containers.remove(helper_name)
+            try:
+                await self._containers.remove(helper_name)
+            except Exception as e:
+                # Log but don't mask the actual job result
+                logger.error("Failed to cleanup archive job container %s: %s", helper_name, e)
 
     async def run_restore(
         self,
@@ -110,4 +114,8 @@ class DockerJobRunner(JobRunner):
             return JobResult(exit_code=exit_code, logs=logs.decode("utf-8", errors="replace"))
 
         finally:
-            await self._containers.remove(helper_name)
+            try:
+                await self._containers.remove(helper_name)
+            except Exception as e:
+                # Log but don't mask the actual job result
+                logger.error("Failed to cleanup restore job container %s: %s", helper_name, e)

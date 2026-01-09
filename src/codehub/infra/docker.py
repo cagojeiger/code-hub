@@ -23,6 +23,17 @@ DOCKER_HOST = os.getenv("DOCKER_HOST", "unix:///var/run/docker.sock")
 
 
 # =============================================================================
+# Exceptions
+# =============================================================================
+
+
+class VolumeInUseError(Exception):
+    """Raised when attempting to delete a volume that is still in use."""
+
+    pass
+
+
+# =============================================================================
 # Pydantic Models
 # =============================================================================
 
@@ -425,8 +436,7 @@ class VolumeAPI:
             logger.debug("Volume not found: %s", name)
             return
         if resp.status_code == 409:
-            logger.warning("Volume in use, cannot delete: %s", name)
-            return
+            raise VolumeInUseError(f"Volume {name} is in use by a container")
         resp.raise_for_status()
         logger.info("Removed volume: %s", name)
 
