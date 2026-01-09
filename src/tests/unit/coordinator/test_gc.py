@@ -285,17 +285,19 @@ class TestTick:
             "ws-orphan/op2/home.tar.zst"
         )
 
-    async def test_handles_storage_error(
+    async def test_handles_storage_error_gracefully(
         self,
         archive_gc: ArchiveGC,
         mock_storage: MagicMock,
     ):
-        """tick() re-raises storage errors for base class rollback."""
+        """tick() skips archive cleanup on S3 error (doesn't propagate)."""
         mock_storage.list_all_archive_keys.side_effect = RuntimeError("Storage error")
 
-        # Should raise (base class handles rollback)
-        with pytest.raises(RuntimeError, match="Storage error"):
-            await archive_gc.tick()
+        # Should NOT raise - S3 error is caught and logged, cleanup skipped
+        await archive_gc.tick()
+
+        # delete_archive should NOT be called since list failed
+        mock_storage.delete_archive.assert_not_called()
 
 
 class TestProtectionRules:

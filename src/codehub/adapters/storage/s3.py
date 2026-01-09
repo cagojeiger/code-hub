@@ -143,7 +143,7 @@ class S3StorageProvider(StorageProvider):
                     "error_code": error_code,
                 },
             )
-            return results
+            raise  # Propagate to caller (Observer uses _safe() wrapper)
 
         # Find latest archive per workspace
         for workspace_id, archives in workspace_archives.items():
@@ -190,6 +190,7 @@ class S3StorageProvider(StorageProvider):
                     "error_code": error_code,
                 },
             )
+            raise  # Propagate to caller (GC handles exception)
 
         return archive_keys
 

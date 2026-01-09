@@ -24,6 +24,7 @@ import httpx
 from botocore.exceptions import ClientError
 
 from codehub.core.circuit_breaker import CircuitOpenError, get_circuit_breaker
+from codehub.infra.docker import VolumeInUseError
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,10 @@ def is_retryable(exc: Exception) -> bool:
     if isinstance(exc, asyncio.TimeoutError):
         return True
 
+    # Docker volume in use - retryable (container deletion may free volume)
+    if isinstance(exc, VolumeInUseError):
+        return True
+
     # httpx errors
     if isinstance(exc, httpx.HTTPStatusError):
         return is_httpx_retryable(exc)
@@ -145,6 +150,10 @@ def classify_error(exc: Exception) -> str:
     """
     # asyncio timeout
     if isinstance(exc, asyncio.TimeoutError):
+        return "retryable"
+
+    # Docker volume in use - retryable (container deletion may free volume)
+    if isinstance(exc, VolumeInUseError):
         return "retryable"
 
     # httpx errors

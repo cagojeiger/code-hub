@@ -73,6 +73,9 @@ class ArchiveGC(CoordinatorBase):
         """Archive orphan 정리."""
         # 1. Storage archive 목록
         s3_archives = await self._list_archives()
+        if s3_archives is None:
+            # S3 error occurred, skip cleanup for this tick
+            return
         if not s3_archives:
             logger.debug("[%s] No archives in storage", self.name)
             return
@@ -146,15 +149,21 @@ class ArchiveGC(CoordinatorBase):
                 len(orphan_volumes),
             )
 
-    async def _list_archives(self) -> set[str]:
+    async def _list_archives(self) -> set[str] | None:
         """List all archive keys from storage.
 
         Uses list_all_archive_keys() to get ALL archives (not just latest per workspace).
-        """
-        archive_keys = await self._storage.list_all_archive_keys(self._prefix)
 
-        logger.debug("[%s] Found %d archives in storage", self.name, len(archive_keys))
-        return archive_keys
+        Returns:
+            Set of archive keys, or None if S3 error occurred (skip archive cleanup).
+        """
+        try:
+            archive_keys = await self._storage.list_all_archive_keys(self._prefix)
+            logger.debug("[%s] Found %d archives in storage", self.name, len(archive_keys))
+            return archive_keys
+        except Exception as e:
+            logger.error("[%s] Failed to list archives from S3, skipping cleanup: %s", self.name, e)
+            return None
 
     async def _get_protected_paths(self) -> set[str]:
         """Query DB for protected archive paths.
