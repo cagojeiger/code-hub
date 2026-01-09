@@ -84,6 +84,7 @@ class DockerInstanceController(InstanceController):
                 network_mode=self._docker.network_name,
                 binds=[f"{self._runtime.resource_prefix}{workspace_id}-home:/home/coder"],
                 dns=self._docker.dns_servers,
+                dns_opt=self._docker.dns_options,
             ),
         )
 
