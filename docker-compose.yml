@@ -1,3 +1,42 @@
+# =============================================================================
+# Common Configuration (YAML Anchors)
+# =============================================================================
+
+# External DNS servers for VPN/network stability
+# Docker Desktop 4.48.0+ has DNS routing issues with VPN
+# See: https://github.com/docker/for-mac/issues/4751
+x-dns: &dns
+  dns:
+    - 8.8.8.8
+    - 1.1.1.1
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-network: &network
+  networks:
+    - codehub-net
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-common-env: &common-env
+  PYTHONUNBUFFERED: "1"
+  DATABASE_URL: postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
+  REDIS_URL: redis://redis:6379
+  S3_ENDPOINT: http://minio:9000
+  S3_ACCESS_KEY: codehub
+  S3_SECRET_KEY: codehub123
+  DOCKER_HOST: tcp://docker-proxy:2375
+
+# =============================================================================
+# Services
+# =============================================================================
+
 services:
   # PostgreSQL Database
   postgres:
@@ -9,50 +48,27 @@ services:
       POSTGRES_DB: codehub
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    networks:
-      - codehub-net
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U codehub" ]
       interval: 5s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
     mem_limit: 256m
     cpus: 0.5
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    # External DNS servers for VPN/network stability
-    # Docker Desktop 4.48.0+ has DNS routing issues with VPN
-    # See: https://github.com/docker/for-mac/issues/4751
-    dns:
-      - 8.8.8.8   # Google DNS
-      - 1.1.1.1   # Cloudflare DNS
+    <<: [*dns, *logging, *network, *restart]
 
   # Redis - Pub/Sub for SSE event broadcasting
   redis:
     image: redis:7
     container_name: codehub-redis
-    networks:
-      - codehub-net
     healthcheck:
       test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
     mem_limit: 128m
     cpus: 0.25
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
+    <<: [*dns, *logging, *network, *restart]
 
   # MinIO - Object Storage (S3 compatible)
   minio:
@@ -60,30 +76,20 @@ services:
     container_name: codehub-minio
     command: server /data --console-address ":9001"
     ports:
-      - "127.0.0.1:19001:9001"
+      - "0.0.0.0:19001:9001"
     environment:
       MINIO_ROOT_USER: codehub
       MINIO_ROOT_PASSWORD: codehub123
     volumes:
       - minio_data:/data
-    networks:
-      - codehub-net
     healthcheck:
       test: [ "CMD", "mc", "ready", "local" ]
       interval: 5s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
     mem_limit: 256m
     cpus: 0.5
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
+    <<: [*dns, *logging, *network, *restart]
 
   # Docker Socket Proxy - Secure Docker API access
   docker-proxy:
@@ -103,19 +109,9 @@ services:
       - ALLOW_RESTARTS=1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - codehub-net
-    restart: unless-stopped
     mem_limit: 64m
     cpus: 0.25
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
+    <<: [*dns, *logging, *network, *restart]
 
   # Storage Job - Archive/Restore helper container (build only)
   storage-job:
@@ -124,9 +120,7 @@ services:
     image: codehub/storage-job:latest
     deploy:
       replicas: 0 # Build image but don't run container
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
+    <<: [*dns, *network]
 
   # Test runner - isolated test environment
   test:
@@ -144,23 +138,13 @@ services:
       docker-proxy:
         condition: service_started
     environment:
-      - PYTHONUNBUFFERED=1
-      - DATABASE_URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
-      - REDIS_URL=redis://redis:6379
-      - DOCKER_HOST=tcp://docker-proxy:2375
-      - S3_ENDPOINT=http://minio:9000
-      - S3_ACCESS_KEY=codehub
-      - S3_SECRET_KEY=codehub123
-    networks:
-      - codehub-net
+      <<: *common-env
     profiles:
       - test
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
+    <<: [*dns, *network]
     # No restart - runs once and exits
 
-    # Database migration - runs once before control-plane starts
+  # Database migration - runs once before control-plane starts
   migrate:
     build:
       context: src
@@ -172,14 +156,10 @@ services:
         condition: service_healthy
     environment:
       - DATABASE_URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
-    networks:
-      - codehub-net
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
+    <<: [*dns, *network]
     # No restart - runs once and exits
 
-    # Control Plane - API, Reconciler, Coordinator
+  # Control Plane - API, Reconciler, Coordinator
   control-plane:
     build:
       context: src
@@ -188,14 +168,8 @@ services:
     ports:
       - "0.0.0.0:18000:8000"
     environment:
-      - PYTHONUNBUFFERED=1
-      - DATABASE_URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
-      - REDIS_URL=redis://redis:6379
-      - S3_ENDPOINT=http://minio:9000
-      - S3_ACCESS_KEY=codehub
-      - S3_SECRET_KEY=codehub123
-      - DOCKER_HOST=tcp://docker-proxy:2375
-      - WORKERS=3
+      <<: *common-env
+      WORKERS: "3"
     depends_on:
       postgres:
         condition: service_healthy
@@ -207,9 +181,6 @@ services:
         condition: service_started
       migrate:
         condition: service_completed_successfully
-    networks:
-      - codehub-net
-    restart: unless-stopped
     mem_limit: 512m
     cpus: 1.0
     healthcheck:
@@ -223,9 +194,7 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
+    <<: [*dns, *network, *restart]
 
   # Prometheus - Metrics collection
   prometheus:
@@ -238,24 +207,19 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--web.enable-lifecycle'
-    networks:
-      - codehub-net
     depends_on:
       control-plane:
         condition: service_healthy
-    restart: unless-stopped
     mem_limit: 256m
     cpus: 0.5
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
+    <<: [*dns, *network, *restart]
 
   # Grafana - Metrics visualization
   grafana:
     image: grafana/grafana:12.3.1
     container_name: codehub-grafana
     ports:
-      - "127.0.0.1:13000:3000"
+      - "0.0.0.0:13000:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=qwer1234
@@ -263,16 +227,15 @@ services:
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana-datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
-    networks:
-      - codehub-net
     depends_on:
       - prometheus
-    restart: unless-stopped
     mem_limit: 256m
     cpus: 0.5
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
+    <<: [*dns, *network, *restart]
+
+# =============================================================================
+# Networks & Volumes
+# =============================================================================
 
 networks:
   codehub-net:
