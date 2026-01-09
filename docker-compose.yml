@@ -38,6 +38,51 @@ x-common-env: &common-env
 # =============================================================================
 
 services:
+  # ---------------------------------------------------------------------------
+  # Core Application
+  # ---------------------------------------------------------------------------
+
+  # Control Plane - API, Reconciler, Coordinator
+  control-plane:
+    build:
+      context: src
+      dockerfile: Dockerfile
+    container_name: codehub-control-plane
+    ports:
+      - "0.0.0.0:18000:8000"
+    environment:
+      <<: *common-env
+      WORKERS: "3"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    <<: [*dns, *network, *restart]
+
+  # ---------------------------------------------------------------------------
+  # Database & Storage
+  # ---------------------------------------------------------------------------
+
   # PostgreSQL Database
   postgres:
     image: postgres:17
@@ -91,6 +136,10 @@ services:
     cpus: 0.5
     <<: [*dns, *logging, *network, *restart]
 
+  # ---------------------------------------------------------------------------
+  # Infrastructure
+  # ---------------------------------------------------------------------------
+
   # Docker Socket Proxy - Secure Docker API access
   docker-proxy:
     image: tecnativa/docker-socket-proxy:latest
@@ -122,79 +171,9 @@ services:
       replicas: 0 # Build image but don't run container
     <<: [*dns, *network]
 
-  # Test runner - isolated test environment
-  test:
-    build:
-      context: src
-      dockerfile: Dockerfile.test
-    container_name: codehub-test
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-      docker-proxy:
-        condition: service_started
-    environment:
-      <<: *common-env
-    profiles:
-      - test
-    <<: [*dns, *network]
-    # No restart - runs once and exits
-
-  # Database migration - runs once before control-plane starts
-  migrate:
-    build:
-      context: src
-      dockerfile: Dockerfile
-    container_name: codehub-migrate
-    command: uv run alembic upgrade head
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
-    <<: [*dns, *network]
-    # No restart - runs once and exits
-
-  # Control Plane - API, Reconciler, Coordinator
-  control-plane:
-    build:
-      context: src
-      dockerfile: Dockerfile
-    container_name: codehub-control-plane
-    ports:
-      - "0.0.0.0:18000:8000"
-    environment:
-      <<: *common-env
-      WORKERS: "3"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-      docker-proxy:
-        condition: service_started
-      migrate:
-        condition: service_completed_successfully
-    mem_limit: 512m
-    cpus: 1.0
-    healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "5"
-    <<: [*dns, *network, *restart]
+  # ---------------------------------------------------------------------------
+  # Monitoring
+  # ---------------------------------------------------------------------------
 
   # Prometheus - Metrics collection
   prometheus:
@@ -232,6 +211,47 @@ services:
     mem_limit: 256m
     cpus: 0.5
     <<: [*dns, *network, *restart]
+
+  # ---------------------------------------------------------------------------
+  # Development & Testing
+  # ---------------------------------------------------------------------------
+
+  # Database migration - runs once before control-plane starts
+  migrate:
+    build:
+      context: src
+      dockerfile: Dockerfile
+    container_name: codehub-migrate
+    command: uv run alembic upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
+    <<: [*dns, *network]
+    # No restart - runs once and exits
+
+  # Test runner - isolated test environment
+  test:
+    build:
+      context: src
+      dockerfile: Dockerfile.test
+    container_name: codehub-test
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_started
+    environment:
+      <<: *common-env
+    profiles:
+      - test
+    <<: [*dns, *network]
+    # No restart - runs once and exits
 
 # =============================================================================
 # Networks & Volumes
