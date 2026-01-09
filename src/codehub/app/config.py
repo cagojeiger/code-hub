@@ -93,6 +93,11 @@ class DockerConfig(BaseSettings):
     coder_uid: int = Field(default=1000)
     coder_gid: int = Field(default=1000)
 
+    # DNS settings for VPN/network stability
+    # Docker Desktop 4.48.0+ has DNS routing issues with VPN
+    # See: https://github.com/docker/for-mac/issues/4751
+    dns_servers: list[str] = Field(default=["8.8.8.8", "1.1.1.1"])
+
     # Timeout settings
     api_timeout: float = Field(default=30.0)  # seconds (Docker API calls)
     image_pull_timeout: float = Field(default=600.0)  # seconds (10 minutes)
