@@ -24,9 +24,19 @@ import httpx
 from botocore.exceptions import ClientError
 
 from codehub.core.circuit_breaker import CircuitOpenError, get_circuit_breaker
-from codehub.infra.docker import VolumeInUseError
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Docker Exceptions
+# =============================================================================
+
+
+class VolumeInUseError(Exception):
+    """Raised when attempting to delete a volume that is still in use."""
+
+    pass
 
 T = TypeVar("T")
 

@@ -13,6 +13,7 @@ import httpx
 from pydantic import BaseModel
 
 from codehub.app.config import get_settings
+from codehub.core.retryable import VolumeInUseError  # noqa: F401 - re-exported
 
 logger = logging.getLogger(__name__)
 
@@ -20,17 +21,6 @@ _docker_config = get_settings().docker
 
 # Docker host configuration
 DOCKER_HOST = os.getenv("DOCKER_HOST", "unix:///var/run/docker.sock")
-
-
-# =============================================================================
-# Exceptions
-# =============================================================================
-
-
-class VolumeInUseError(Exception):
-    """Raised when attempting to delete a volume that is still in use."""
-
-    pass
 
 
 # =============================================================================
