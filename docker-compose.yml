@@ -24,6 +24,12 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    # External DNS servers for VPN/network stability
+    # Docker Desktop 4.48.0+ has DNS routing issues with VPN
+    # See: https://github.com/docker/for-mac/issues/4751
+    dns:
+      - 8.8.8.8   # Google DNS
+      - 1.1.1.1   # Cloudflare DNS
 
   # Redis - Pub/Sub for SSE event broadcasting
   redis:
@@ -44,6 +50,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
   # MinIO - Object Storage (S3 compatible)
   minio:
@@ -72,6 +81,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
   # Docker Socket Proxy - Secure Docker API access
   docker-proxy:
@@ -101,6 +113,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
   # Storage Job - Archive/Restore helper container (build only)
   storage-job:
@@ -109,6 +124,9 @@ services:
     image: codehub/storage-job:latest
     deploy:
       replicas: 0 # Build image but don't run container
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
   # Test runner - isolated test environment
   test:
@@ -137,6 +155,9 @@ services:
       - codehub-net
     profiles:
       - test
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     # No restart - runs once and exits
 
     # Database migration - runs once before control-plane starts
@@ -153,6 +174,9 @@ services:
       - DATABASE_URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
     networks:
       - codehub-net
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     # No restart - runs once and exits
 
     # Control Plane - API, Reconciler, Coordinator
@@ -199,6 +223,9 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
   # Prometheus - Metrics collection
   prometheus:
@@ -219,6 +246,9 @@ services:
     restart: unless-stopped
     mem_limit: 256m
     cpus: 0.5
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
   # Grafana - Metrics visualization
   grafana:
@@ -240,6 +270,9 @@ services:
     restart: unless-stopped
     mem_limit: 256m
     cpus: 0.5
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
 networks:
   codehub-net:

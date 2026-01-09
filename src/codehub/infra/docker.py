@@ -32,15 +32,19 @@ class HostConfig(BaseModel):
 
     network_mode: str = "bridge"
     binds: list[str] = []
+    dns: list[str] = []
 
     model_config = {"frozen": True}
 
     def to_api(self) -> dict:
         """Convert to Docker API format."""
-        return {
+        result = {
             "NetworkMode": self.network_mode,
             "Binds": self.binds,
         }
+        if self.dns:
+            result["Dns"] = self.dns
+        return result
 
 
 class ContainerConfig(BaseModel):
