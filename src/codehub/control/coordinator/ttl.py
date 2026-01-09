@@ -18,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
+from codehub.app.metrics.collector import WORKSPACE_TTL_EXPIRY
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
     CoordinatorBase,
@@ -164,6 +165,7 @@ class TTLManager(CoordinatorBase):
 
         if updated_ids:
             logger.info("[%s] standby_ttl expired for %d workspaces", self.name, len(updated_ids))
+            WORKSPACE_TTL_EXPIRY.labels(ttl_type="standby").inc(len(updated_ids))
         return len(updated_ids)
 
     async def _check_archive_ttl(self) -> int:
@@ -200,4 +202,5 @@ class TTLManager(CoordinatorBase):
 
         if updated_ids:
             logger.info("[%s] archive_ttl expired for %d workspaces", self.name, len(updated_ids))
+            WORKSPACE_TTL_EXPIRY.labels(ttl_type="archive").inc(len(updated_ids))
         return len(updated_ids)

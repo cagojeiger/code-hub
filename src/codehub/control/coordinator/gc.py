@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
+from codehub.app.metrics.collector import COORDINATOR_GC_ORPHANS_DELETED
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
     CoordinatorBase,
@@ -100,6 +101,7 @@ class ArchiveGC(CoordinatorBase):
             deleted,
             len(orphans),
         )
+        COORDINATOR_GC_ORPHANS_DELETED.labels(resource_type="archive").inc(deleted)
 
     async def _cleanup_orphan_resources(self) -> None:
         """Container/Volume orphan 정리 (Observer 패턴).
@@ -128,6 +130,7 @@ class ArchiveGC(CoordinatorBase):
             logger.warning("[%s] Deleting orphan container: %s", self.name, ws_id)
             try:
                 await self._ic.delete(ws_id)
+                COORDINATOR_GC_ORPHANS_DELETED.labels(resource_type="container").inc()
             except Exception as e:
                 logger.warning("[%s] Failed to delete container %s: %s", self.name, ws_id, e)
 
@@ -135,6 +138,7 @@ class ArchiveGC(CoordinatorBase):
             logger.warning("[%s] Deleting orphan volume: %s", self.name, ws_id)
             try:
                 await self._storage.delete_volume(ws_id)
+                COORDINATOR_GC_ORPHANS_DELETED.labels(resource_type="volume").inc()
             except Exception as e:
                 logger.warning("[%s] Failed to delete volume %s: %s", self.name, ws_id, e)
 
