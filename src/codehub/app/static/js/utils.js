@@ -13,7 +13,7 @@ export function showToast(message, type = 'info') {
   const bgColor = type === 'error' ? 'bg-vscode-error' :
                   type === 'success' ? 'bg-vscode-success' : 'bg-vscode-accent';
 
-  toast.className = `${bgColor} text-white px-4 py-2 rounded shadow-lg transform transition-all duration-300 fade-in`;
+  toast.className = `${bgColor} text-white px-4 py-2 rounded shadow-lg transform transition-all duration-300 animate-fade-in`;
   toast.textContent = message;
 
   container.appendChild(toast);
