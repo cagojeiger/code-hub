@@ -42,6 +42,21 @@ services:
   # Core Application
   # ---------------------------------------------------------------------------
 
+  # Database migration - runs once before control-plane starts
+  migrate:
+    build:
+      context: src
+      dockerfile: Dockerfile
+    container_name: codehub-migrate
+    command: uv run alembic upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
+    <<: [*dns, *network]
+    # No restart - runs once and exits
+
   # Control Plane - API, Reconciler, Coordinator
   control-plane:
     build:
@@ -215,21 +230,6 @@ services:
   # ---------------------------------------------------------------------------
   # Development & Testing
   # ---------------------------------------------------------------------------
-
-  # Database migration - runs once before control-plane starts
-  migrate:
-    build:
-      context: src
-      dockerfile: Dockerfile
-    container_name: codehub-migrate
-    command: uv run alembic upgrade head
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
-    <<: [*dns, *network]
-    # No restart - runs once and exits
 
   # Test runner - isolated test environment
   test:
