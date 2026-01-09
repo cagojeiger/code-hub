@@ -32,6 +32,14 @@ logger = logging.getLogger(__name__)
 # Docker Exceptions
 # =============================================================================
 
+# TODO(refactor): 내부 retryable 예외가 3개 이상이 되면 RetryableError 기본 클래스 도입 검토
+# 현재: VolumeInUseError 1개뿐이므로 YAGNI 원칙에 따라 기본 클래스 미도입
+# 도입 시점 예시:
+#   class RetryableError(Exception): pass
+#   class VolumeInUseError(RetryableError): pass
+#   class ContainerStartupError(RetryableError): pass
+#   → is_retryable()에서 isinstance(exc, RetryableError)로 일괄 처리
+
 
 class VolumeInUseError(Exception):
     """Raised when attempting to delete a volume that is still in use."""
