@@ -1,11 +1,14 @@
 """Integration tests for S3StorageProvider."""
 
+import hashlib
 import io
 import tarfile
 
 import pytest
+import zstandard as zstd
 
 from codehub.adapters import DockerJobRunner, DockerVolumeProvider, S3StorageProvider
+from codehub.infra import get_s3_client
 from codehub.infra.docker import ContainerAPI, ContainerConfig, HostConfig, VolumeAPI
 
 
@@ -68,6 +71,63 @@ class TestS3StorageProvider:
         await storage_provider.provision(workspace_id)
         await storage_provider.delete_volume(workspace_id)
         assert not await storage_provider.volume_exists(workspace_id)
+
+    @pytest.mark.asyncio
+    async def test_create_empty_archive(
+        self, storage_provider: S3StorageProvider, test_prefix: str
+    ):
+        """Test create_empty_archive creates valid tar.zst and .meta files."""
+        from codehub.app.config import get_settings
+
+        settings = get_settings()
+        workspace_id = f"{test_prefix}empty"
+        op_id = "op-empty-001"
+
+        try:
+            # Create empty archive
+            archive_key = await storage_provider.create_empty_archive(workspace_id, op_id)
+
+            # Verify archive key format
+            assert archive_key.endswith("/home.tar.zst")
+            assert workspace_id in archive_key
+            assert op_id in archive_key
+
+            # Verify both files exist in S3
+            async with get_s3_client() as s3:
+                # 1. Verify tar.zst exists
+                tar_response = await s3.get_object(
+                    Bucket=settings.storage.bucket_name,
+                    Key=archive_key,
+                )
+                tar_zst_data = await tar_response["Body"].read()
+
+                # 2. Verify .meta exists
+                meta_response = await s3.get_object(
+                    Bucket=settings.storage.bucket_name,
+                    Key=f"{archive_key}.meta",
+                )
+                meta_data = await meta_response["Body"].read()
+
+            # 3. Verify checksum matches
+            expected_checksum = f"sha256:{hashlib.sha256(tar_zst_data).hexdigest()}"
+            actual_checksum = meta_data.decode()
+            assert actual_checksum == expected_checksum, (
+                f"Checksum mismatch: expected {expected_checksum}, got {actual_checksum}"
+            )
+
+            # 4. Verify tar.zst is valid (can decompress and extract)
+            dctx = zstd.ZstdDecompressor()
+            tar_data = dctx.decompress(tar_zst_data)
+
+            tar_buffer = io.BytesIO(tar_data)
+            with tarfile.open(fileobj=tar_buffer, mode="r") as tar:
+                # Empty archive should have no members
+                members = tar.getmembers()
+                assert len(members) == 0, f"Expected empty tar, got {len(members)} members"
+
+        finally:
+            # Cleanup
+            await storage_provider.delete_archive(archive_key)
 
 
 @pytest.mark.integration

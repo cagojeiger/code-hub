@@ -6,7 +6,10 @@ Implements Spec-v2 Storage Job for archive/restore operations:
 - Python only orchestrates container execution via JobRunner
 """
 
+import hashlib
+import io
 import logging
+import tarfile
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from typing import Any
@@ -326,22 +329,41 @@ class S3StorageProvider(StorageProvider):
         return await self._volumes.exists(volume_name)
 
     async def create_empty_archive(self, workspace_id: str, op_id: str) -> str:
-        """Create empty archive and return archive_key."""
-        settings = get_settings()
-        archive_key = f"{self._resource_prefix}{workspace_id}/{op_id}/home.tar.zst"
+        """Create empty archive and return archive_key.
 
-        # Create an empty tar.zst file
+        Creates a valid empty tar.zst archive with .meta file for restore compatibility.
+        Follows the same format as archive.sh (storage-job container).
+        """
         import zstandard as zstd
 
-        empty_tar = b"\x00" * 1024  # Minimal tar header
-        cctx = zstd.ZstdCompressor()
-        compressed = cctx.compress(empty_tar)
+        settings = get_settings()
+        archive_key = f"{self._resource_prefix}{workspace_id}/{op_id}/home.tar.zst"
+        meta_key = f"{archive_key}.meta"
 
+        # 1. Create valid empty tar archive
+        tar_buffer = io.BytesIO()
+        with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
+            pass  # Empty tar (end-of-archive markers only)
+        tar_data = tar_buffer.getvalue()
+
+        # 2. Compress with zstd
+        cctx = zstd.ZstdCompressor()
+        compressed = cctx.compress(tar_data)
+
+        # 3. Compute sha256 checksum (restore.sh format: "sha256:<hash>")
+        checksum = f"sha256:{hashlib.sha256(compressed).hexdigest()}"
+
+        # 4. Upload both files (order: tar.zst first, .meta last as commit marker)
         async with get_s3_client() as s3:
             await s3.put_object(
                 Bucket=settings.storage.bucket_name,
                 Key=archive_key,
                 Body=compressed,
+            )
+            await s3.put_object(
+                Bucket=settings.storage.bucket_name,
+                Key=meta_key,
+                Body=checksum.encode(),
             )
 
         logger.info("Created empty archive: %s", archive_key)
