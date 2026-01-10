@@ -131,9 +131,7 @@ class CoordinatorBase(ABC):
                 if not await self._ensure_leadership():
                     continue
                 await self._ensure_subscribed()
-                logger.info("[%s] run() loop: before _throttle()", self.name)
                 await self._throttle()
-                logger.info("[%s] run() loop: before _execute_tick()", self.name)
                 if not await self._execute_tick():
                     break
                 await self._wait_for_notify(self._get_interval())
@@ -177,8 +175,6 @@ class CoordinatorBase(ABC):
 
     async def _execute_tick(self) -> bool:
         """Execute tick. Returns False if cancelled or leadership lost."""
-        logger.info("[%s] _execute_tick() entering tick()", self.name)
-
         # P6: Verify leadership before tick to detect Split Brain early
         if not await self._leader.verify_holding():
             logger.warning("[%s] Leadership lost before tick - skipping", self.name)

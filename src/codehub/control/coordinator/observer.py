@@ -11,6 +11,7 @@ Algorithm:
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Coroutine
 
@@ -96,6 +97,7 @@ class ObserverCoordinator(CoordinatorBase):
         self._observer = BulkObserver(ic, sp)
 
     async def tick(self) -> None:
+        tick_start = time.monotonic()
         ws_ids = await self._load_workspace_ids()
         if not ws_ids:
             return
@@ -114,7 +116,17 @@ class ObserverCoordinator(CoordinatorBase):
 
         count = await self._bulk_update_conditions(ws_ids, containers, volumes, archives)
         await self._conn.commit()
-        logger.info("[%s] Updated %d workspaces", self.name, count)
+
+        duration_ms = (time.monotonic() - tick_start) * 1000
+        logger.info(
+            "[%s] Observation completed: workspaces=%d, containers=%d, volumes=%d, archives=%d, duration_ms=%.1f",
+            self.name,
+            count,
+            len(containers),
+            len(volumes),
+            len(archives),
+            duration_ms,
+        )
 
     async def _load_workspace_ids(self) -> set[str]:
         result = await self._conn.execute(

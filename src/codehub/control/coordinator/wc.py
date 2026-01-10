@@ -11,6 +11,8 @@ Configuration via CoordinatorConfig (COORDINATOR_ env prefix).
 
 import asyncio
 import logging
+import time
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -94,9 +96,11 @@ class WorkspaceController(CoordinatorBase):
         - DB operations: Sequential (asyncpg single connection limit)
         - External operations (Docker/S3): Parallel for performance
         """
-        logger.info("[%s] tick() started", self.name)
+        tick_start = time.monotonic()
         workspaces = await self._load_for_reconcile()  # DB (순차)
-        logger.info("[%s] loaded %d workspaces for reconcile", self.name, len(workspaces))
+
+        if not workspaces:
+            return  # No reconciliation needed - skip logging for idle state
 
         # 1. Judge + Plan (순수 계산)
         plans: list[tuple[Workspace, PlanAction]] = []
@@ -140,13 +144,26 @@ class WorkspaceController(CoordinatorBase):
         )
 
         # 3. Persist 순차 (DB - ADR-012 준수)
+        action_counts: Counter[str] = Counter()
         for ws, action in results:
             try:
                 await self._persist(ws, action)
+                if action.operation != Operation.NONE:
+                    action_counts[action.operation.value] += 1
             except Exception as exc:
                 logger.exception(
                     "Failed to persist %s (cause: %s)", ws.id, exc.__cause__ or exc
                 )
+
+        # Log reconcile result
+        duration_ms = (time.monotonic() - tick_start) * 1000
+        logger.info(
+            "[%s] Reconcile completed: workspaces=%d, actions=%s, duration_ms=%.1f",
+            self.name,
+            len(workspaces),
+            dict(action_counts) if action_counts else {},
+            duration_ms,
+        )
 
     def _judge_and_plan(self, ws: Workspace) -> PlanAction:
         """Judge + Plan (순수 계산, DB 미사용)."""
@@ -439,12 +456,15 @@ class WorkspaceController(CoordinatorBase):
 
         if not success:
             logger.info("CAS failed for %s (expected_op=%s), will retry next tick", ws.id, ws_op)
-        else:
-            logger.debug(
-                "Updated %s: phase=%s, operation=%s",
+        elif action.phase != Phase(ws.phase) or action.operation != Operation.NONE:
+            # Log state changes (phase change or operation in progress)
+            logger.info(
+                "[%s] State changed: ws=%s, phase=%s→%s, operation=%s",
+                self.name,
                 ws.id,
-                action.phase,
-                action.operation,
+                ws.phase,
+                action.phase.value,
+                action.operation.value,
             )
 
     # =================================================================
