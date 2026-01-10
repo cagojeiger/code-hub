@@ -172,12 +172,15 @@ def setup_logging(level: int | None = None) -> None:
     root_logger.addHandler(handler)
     root_logger.setLevel(level)
 
-    # Configure uvicorn loggers
-    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+    # Configure uvicorn loggers (exclude uvicorn.access - LoggingMiddleware handles it)
+    for name in ("uvicorn", "uvicorn.error"):
         uv_logger = logging.getLogger(name)
         uv_logger.handlers.clear()
         uv_logger.propagate = False
         uv_logger.addHandler(handler)
+
+    # Disable uvicorn.access (LoggingMiddleware provides structured request logging)
+    logging.getLogger("uvicorn.access").disabled = True
 
     # Suppress verbose HTTP client logs (polling noise)
     logging.getLogger("httpx").setLevel(logging.WARNING)

@@ -64,8 +64,9 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 
         duration_ms = (time.monotonic() - start) * 1000
 
-        # Skip logging for health checks and metrics to reduce noise
-        if request.url.path not in ("/health", "/metrics", "/healthz", "/readyz"):
+        # Skip logging for health checks, metrics, and static files to reduce noise
+        skip_paths = ("/health", "/metrics", "/healthz", "/readyz")
+        if not request.url.path.startswith("/static/") and request.url.path not in skip_paths:
             logger.info(
                 "Request completed",
                 extra={
