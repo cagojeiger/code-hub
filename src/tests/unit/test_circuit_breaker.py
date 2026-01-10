@@ -233,6 +233,147 @@ class TestCircuitOpenError:
         assert "15.5" in str(exc)
 
 
+class TestErrorClassifier:
+    """Tests for error_classifier functionality."""
+
+    @pytest.fixture(autouse=True)
+    def reset_circuit_breakers(self) -> None:
+        """Reset global circuit breakers before each test."""
+        reset_all_circuit_breakers()
+
+    @pytest.mark.asyncio
+    async def test_permanent_error_not_counted(self) -> None:
+        """Permanent errors should not count toward failure threshold."""
+
+        def classifier(exc: Exception) -> str:
+            if isinstance(exc, ValueError):
+                return "permanent"
+            return "retryable"
+
+        cb = CircuitBreaker(
+            name="test_permanent",
+            failure_threshold=3,
+            error_classifier=classifier,
+        )
+
+        async def raise_permanent() -> str:
+            raise ValueError("permanent error")
+
+        # 5 permanent errors should not open circuit
+        for _ in range(5):
+            with pytest.raises(ValueError):
+                await cb.call(raise_permanent)
+
+        assert cb.state == CircuitState.CLOSED
+        assert cb._failure_count == 0
+
+    @pytest.mark.asyncio
+    async def test_retryable_error_counted(self) -> None:
+        """Retryable errors should count toward failure threshold."""
+
+        def classifier(exc: Exception) -> str:
+            if isinstance(exc, ValueError):
+                return "permanent"
+            return "retryable"
+
+        cb = CircuitBreaker(
+            name="test_retryable",
+            failure_threshold=3,
+            error_classifier=classifier,
+        )
+
+        async def raise_retryable() -> str:
+            raise RuntimeError("retryable error")
+
+        # 3 retryable errors should open circuit
+        for _ in range(3):
+            with pytest.raises(RuntimeError):
+                await cb.call(raise_retryable)
+
+        assert cb.state == CircuitState.OPEN
+        assert cb._failure_count == 3
+
+    @pytest.mark.asyncio
+    async def test_no_classifier_counts_all_errors(self) -> None:
+        """Without classifier, all errors should count as failures."""
+        cb = CircuitBreaker(
+            name="test_no_classifier",
+            failure_threshold=3,
+        )
+
+        async def raise_error() -> str:
+            raise ValueError("any error")
+
+        # 3 errors should open circuit
+        for _ in range(3):
+            with pytest.raises(ValueError):
+                await cb.call(raise_error)
+
+        assert cb.state == CircuitState.OPEN
+
+    @pytest.mark.asyncio
+    async def test_mixed_errors(self) -> None:
+        """Mixed permanent and retryable errors should be handled correctly."""
+
+        def classifier(exc: Exception) -> str:
+            if isinstance(exc, ValueError):
+                return "permanent"
+            return "retryable"
+
+        cb = CircuitBreaker(
+            name="test_mixed",
+            failure_threshold=3,
+            error_classifier=classifier,
+        )
+
+        async def raise_permanent() -> str:
+            raise ValueError("permanent")
+
+        async def raise_retryable() -> str:
+            raise RuntimeError("retryable")
+
+        # 2 permanent + 2 retryable = circuit should still be closed (only 2 failures)
+        for _ in range(2):
+            with pytest.raises(ValueError):
+                await cb.call(raise_permanent)
+            with pytest.raises(RuntimeError):
+                await cb.call(raise_retryable)
+
+        assert cb.state == CircuitState.CLOSED
+        assert cb._failure_count == 2  # Only retryable errors counted
+
+        # 1 more retryable should open circuit
+        with pytest.raises(RuntimeError):
+            await cb.call(raise_retryable)
+
+        assert cb.state == CircuitState.OPEN
+
+    def test_get_circuit_breaker_with_classifier(self) -> None:
+        """get_circuit_breaker should accept error_classifier."""
+
+        def my_classifier(exc: Exception) -> str:
+            return "retryable"
+
+        cb = get_circuit_breaker("test_with_classifier", error_classifier=my_classifier)
+        assert cb._error_classifier is my_classifier
+
+    def test_get_circuit_breaker_ignores_classifier_if_exists(self) -> None:
+        """get_circuit_breaker should ignore classifier if circuit already exists."""
+
+        def first_classifier(exc: Exception) -> str:
+            return "first"
+
+        def second_classifier(exc: Exception) -> str:
+            return "second"
+
+        cb1 = get_circuit_breaker("test_ignore", error_classifier=first_classifier)
+        cb2 = get_circuit_breaker("test_ignore", error_classifier=second_classifier)
+
+        # Should return same instance with first classifier
+        assert cb1 is cb2
+        assert cb1._error_classifier is first_classifier
+
+
 class TestJitter:
     """Tests for jitter in retry delay calculation."""
 

@@ -53,6 +53,8 @@ class CircuitBreaker:
         failure_threshold: Number of failures to open circuit (default: 5)
         success_threshold: Number of successes to close circuit (default: 2)
         timeout: Seconds to wait before half-open (default: 30.0)
+        error_classifier: Function to classify errors. Returns 'permanent', 'retryable',
+                         or 'unknown'. Permanent errors don't count toward failure threshold.
     """
 
     def __init__(
@@ -61,11 +63,13 @@ class CircuitBreaker:
         failure_threshold: int = 5,
         success_threshold: int = 2,
         timeout: float = 30.0,
+        error_classifier: Callable[[Exception], str] | None = None,
     ) -> None:
         self.name = name
         self.failure_threshold = failure_threshold
         self.success_threshold = success_threshold
         self.timeout = timeout
+        self._error_classifier = error_classifier
 
         self._state = CircuitState.CLOSED
         self._failure_count = 0
@@ -113,7 +117,20 @@ class CircuitBreaker:
             result = await coro_factory()
             await self._on_success()
             return result
-        except Exception:
+        except Exception as exc:
+            # Permanent errors (e.g., 404) should not count toward failure threshold
+            if self._error_classifier:
+                error_class = self._error_classifier(exc)
+                if error_class == "permanent":
+                    logger.debug(
+                        "Permanent error, not counting as failure",
+                        extra={
+                            "circuit": self.name,
+                            "error": str(exc),
+                            "error_class": error_class,
+                        },
+                    )
+                    raise
             await self._on_failure()
             raise
 
@@ -179,17 +196,25 @@ class CircuitBreaker:
 _circuit_breakers: dict[str, CircuitBreaker] = {}
 
 
-def get_circuit_breaker(name: str = "default") -> CircuitBreaker:
+def get_circuit_breaker(
+    name: str = "default",
+    error_classifier: Callable[[Exception], str] | None = None,
+) -> CircuitBreaker:
     """Get or create circuit breaker by name.
 
     Args:
         name: Circuit breaker name (default: "default")
+        error_classifier: Function to classify errors. Only used when creating
+                         a new circuit breaker. Ignored if circuit breaker already exists.
 
     Returns:
         CircuitBreaker instance
     """
     if name not in _circuit_breakers:
-        _circuit_breakers[name] = CircuitBreaker(name=name)
+        _circuit_breakers[name] = CircuitBreaker(
+            name=name,
+            error_classifier=error_classifier,
+        )
     return _circuit_breakers[name]
 
 

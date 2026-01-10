@@ -7,6 +7,11 @@ import httpx
 import pytest
 from botocore.exceptions import ClientError
 
+from codehub.core.circuit_breaker import (
+    CircuitState,
+    get_circuit_breaker,
+    reset_all_circuit_breakers,
+)
 from codehub.core.retryable import (
     classify_error,
     is_httpx_retryable,
@@ -301,3 +306,115 @@ class TestWithRetry:
         for i in range(1, len(call_times)):
             delay = call_times[i] - call_times[i - 1]
             assert delay < 0.15  # Should be ~0.1s
+
+
+class TestWithRetryCircuitBreaker:
+    """Tests for with_retry integration with circuit breaker."""
+
+    @pytest.fixture(autouse=True)
+    def reset_circuit_breakers(self) -> None:
+        """Reset global circuit breakers before each test."""
+        reset_all_circuit_breakers()
+
+    @pytest.mark.asyncio
+    async def test_permanent_error_does_not_affect_circuit(self) -> None:
+        """Permanent errors (e.g., 404) should not count toward circuit breaker failures."""
+        call_count = 0
+
+        async def raise_404() -> str:
+            nonlocal call_count
+            call_count += 1
+            request = httpx.Request("GET", "http://test.com")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("not found", request=request, response=response)
+
+        # Call 5 times with 404 (permanent error)
+        for _ in range(5):
+            with pytest.raises(httpx.HTTPStatusError):
+                await with_retry(
+                    raise_404,
+                    max_retries=0,  # No retry
+                    circuit_breaker="test_permanent_404",
+                )
+
+        # Circuit should still be closed
+        cb = get_circuit_breaker("test_permanent_404")
+        assert cb.state == CircuitState.CLOSED
+        assert cb._failure_count == 0
+        assert call_count == 5  # All calls should have been made
+
+    @pytest.mark.asyncio
+    async def test_transient_error_affects_circuit(self) -> None:
+        """Transient errors (e.g., 503) should count toward circuit breaker failures."""
+        call_count = 0
+
+        async def raise_503() -> str:
+            nonlocal call_count
+            call_count += 1
+            request = httpx.Request("GET", "http://test.com")
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError(
+                "service unavailable", request=request, response=response
+            )
+
+        # Call 5 times with 503 (transient error), no retry to speed up test
+        for _ in range(5):
+            with pytest.raises(httpx.HTTPStatusError):
+                await with_retry(
+                    raise_503,
+                    max_retries=0,
+                    circuit_breaker="test_transient_503",
+                )
+
+        # Circuit should be open (threshold is 5 by default)
+        cb = get_circuit_breaker("test_transient_503")
+        assert cb.state == CircuitState.OPEN
+        assert cb._failure_count == 5
+
+    @pytest.mark.asyncio
+    async def test_mixed_errors_only_transient_counted(self) -> None:
+        """Only transient errors should affect circuit breaker."""
+
+        async def raise_404() -> str:
+            request = httpx.Request("GET", "http://test.com")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("not found", request=request, response=response)
+
+        async def raise_503() -> str:
+            request = httpx.Request("GET", "http://test.com")
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError(
+                "service unavailable", request=request, response=response
+            )
+
+        # 3 permanent (404) + 3 transient (503)
+        for _ in range(3):
+            with pytest.raises(httpx.HTTPStatusError):
+                await with_retry(raise_404, max_retries=0, circuit_breaker="test_mixed")
+            with pytest.raises(httpx.HTTPStatusError):
+                await with_retry(raise_503, max_retries=0, circuit_breaker="test_mixed")
+
+        # Only 3 transient errors should be counted
+        cb = get_circuit_breaker("test_mixed")
+        assert cb._failure_count == 3
+        assert cb.state == CircuitState.CLOSED  # Threshold is 5
+
+    @pytest.mark.asyncio
+    async def test_connect_error_affects_circuit(self) -> None:
+        """Connection errors should count toward circuit breaker failures."""
+
+        async def raise_connect_error() -> str:
+            raise httpx.ConnectError("connection failed")
+
+        # Call 5 times (no retry to speed up)
+        for _ in range(5):
+            with pytest.raises(httpx.ConnectError):
+                await with_retry(
+                    raise_connect_error,
+                    max_retries=0,
+                    circuit_breaker="test_connect",
+                )
+
+        # Circuit should be open
+        cb = get_circuit_breaker("test_connect")
+        assert cb.state == CircuitState.OPEN
