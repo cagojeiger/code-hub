@@ -219,28 +219,10 @@ clear_trace_context()
 ### Loki/Grafana 쿼리
 
 ```logql
-# 특정 워크스페이스의 모든 로그
+# 특정 워크스페이스 로그
 {service="codehub-control-plane"} | json | ws_id="ws-123"
-
-# 느린 reconcile 찾기
-{service="codehub-control-plane"} | json | event="reconcile_slow"
 
 # 실패한 operation
 {service="codehub-control-plane"} | json | event="operation_failed"
-
-# 특정 trace_id 추적
-{service="codehub-control-plane"} | json | trace_id="abc-123"
 ```
 
-### jq 명령어
-
-```bash
-# 모든 ERROR 로그
-docker compose logs control-plane 2>&1 | grep -v "^control" | jq 'select(.level == "ERROR")'
-
-# Reconcile 완료 로그만
-docker compose logs control-plane 2>&1 | grep -v "^control" | jq 'select(.event == "reconcile_complete")'
-
-# 1초 이상 걸린 작업
-docker compose logs control-plane 2>&1 | grep -v "^control" | jq 'select(.duration_ms > 1000)'
-```
