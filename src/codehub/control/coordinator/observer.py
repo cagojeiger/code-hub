@@ -99,6 +99,7 @@ class ObserverCoordinator(CoordinatorBase):
         self._observer = BulkObserver(ic, sp)
         # Track previous state to log only on changes (reduces noise)
         self._prev_state: tuple[int, int, int, int] | None = None
+        self._last_heartbeat: float = 0.0
 
     async def tick(self) -> None:
         tick_start = time.monotonic()
@@ -123,9 +124,27 @@ class ObserverCoordinator(CoordinatorBase):
 
         duration_ms = (time.monotonic() - tick_start) * 1000
 
-        # Log only when state changes (reduces noise from ~86k/day to only on changes)
+        # Log only when state changes OR 1-hour heartbeat (reduces noise from ~86k/day)
         current_state = (count, len(containers), len(volumes), len(archives))
-        if current_state != self._prev_state:
+        now = time.monotonic()
+
+        # 1시간마다 heartbeat (변화 없어도 "살아있음" 확인)
+        if now - self._last_heartbeat >= 3600:
+            logger.info(
+                "[%s] Heartbeat",
+                self.name,
+                extra={
+                    "event": LogEvent.OBSERVATION_COMPLETE,
+                    "workspaces": count,
+                    "containers": len(containers),
+                    "volumes": len(volumes),
+                    "archives": len(archives),
+                    "duration_ms": duration_ms,
+                },
+            )
+            self._last_heartbeat = now
+            self._prev_state = current_state
+        elif current_state != self._prev_state:
             logger.info(
                 "[%s] Observation completed",
                 self.name,
