@@ -100,6 +100,8 @@ class ObserverCoordinator(CoordinatorBase):
         # Track previous state to log only on changes (reduces noise)
         self._prev_state: tuple[int, int, int, int] | None = None
         self._last_heartbeat: float = 0.0
+        # Track previous container IDs to detect disappeared containers
+        self._prev_container_ids: set[str] | None = None
 
     async def tick(self) -> None:
         tick_start = time.monotonic()
@@ -118,6 +120,23 @@ class ObserverCoordinator(CoordinatorBase):
         observed_ws_ids = set(containers) | set(volumes) | set(archives)
         for ws_id in observed_ws_ids - ws_ids:
             logger.warning("[%s] Orphan ws_id=%s", self.name, ws_id)
+
+        # Detect disappeared containers (critical for OOM/crash diagnosis)
+        current_container_ids = set(containers.keys())
+        if self._prev_container_ids is not None:
+            disappeared = self._prev_container_ids - current_container_ids
+            for ws_id in disappeared:
+                # Only warn if the workspace still exists (not deleted)
+                if ws_id in ws_ids:
+                    logger.warning(
+                        "[%s] Container disappeared",
+                        self.name,
+                        extra={
+                            "event": LogEvent.CONTAINER_DISAPPEARED,
+                            "ws_id": ws_id,
+                        },
+                    )
+        self._prev_container_ids = current_container_ids
 
         count = await self._bulk_update_conditions(ws_ids, containers, volumes, archives)
         await self._conn.commit()

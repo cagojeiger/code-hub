@@ -37,6 +37,10 @@ class LogEvent(StrEnum):
     # Leadership events
     LEADERSHIP_ACQUIRED = "leadership_acquired"
     LEADERSHIP_LOST = "leadership_lost"
+    LEADERSHIP_WAITING = "leadership_waiting"
+
+    # Resource events
+    CONTAINER_DISAPPEARED = "container_disappeared"
 
     # Lifecycle events
     APP_STARTED = "app_started"
