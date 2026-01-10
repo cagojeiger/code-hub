@@ -97,6 +97,8 @@ class ObserverCoordinator(CoordinatorBase):
     ) -> None:
         super().__init__(conn, leader, subscriber)
         self._observer = BulkObserver(ic, sp)
+        # Track previous state to log only on changes (reduces noise)
+        self._prev_state: tuple[int, int, int, int] | None = None
 
     async def tick(self) -> None:
         tick_start = time.monotonic()
@@ -120,18 +122,23 @@ class ObserverCoordinator(CoordinatorBase):
         await self._conn.commit()
 
         duration_ms = (time.monotonic() - tick_start) * 1000
-        logger.info(
-            "[%s] Observation completed",
-            self.name,
-            extra={
-                "event": LogEvent.OBSERVATION_COMPLETE,
-                "workspaces": count,
-                "containers": len(containers),
-                "volumes": len(volumes),
-                "archives": len(archives),
-                "duration_ms": duration_ms,
-            },
-        )
+
+        # Log only when state changes (reduces noise from ~86k/day to only on changes)
+        current_state = (count, len(containers), len(volumes), len(archives))
+        if current_state != self._prev_state:
+            logger.info(
+                "[%s] Observation completed",
+                self.name,
+                extra={
+                    "event": LogEvent.OBSERVATION_COMPLETE,
+                    "workspaces": count,
+                    "containers": len(containers),
+                    "volumes": len(volumes),
+                    "archives": len(archives),
+                    "duration_ms": duration_ms,
+                },
+            )
+            self._prev_state = current_state
 
         # Slow observation warning (SLO threat detection)
         if duration_ms > _logging_config.slow_threshold_ms:
