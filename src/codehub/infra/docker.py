@@ -431,7 +431,11 @@ class VolumeAPI:
             logger.debug("Volume already exists: %s", config.name)
             return
         resp.raise_for_status()
-        logger.info("Created volume: %s", config.name)
+        logger.info(
+            "Created volume: %s",
+            config.name,
+            extra={"event": LogEvent.VOLUME_CREATED, "volume": config.name},
+        )
 
     async def remove(self, name: str) -> None:
         """Remove a volume.
@@ -447,7 +451,11 @@ class VolumeAPI:
         if resp.status_code == 409:
             raise VolumeInUseError(f"Volume {name} is in use by a container")
         resp.raise_for_status()
-        logger.info("Removed volume: %s", name)
+        logger.info(
+            "Removed volume: %s",
+            name,
+            extra={"event": LogEvent.VOLUME_REMOVED, "volume": name},
+        )
 
 
 # =============================================================================

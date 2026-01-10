@@ -45,6 +45,10 @@ class LogEvent(StrEnum):
     CONTAINER_STOPPED = "container_stopped"
     CONTAINER_EXITED = "container_exited"
 
+    # Volume lifecycle events
+    VOLUME_CREATED = "volume_created"
+    VOLUME_REMOVED = "volume_removed"
+
     # Archive/Restore events
     ARCHIVE_SUCCESS = "archive_success"
     ARCHIVE_FAILED = "archive_failed"

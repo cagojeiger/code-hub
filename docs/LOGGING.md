@@ -50,6 +50,10 @@
 - `container_stopped`: 컨테이너 정지됨
 - `container_exited`: 컨테이너 종료 (exit_code 포함)
 
+### Volume 이벤트
+- `volume_created`: 볼륨 생성됨
+- `volume_removed`: 볼륨 삭제됨
+
 ### Archive/Restore 이벤트
 - `archive_success`: 아카이브 성공
 - `archive_failed`: 아카이브 실패
