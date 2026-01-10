@@ -30,10 +30,11 @@ from codehub.app.proxy.activity import get_activity_buffer
 from codehub.app.proxy.client import close_http_client
 from codehub.app.metrics import setup_metrics, get_metrics_response
 from codehub.app.metrics.collector import (
-    DB_UP,
-    DB_POOL_CHECKEDIN,
-    DB_POOL_CHECKEDOUT,
+    DB_POOL_ACTIVE,
+    DB_POOL_IDLE,
     DB_POOL_OVERFLOW,
+    DB_POOL_UTILIZATION,
+    INFRA_UP,
 )
 from codehub.control.coordinator import (
     ArchiveGC,
@@ -294,17 +295,47 @@ async def health():
     }
 
 
+_worker_pid = str(os.getpid())
+
+
 def _update_db_pool_metrics() -> None:
     """Update database pool metrics."""
     try:
         engine = get_engine()
         pool = engine.pool
-        DB_UP.set(1)
-        DB_POOL_CHECKEDIN.set(pool.checkedin())
-        DB_POOL_CHECKEDOUT.set(pool.checkedout())
-        DB_POOL_OVERFLOW.set(pool.overflow())
+        settings = get_settings()
+
+        idle = pool.checkedin()
+        active = pool.checkedout()
+        overflow = pool.overflow()
+        max_connections = settings.database.pool_size + settings.database.max_overflow
+
+        DB_POOL_IDLE.set(idle)
+        DB_POOL_ACTIVE.set(active)
+        DB_POOL_OVERFLOW.set(overflow)
+        DB_POOL_UTILIZATION.set((active + overflow) / max_connections if max_connections > 0 else 0)
+        INFRA_UP.labels(component="db", worker_pid=_worker_pid).set(1)
     except Exception:
-        DB_UP.set(0)
+        INFRA_UP.labels(component="db", worker_pid=_worker_pid).set(0)
+
+
+async def _update_infra_status() -> None:
+    """Update infrastructure connection status metrics."""
+    # Redis
+    try:
+        redis_client = get_redis()
+        await redis_client.ping()
+        INFRA_UP.labels(component="redis", worker_pid=_worker_pid).set(1)
+    except Exception:
+        INFRA_UP.labels(component="redis", worker_pid=_worker_pid).set(0)
+
+    # S3
+    try:
+        async with get_s3_client() as s3:
+            await s3.list_buckets()
+        INFRA_UP.labels(component="s3", worker_pid=_worker_pid).set(1)
+    except Exception:
+        INFRA_UP.labels(component="s3", worker_pid=_worker_pid).set(0)
 
 
 async def _metrics_updater_loop() -> None:
@@ -316,6 +347,7 @@ async def _metrics_updater_loop() -> None:
     interval = get_settings().metrics.update_interval
     while True:
         _update_db_pool_metrics()
+        await _update_infra_status()
         await asyncio.sleep(interval)
 
 

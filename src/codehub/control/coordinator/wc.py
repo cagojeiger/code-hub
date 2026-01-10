@@ -23,6 +23,12 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
 from codehub.app.logging import clear_trace_context, set_trace_id
+from codehub.app.metrics.collector import (
+    INFRA_OPERATION_DURATION,
+    OPERATION_FAILURES_TOTAL,
+    OPERATION_TOTAL,
+    RECONCILE_STAGE_DURATION,
+)
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
     CoordinatorBase,
@@ -105,11 +111,14 @@ class WorkspaceController(CoordinatorBase):
 
         try:
             tick_start = time.monotonic()
+            coordinator_name = self.COORDINATOR_TYPE.value
 
             # Stage 1: Load (DB)
             load_start = time.monotonic()
             workspaces = await self._load_for_reconcile()
-            load_ms = (time.monotonic() - load_start) * 1000
+            load_duration = time.monotonic() - load_start
+            load_ms = load_duration * 1000
+            RECONCILE_STAGE_DURATION.labels(coordinator=coordinator_name, stage="load").observe(load_duration)
 
             if not workspaces:
                 return  # No reconciliation needed - skip logging for idle state
@@ -120,7 +129,9 @@ class WorkspaceController(CoordinatorBase):
             for ws in workspaces:
                 action = self._judge_and_plan(ws)
                 plans.append((ws, action))
-            plan_ms = (time.monotonic() - plan_start) * 1000
+            plan_duration = time.monotonic() - plan_start
+            plan_ms = plan_duration * 1000
+            RECONCILE_STAGE_DURATION.labels(coordinator=coordinator_name, stage="plan").observe(plan_duration)
 
             # Stage 3: Execute 병렬 (Docker/S3 - DB 미사용!)
             exec_start = time.monotonic()
@@ -129,6 +140,7 @@ class WorkspaceController(CoordinatorBase):
                 ws: Workspace, action: PlanAction
             ) -> tuple[Workspace, PlanAction]:
                 if self._needs_execute(action, ws):
+                    op_name = action.operation.value
                     try:
                         # with_retry handles transient errors with exponential backoff
                         await asyncio.wait_for(
@@ -141,25 +153,30 @@ class WorkspaceController(CoordinatorBase):
                             ),
                             timeout=self.OPERATION_TIMEOUT,
                         )
+                        OPERATION_TOTAL.labels(operation=op_name, status="success").inc()
                     except asyncio.TimeoutError:
+                        OPERATION_TOTAL.labels(operation=op_name, status="error").inc()
+                        OPERATION_FAILURES_TOTAL.labels(operation=op_name, error_class="timeout").inc()
                         logger.error(
                             "Operation timeout",
                             extra={
                                 "event": LogEvent.OPERATION_TIMEOUT,
                                 "ws_id": ws.id,
-                                "operation": action.operation.value,
+                                "operation": op_name,
                                 "error_class": "timeout",
                                 "timeout_s": self.OPERATION_TIMEOUT,
                             },
                         )
                     except Exception as exc:
                         error_class = classify_error(exc)
+                        OPERATION_TOTAL.labels(operation=op_name, status="error").inc()
+                        OPERATION_FAILURES_TOTAL.labels(operation=op_name, error_class=error_class).inc()
                         logger.exception(
                             "Operation failed",
                             extra={
                                 "event": LogEvent.OPERATION_FAILED,
                                 "ws_id": ws.id,
-                                "operation": action.operation.value,
+                                "operation": op_name,
                                 "error_class": error_class,
                                 "retryable": error_class == "transient",
                             },
@@ -170,7 +187,9 @@ class WorkspaceController(CoordinatorBase):
                 *[execute_one(ws, action) for ws, action in plans],
                 return_exceptions=False,  # 개별 예외 처리됨
             )
-            exec_ms = (time.monotonic() - exec_start) * 1000
+            exec_duration = time.monotonic() - exec_start
+            exec_ms = exec_duration * 1000
+            RECONCILE_STAGE_DURATION.labels(coordinator=coordinator_name, stage="execute").observe(exec_duration)
 
             # Stage 4: Persist 순차 (DB - ADR-012 준수)
             persist_start = time.monotonic()
@@ -190,7 +209,9 @@ class WorkspaceController(CoordinatorBase):
                             "error_class": "transient",
                         },
                     )
-            persist_ms = (time.monotonic() - persist_start) * 1000
+            persist_duration = time.monotonic() - persist_start
+            persist_ms = persist_duration * 1000
+            RECONCILE_STAGE_DURATION.labels(coordinator=coordinator_name, stage="persist").observe(persist_duration)
 
             # Log reconcile result with structured fields and stage durations
             duration_ms = (time.monotonic() - tick_start) * 1000
@@ -433,37 +454,81 @@ class WorkspaceController(CoordinatorBase):
         """
         match action.operation:
             case Operation.PROVISIONING:
+                start = time.monotonic()
                 await self._sp.provision(ws.id)
+                INFRA_OPERATION_DURATION.labels(infra="s3", operation="provision").observe(
+                    time.monotonic() - start
+                )
 
             case Operation.RESTORING:
                 if ws.archive_key:
+                    start = time.monotonic()
                     await self._sp.restore(ws.id, ws.archive_key)
+                    INFRA_OPERATION_DURATION.labels(infra="s3", operation="restore").observe(
+                        time.monotonic() - start
+                    )
                     action.restore_marker = ws.archive_key  # 완료 확인용 marker
 
             case Operation.STARTING:
+                start = time.monotonic()
                 await self._ic.start(ws.id, ws.image_ref)
+                INFRA_OPERATION_DURATION.labels(infra="docker", operation="start").observe(
+                    time.monotonic() - start
+                )
 
             case Operation.STOPPING:
+                start = time.monotonic()
                 await self._ic.delete(ws.id)
+                INFRA_OPERATION_DURATION.labels(infra="docker", operation="delete").observe(
+                    time.monotonic() - start
+                )
 
             case Operation.ARCHIVING:
                 # 3단계 operation: archive → delete container → delete_volume
                 # 컨테이너 삭제 추가: Exited 컨테이너도 볼륨 참조하므로 먼저 삭제 필요
                 op_id = action.op_id or ws.op_id or str(uuid4())
+
+                start = time.monotonic()
                 archive_key = await self._sp.archive(ws.id, op_id)
+                INFRA_OPERATION_DURATION.labels(infra="s3", operation="archive").observe(
+                    time.monotonic() - start
+                )
                 action.archive_key = archive_key
+
+                start = time.monotonic()
                 await self._ic.delete(ws.id)  # Exited 컨테이너 정리 (idempotent)
+                INFRA_OPERATION_DURATION.labels(infra="docker", operation="delete").observe(
+                    time.monotonic() - start
+                )
+
+                start = time.monotonic()
                 await self._sp.delete_volume(ws.id)
+                INFRA_OPERATION_DURATION.labels(infra="s3", operation="delete_volume").observe(
+                    time.monotonic() - start
+                )
 
             case Operation.CREATE_EMPTY_ARCHIVE:
                 op_id = action.op_id or ws.op_id or str(uuid4())
+                start = time.monotonic()
                 archive_key = await self._sp.create_empty_archive(ws.id, op_id)
+                INFRA_OPERATION_DURATION.labels(infra="s3", operation="create_empty_archive").observe(
+                    time.monotonic() - start
+                )
                 action.archive_key = archive_key
 
             case Operation.DELETING:
                 # 2단계 operation: delete container → delete_volume (계약 #8)
+                start = time.monotonic()
                 await self._ic.delete(ws.id)
+                INFRA_OPERATION_DURATION.labels(infra="docker", operation="delete").observe(
+                    time.monotonic() - start
+                )
+
+                start = time.monotonic()
                 await self._sp.delete_volume(ws.id)
+                INFRA_OPERATION_DURATION.labels(infra="s3", operation="delete_volume").observe(
+                    time.monotonic() - start
+                )
 
     async def _persist(self, ws: Workspace, action: PlanAction) -> None:
         """CAS 패턴으로 DB 저장.

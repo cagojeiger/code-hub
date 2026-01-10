@@ -5,6 +5,7 @@ Configuration via CoordinatorConfig (COORDINATOR_ env prefix).
 
 import asyncio
 import logging
+import os
 import random
 import time
 from abc import ABC, abstractmethod
@@ -13,11 +14,17 @@ from enum import StrEnum
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from codehub.app.config import get_settings
+from codehub.app.metrics.collector import (
+    COORDINATOR_LEADER_INFO,
+    RECONCILE_DURATION,
+    RECONCILE_TOTAL,
+)
 from codehub.core.interfaces.leader import LeaderElection
 from codehub.core.logging_schema import LogEvent
 from codehub.infra.redis_pubsub import ChannelSubscriber
 
 logger = logging.getLogger(__name__)
+_worker_pid = str(os.getpid())
 
 _settings = get_settings()
 _coordinator_config = _settings.coordinator
@@ -150,10 +157,15 @@ class CoordinatorBase(ABC):
     async def _ensure_leadership(self) -> bool:
         """Verify/acquire leadership. Returns False if not leader."""
         now = time.time()
+        coordinator_name = self.COORDINATOR_TYPE.value
+
         # P5: Use jittered interval to prevent Thundering Herd
         if now - self._last_verify <= self._jittered_verify_interval() and self._leader.is_leader:
             # Reset waiting state when we have leadership
             self._waiting_since = None
+            COORDINATOR_LEADER_INFO.labels(
+                coordinator=coordinator_name, worker_pid=_worker_pid
+            ).set(1)
             return True
 
         try:
@@ -167,6 +179,9 @@ class CoordinatorBase(ABC):
             acquired = False
 
         if not acquired:
+            COORDINATOR_LEADER_INFO.labels(
+                coordinator=coordinator_name, worker_pid=_worker_pid
+            ).set(0)
             await self._release_subscription()
             # Track waiting state for LEADERSHIP_ACQUIRED log
             if self._waiting_since is None:
@@ -175,6 +190,9 @@ class CoordinatorBase(ABC):
             return False
 
         # Leadership acquired - reset waiting state and log
+        COORDINATOR_LEADER_INFO.labels(
+            coordinator=coordinator_name, worker_pid=_worker_pid
+        ).set(1)
         if self._waiting_since is not None:
             wait_seconds = now - self._waiting_since
             logger.info(
@@ -203,6 +221,8 @@ class CoordinatorBase(ABC):
 
     async def _execute_tick(self) -> bool:
         """Execute tick. Returns False if cancelled or leadership lost."""
+        coordinator_name = self.COORDINATOR_TYPE.value
+
         # P6: Verify leadership before tick to detect Split Brain early
         if not await self._leader.verify_holding():
             logger.warning(
@@ -212,13 +232,20 @@ class CoordinatorBase(ABC):
             await self._release_subscription()
             return True  # Continue loop to re-acquire leadership
 
+        start_time = time.perf_counter()
         try:
             await self.tick()
+            duration = time.perf_counter() - start_time
+            RECONCILE_DURATION.labels(coordinator=coordinator_name).observe(duration)
+            RECONCILE_TOTAL.labels(coordinator=coordinator_name, status="success").inc()
             self._last_tick = time.time()
             return True
         except asyncio.CancelledError:
             return False
         except Exception as e:
+            duration = time.perf_counter() - start_time
+            RECONCILE_DURATION.labels(coordinator=coordinator_name).observe(duration)
+            RECONCILE_TOTAL.labels(coordinator=coordinator_name, status="error").inc()
             logger.exception("Error in tick: %s", e)
             await self._safe_rollback()
             self._last_tick = time.time()
@@ -258,6 +285,10 @@ class CoordinatorBase(ABC):
     async def _cleanup(self) -> None:
         """Cleanup on shutdown."""
         logger.info("Cleaning up", extra={"event": LogEvent.APP_STOPPED})
+        coordinator_name = self.COORDINATOR_TYPE.value
+        COORDINATOR_LEADER_INFO.labels(
+            coordinator=coordinator_name, worker_pid=_worker_pid
+        ).set(0)
         await self._release_subscription()
         try:
             await self._leader.release()

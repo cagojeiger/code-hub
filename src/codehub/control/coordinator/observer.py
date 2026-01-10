@@ -15,16 +15,24 @@ import time
 from datetime import UTC, datetime
 from typing import Coroutine
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
+from codehub.app.metrics.collector import (
+    CONCURRENT_OPERATIONS,
+    OPERATION_IN_PROGRESS,
+    WORKSPACES_BY_PHASE,
+    WORKSPACES_IN_ERROR,
+    WORKSPACES_STUCK,
+)
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
     CoordinatorBase,
     CoordinatorType,
     LeaderElection,
 )
+from codehub.core.domain.workspace import Operation, Phase
 from codehub.core.interfaces.instance import ContainerInfo, InstanceController
 from codehub.core.interfaces.storage import ArchiveInfo, StorageProvider, VolumeInfo
 from codehub.core.logging_schema import LogEvent
@@ -33,6 +41,7 @@ from codehub.core.models import Workspace
 logger = logging.getLogger(__name__)
 _settings = get_settings()
 _logging_config = _settings.logging
+_coordinator_config = _settings.coordinator
 
 
 class BulkObserver:
@@ -151,6 +160,10 @@ class ObserverCoordinator(CoordinatorBase):
         self._prev_container_ids = current_container_ids
 
         count = await self._bulk_update_conditions(ws_ids, containers, volumes, archives)
+
+        # Update workspace metrics (Q1, Q2, Q5)
+        await self._update_workspace_metrics()
+
         await self._conn.commit()
 
         duration_ms = (time.monotonic() - tick_start) * 1000
@@ -245,3 +258,74 @@ class ObserverCoordinator(CoordinatorBase):
             },
         )
         return len(result.fetchall())
+
+    async def _update_workspace_metrics(self) -> None:
+        """Update Prometheus metrics for workspace state.
+
+        Called after observation to provide accurate workspace distribution metrics.
+        Only leader updates these (livemax mode in collector).
+        """
+        now = datetime.now(UTC)
+        stuck_threshold_seconds = _coordinator_config.operation_timeout
+
+        # Q1: ERROR count
+        error_result = await self._conn.execute(
+            select(func.count()).select_from(Workspace).where(
+                Workspace.deleted_at.is_(None),
+                Workspace.phase == Phase.ERROR.value,
+            )
+        )
+        error_count = error_result.scalar() or 0
+        WORKSPACES_IN_ERROR.set(error_count)
+
+        # Q2: Operations in progress (by operation type)
+        op_result = await self._conn.execute(
+            select(Workspace.operation, func.count()).where(
+                Workspace.deleted_at.is_(None),
+                Workspace.operation != Operation.NONE.value,
+            ).group_by(Workspace.operation)
+        )
+        op_counts = {row[0]: row[1] for row in op_result.fetchall()}
+
+        # Reset all operation gauges first, then set active ones
+        for op in Operation:
+            if op != Operation.NONE:
+                OPERATION_IN_PROGRESS.labels(operation=op.value).set(0)
+        for op_name, count in op_counts.items():
+            OPERATION_IN_PROGRESS.labels(operation=op_name).set(count)
+
+        # Q2: Stuck workspaces (operation running > threshold)
+        stuck_result = await self._conn.execute(
+            select(Workspace.operation, func.count()).where(
+                Workspace.deleted_at.is_(None),
+                Workspace.operation != Operation.NONE.value,
+                Workspace.op_started_at.isnot(None),
+                func.extract("epoch", now - Workspace.op_started_at) > stuck_threshold_seconds,
+            ).group_by(Workspace.operation)
+        )
+        stuck_counts = {row[0]: row[1] for row in stuck_result.fetchall()}
+
+        # Reset all stuck gauges first, then set active ones
+        for op in Operation:
+            if op != Operation.NONE:
+                WORKSPACES_STUCK.labels(operation=op.value).set(0)
+        for op_name, count in stuck_counts.items():
+            WORKSPACES_STUCK.labels(operation=op_name).set(count)
+
+        # Q5: Total concurrent operations
+        total_ops = sum(op_counts.values())
+        CONCURRENT_OPERATIONS.set(total_ops)
+
+        # Q5: Workspaces by phase
+        phase_result = await self._conn.execute(
+            select(Workspace.phase, func.count()).where(
+                Workspace.deleted_at.is_(None),
+            ).group_by(Workspace.phase)
+        )
+        phase_counts = {row[0]: row[1] for row in phase_result.fetchall()}
+
+        # Reset all phase gauges first, then set active ones
+        for phase in Phase:
+            WORKSPACES_BY_PHASE.labels(phase=phase.value).set(0)
+        for phase_name, count in phase_counts.items():
+            WORKSPACES_BY_PHASE.labels(phase=phase_name).set(count)
