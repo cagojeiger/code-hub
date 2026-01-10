@@ -90,7 +90,10 @@ class ChannelSubscriber:
                 await self._pubsub.unsubscribe()
                 await self._pubsub.close()
             except Exception as e:
-                logger.warning("Error closing pubsub: %s", e)
+                logger.warning(
+                    "Error closing pubsub",
+                    extra={"event": LogEvent.REDIS_CONNECTION_ERROR, "error": str(e)},
+                )
             self._pubsub = None
         self._channel = None
 
@@ -133,8 +136,12 @@ class ChannelSubscriber:
             return None
         except Exception as e:
             logger.warning(
-                "Error reading from pubsub: %s",
-                e,
-                extra={"error_type": type(e).__name__, "channel": self._channel},
+                "Error reading from pubsub",
+                extra={
+                    "event": LogEvent.REDIS_CONNECTION_ERROR,
+                    "channel": self._channel,
+                    "error_type": type(e).__name__,
+                    "error": str(e),
+                },
             )
             return None

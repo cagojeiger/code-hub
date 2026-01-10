@@ -180,7 +180,7 @@ class WorkspaceController(CoordinatorBase):
                     await self._persist(ws, action)
                     if action.operation != Operation.NONE:
                         action_counts[action.operation.value] += 1
-                except Exception as exc:
+                except Exception:
                     logger.exception(
                         "Failed to persist",
                         extra={

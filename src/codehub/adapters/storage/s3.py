@@ -136,12 +136,13 @@ class S3StorageProvider(StorageProvider):
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "Unknown")
             logger.error(
-                "Failed to list archives: %s",
-                e,
+                "Failed to list archives",
                 extra={
+                    "event": LogEvent.S3_ERROR,
                     "bucket": settings.storage.bucket_name,
                     "prefix": prefix,
                     "error_code": error_code,
+                    "error": str(e),
                 },
             )
             raise  # Propagate to caller (Observer uses _safe() wrapper)
@@ -183,12 +184,13 @@ class S3StorageProvider(StorageProvider):
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "Unknown")
             logger.error(
-                "Failed to list all archives: %s",
-                e,
+                "Failed to list all archives",
                 extra={
+                    "event": LogEvent.S3_ERROR,
                     "bucket": settings.storage.bucket_name,
                     "prefix": prefix,
                     "error_code": error_code,
+                    "error": str(e),
                 },
             )
             raise  # Propagate to caller (GC handles exception)

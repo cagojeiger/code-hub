@@ -107,14 +107,20 @@ class EventListener:
             self._database_url,
             autocommit=True,
         )
-        logger.info("Connected to PostgreSQL (psycopg3 for LISTEN)")
+        logger.info(
+            "Connected to PostgreSQL (psycopg3 for LISTEN)",
+            extra={"event": LogEvent.DB_CONNECTED},
+        )
 
         # 2. SQLAlchemy connection (Advisory Lock + SELECT)
         # Convert postgresql:// to postgresql+asyncpg:// for SQLAlchemy async
         sa_url = self._database_url.replace("postgresql://", "postgresql+asyncpg://")
         self._engine = create_async_engine(sa_url)
         self._sa_conn = await self._engine.connect()
-        logger.info("Connected to PostgreSQL (SQLAlchemy for queries)")
+        logger.info(
+            "Connected to PostgreSQL (SQLAlchemy for queries)",
+            extra={"event": LogEvent.DB_CONNECTED},
+        )
 
         # 3. Use SQLAlchemyLeaderElection (same as other Coordinators)
         leader = SQLAlchemyLeaderElection(self._sa_conn, self.LOCK_KEY)
@@ -127,12 +133,21 @@ class EventListener:
             if not self._running:
                 return
 
-            logger.info("Acquired leadership")
+            logger.info(
+                "Acquired leadership",
+                extra={"event": LogEvent.LEADERSHIP_ACQUIRED},
+            )
 
             # Register LISTEN channels (psycopg3 only!)
             await self._notify_conn.execute(f"LISTEN {self.CHANNEL_SSE}")
             await self._notify_conn.execute(f"LISTEN {self.CHANNEL_WAKE}")
-            logger.info("Listening to %s, %s", self.CHANNEL_SSE, self.CHANNEL_WAKE)
+            logger.info(
+                "Listening to channels",
+                extra={
+                    "event": LogEvent.REDIS_SUBSCRIBED,
+                    "channels": [self.CHANNEL_SSE, self.CHANNEL_WAKE],
+                },
+            )
 
             # Start worker task
             worker_task = asyncio.create_task(self._worker_loop())
@@ -158,7 +173,7 @@ class EventListener:
                     pass
 
         except asyncio.CancelledError:
-            logger.info("Cancelled, cleaning up")
+            logger.info("Cancelled, cleaning up", extra={"event": LogEvent.APP_STOPPED})
         except Exception as e:
             logger.exception("Error: %s", e)
         finally:
@@ -187,7 +202,7 @@ class EventListener:
         if self._engine:
             await self._engine.dispose()
             self._engine = None
-        logger.info("Stopped")
+        logger.info("Stopped", extra={"event": LogEvent.APP_STOPPED})
 
     async def _dispatch(self, channel: str, payload: str) -> None:
         """Dispatch event to appropriate handler."""
@@ -215,7 +230,10 @@ class EventListener:
             workspace_id = data.get("id")
             user_id = data.get("owner_user_id")
             if not workspace_id or not user_id:
-                logger.warning("SSE payload missing id or owner_user_id: %s", payload)
+                logger.warning(
+                    "SSE payload missing id or owner_user_id",
+                    extra={"event": LogEvent.SSE_RECEIVED, "payload": payload},
+                )
                 return
 
             # Query DB for full workspace data (using SQLAlchemy connection)
@@ -238,7 +256,10 @@ class EventListener:
                 },
             )
         except json.JSONDecodeError as e:
-            logger.warning("Invalid SSE payload: %s (%s)", payload, e)
+            logger.warning(
+                "Invalid SSE payload",
+                extra={"event": LogEvent.SSE_RECEIVED, "payload": payload, "error": str(e)},
+            )
         except Exception as e:
             logger.exception("SSE error: %s", e)
 
@@ -249,7 +270,10 @@ class EventListener:
             Workspace data as dict, or None if not found.
         """
         if self._sa_conn is None:
-            logger.error("DB connection not available")
+            logger.error(
+                "DB connection not available",
+                extra={"event": LogEvent.DB_ERROR},
+            )
             return None
 
         result = await self._sa_conn.execute(

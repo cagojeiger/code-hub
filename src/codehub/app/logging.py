@@ -13,9 +13,8 @@ from pythonjsonlogger import json as jsonlogger
 
 from codehub.app.config import get_settings
 
-# Context variables for distributed tracing
+# Context variable for distributed tracing
 trace_id_ctx: ContextVar[str | None] = ContextVar("trace_id", default=None)
-span_id_ctx: ContextVar[str | None] = ContextVar("span_id", default=None)
 
 
 def get_trace_id() -> str | None:
@@ -40,7 +39,6 @@ def set_trace_id(trace_id: str | None = None) -> str:
 def clear_trace_context() -> None:
     """Clear trace context (call at end of request)."""
     trace_id_ctx.set(None)
-    span_id_ctx.set(None)
 
 
 class RateLimitFilter(logging.Filter):
@@ -101,7 +99,6 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
     - schema_version: Log schema version (for backwards compatibility)
     - service: Service name
     - trace_id: Distributed trace ID (if set in context)
-    - span_id: Span ID (if set in context)
     """
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -136,8 +133,6 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
         # Trace context (if set)
         if trace_id := get_trace_id():
             log_record["trace_id"] = trace_id
-        if span_id := span_id_ctx.get():
-            log_record["span_id"] = span_id
 
         # Exception formatting
         if record.exc_info:

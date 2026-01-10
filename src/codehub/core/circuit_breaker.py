@@ -21,6 +21,8 @@ from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import TypeVar
 
+from codehub.core.logging_schema import LogEvent
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -98,9 +100,12 @@ class CircuitBreaker:
             if self._state == CircuitState.OPEN:
                 retry_after = self.timeout - (time.time() - (self._last_failure_time or 0))
                 logger.warning(
-                    "[CircuitBreaker:%s] Circuit OPEN, rejecting request (retry_after=%.1fs)",
-                    self.name,
-                    max(0, retry_after),
+                    "Circuit OPEN, rejecting request",
+                    extra={
+                        "event": LogEvent.OPERATION_FAILED,
+                        "circuit": self.name,
+                        "retry_after": max(0, retry_after),
+                    },
                 )
                 raise CircuitOpenError(self.name, max(0, retry_after))
 
@@ -120,8 +125,8 @@ class CircuitBreaker:
                 and time.time() - self._last_failure_time >= self.timeout
             ):
                 logger.info(
-                    "[CircuitBreaker:%s] Transitioning OPEN -> HALF_OPEN",
-                    self.name,
+                    "Transitioning OPEN -> HALF_OPEN",
+                    extra={"event": LogEvent.STATE_CHANGED, "circuit": self.name},
                 )
                 self._state = CircuitState.HALF_OPEN
                 self._success_count = 0
@@ -133,10 +138,12 @@ class CircuitBreaker:
                 self._success_count += 1
                 if self._success_count >= self.success_threshold:
                     logger.info(
-                        "[CircuitBreaker:%s] Transitioning HALF_OPEN -> CLOSED "
-                        "(success_count=%d)",
-                        self.name,
-                        self._success_count,
+                        "Transitioning HALF_OPEN -> CLOSED",
+                        extra={
+                            "event": LogEvent.STATE_CHANGED,
+                            "circuit": self.name,
+                            "success_count": self._success_count,
+                        },
                     )
                     self._state = CircuitState.CLOSED
                     self._failure_count = 0
@@ -152,17 +159,19 @@ class CircuitBreaker:
 
             if self._state == CircuitState.HALF_OPEN:
                 logger.warning(
-                    "[CircuitBreaker:%s] Transitioning HALF_OPEN -> OPEN (failure)",
-                    self.name,
+                    "Transitioning HALF_OPEN -> OPEN (failure)",
+                    extra={"event": LogEvent.STATE_CHANGED, "circuit": self.name},
                 )
                 self._state = CircuitState.OPEN
             elif self._state == CircuitState.CLOSED:
                 if self._failure_count >= self.failure_threshold:
                     logger.warning(
-                        "[CircuitBreaker:%s] Transitioning CLOSED -> OPEN "
-                        "(failure_count=%d)",
-                        self.name,
-                        self._failure_count,
+                        "Transitioning CLOSED -> OPEN",
+                        extra={
+                            "event": LogEvent.STATE_CHANGED,
+                            "circuit": self.name,
+                            "failure_count": self._failure_count,
+                        },
                     )
                     self._state = CircuitState.OPEN
 

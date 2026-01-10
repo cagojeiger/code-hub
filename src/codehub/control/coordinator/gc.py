@@ -130,18 +130,30 @@ class ArchiveGC(CoordinatorBase):
         orphan_volumes = volume_ids - valid_ws_ids
 
         for ws_id in orphan_containers:
-            logger.warning("Deleting orphan container: %s", ws_id)
+            logger.warning(
+                "Deleting orphan container",
+                extra={"event": LogEvent.OPERATION_SUCCESS, "ws_id": ws_id},
+            )
             try:
                 await self._ic.delete(ws_id)
             except Exception as e:
-                logger.warning("Failed to delete container %s: %s", ws_id, e)
+                logger.warning(
+                    "Failed to delete container",
+                    extra={"event": LogEvent.OPERATION_FAILED, "ws_id": ws_id, "error": str(e)},
+                )
 
         for ws_id in orphan_volumes:
-            logger.warning("Deleting orphan volume: %s", ws_id)
+            logger.warning(
+                "Deleting orphan volume",
+                extra={"event": LogEvent.OPERATION_SUCCESS, "ws_id": ws_id},
+            )
             try:
                 await self._storage.delete_volume(ws_id)
             except Exception as e:
-                logger.warning("Failed to delete volume %s: %s", ws_id, e)
+                logger.warning(
+                    "Failed to delete volume",
+                    extra={"event": LogEvent.OPERATION_FAILED, "ws_id": ws_id, "error": str(e)},
+                )
 
         if orphan_containers or orphan_volumes:
             logger.info(
@@ -166,7 +178,10 @@ class ArchiveGC(CoordinatorBase):
             logger.debug("Found %d archives in storage", len(archive_keys))
             return archive_keys
         except Exception as e:
-            logger.error("Failed to list archives from S3, skipping cleanup: %s", e)
+            logger.error(
+                "Failed to list archives from S3, skipping cleanup",
+                extra={"event": LogEvent.S3_ERROR, "error": str(e)},
+            )
             return None
 
     async def _get_protected_paths(self) -> set[str]:

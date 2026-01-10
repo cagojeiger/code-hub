@@ -49,16 +49,23 @@ class BulkObserver:
             return await asyncio.wait_for(coro, timeout=self._timeout_s)
         except asyncio.TimeoutError:
             logger.warning(
-                "%s timeout (%.1fs)",
-                name, self._timeout_s,
-                extra={"operation": name, "error_type": "timeout", "timeout_s": self._timeout_s},
+                "Operation timeout",
+                extra={
+                    "event": LogEvent.OPERATION_TIMEOUT,
+                    "operation": name,
+                    "timeout_s": self._timeout_s,
+                },
             )
             return None
         except Exception as exc:
             logger.exception(
-                "%s failed: %s",
-                name, exc,
-                extra={"operation": name, "error_type": type(exc).__name__},
+                "Operation failed",
+                extra={
+                    "event": LogEvent.OPERATION_FAILED,
+                    "operation": name,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
             )
             return None
 
@@ -113,13 +120,19 @@ class ObserverCoordinator(CoordinatorBase):
 
         # 하나라도 실패 → skip (상태 일관성 보장, 다음 tick에서 재시도)
         if any(x is None for x in [containers, volumes, archives]):
-            logger.warning("Observation failed, skipping tick")
+            logger.warning(
+                "Observation failed, skipping tick",
+                extra={"event": LogEvent.OPERATION_FAILED},
+            )
             return
 
         # Orphan 경고 (DB에 없는데 리소스 있음 → GC 대상)
         observed_ws_ids = set(containers) | set(volumes) | set(archives)
         for ws_id in observed_ws_ids - ws_ids:
-            logger.warning("Orphan ws_id=%s", ws_id)
+            logger.warning(
+                "Orphan detected",
+                extra={"event": LogEvent.CONTAINER_DISAPPEARED, "ws_id": ws_id},
+            )
 
         # Detect disappeared containers (critical for OOM/crash diagnosis)
         current_container_ids = set(containers.keys())

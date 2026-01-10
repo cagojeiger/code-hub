@@ -98,7 +98,10 @@ class CoordinatorBase(ABC):
 
     def accelerate(self) -> None:
         self._active_until = time.time() + self.ACTIVE_DURATION
-        logger.info("Accelerating for %.0fs", self.ACTIVE_DURATION)
+        logger.info(
+            "Accelerating",
+            extra={"event": LogEvent.STATE_CHANGED, "duration": self.ACTIVE_DURATION},
+        )
 
     def _get_interval(self) -> float:
         return self.ACTIVE_INTERVAL if self.is_active else self.IDLE_INTERVAL
@@ -117,7 +120,10 @@ class CoordinatorBase(ABC):
         try:
             await self._conn.rollback()
         except Exception as e:
-            logger.warning("Rollback failed: %s", e)
+            logger.warning(
+                "Rollback failed",
+                extra={"event": LogEvent.DB_ERROR, "error": str(e)},
+            )
 
     @abstractmethod
     async def tick(self) -> None:
@@ -153,7 +159,10 @@ class CoordinatorBase(ABC):
         try:
             acquired = await self._leader.try_acquire()
         except Exception as e:
-            logger.warning("Error acquiring leadership: %s", e)
+            logger.warning(
+                "Error acquiring leadership",
+                extra={"event": LogEvent.LEADERSHIP_LOST, "error": str(e)},
+            )
             await self._safe_rollback()
             acquired = False
 
@@ -196,7 +205,10 @@ class CoordinatorBase(ABC):
         """Execute tick. Returns False if cancelled or leadership lost."""
         # P6: Verify leadership before tick to detect Split Brain early
         if not await self._leader.verify_holding():
-            logger.warning("Leadership lost before tick - skipping")
+            logger.warning(
+                "Leadership lost before tick - skipping",
+                extra={"event": LogEvent.LEADERSHIP_LOST},
+            )
             await self._release_subscription()
             return True  # Continue loop to re-acquire leadership
 
@@ -225,7 +237,10 @@ class CoordinatorBase(ABC):
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning("Error checking notify: %s", e)
+            logger.warning(
+                "Error checking notify",
+                extra={"event": LogEvent.REDIS_CONNECTION_ERROR, "error": str(e)},
+            )
             await asyncio.sleep(interval)
 
     async def _release_subscription(self) -> None:
@@ -234,7 +249,10 @@ class CoordinatorBase(ABC):
             try:
                 await self._subscriber.unsubscribe()
             except Exception as e:
-                logger.warning("Error unsubscribing: %s", e)
+                logger.warning(
+                    "Error unsubscribing",
+                    extra={"event": LogEvent.REDIS_CONNECTION_ERROR, "error": str(e)},
+                )
             self._subscribed = False
 
     async def _cleanup(self) -> None:
@@ -244,4 +262,7 @@ class CoordinatorBase(ABC):
         try:
             await self._leader.release()
         except Exception as e:
-            logger.warning("Error releasing leadership: %s", e)
+            logger.warning(
+                "Error releasing leadership",
+                extra={"event": LogEvent.LEADERSHIP_LOST, "error": str(e)},
+            )

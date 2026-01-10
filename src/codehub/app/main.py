@@ -22,6 +22,7 @@ from codehub.app.config import get_settings
 from codehub.app.logging import setup_logging
 from codehub.app.middleware import LoggingMiddleware
 from codehub.core.errors import CodeHubError
+from codehub.core.logging_schema import LogEvent
 from codehub.core.models import User
 from codehub.core.security import hash_password
 from codehub.app.proxy import router as proxy_router
@@ -94,7 +95,10 @@ async def _ensure_admin_user() -> None:
         )
         await session.execute(stmt)
         await session.commit()
-        logger.info("Ensured admin user: %s", username)
+        logger.info(
+            "Ensured admin user",
+            extra={"event": LogEvent.APP_STARTED, "username": username},
+        )
 
 
 @asynccontextmanager
@@ -108,14 +112,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await init_storage()
     await _ensure_admin_user()
 
-    logger.info("[main] Starting application")
+    logger.info("Starting application", extra={"event": LogEvent.APP_STARTED})
 
     coordinator_task = asyncio.create_task(_run_coordinators())
     metrics_task = asyncio.create_task(_metrics_updater_loop())
 
     yield
 
-    logger.info("[main] Shutting down application")
+    logger.info("Shutting down application", extra={"event": LogEvent.APP_STOPPED})
     coordinator_task.cancel()
     metrics_task.cancel()
     try:
@@ -194,7 +198,10 @@ async def _run_coordinators() -> None:
                 if count > 0:
                     logger.debug("Flushed %d activities to Redis", count)
             except Exception as e:
-                logger.warning("Activity buffer flush error: %s", e)
+                logger.warning(
+                    "Activity buffer flush error",
+                    extra={"event": LogEvent.REDIS_CONNECTION_ERROR, "error": str(e)},
+                )
 
     try:
         await asyncio.gather(
@@ -206,10 +213,13 @@ async def _run_coordinators() -> None:
             activity_buffer_flush_loop(),
         )
     except asyncio.CancelledError:
-        logger.info("[main] Coordinators cancelled")
+        logger.info("Coordinators cancelled", extra={"event": LogEvent.APP_STOPPED})
         raise
     except Exception as e:
-        logger.exception("[main] Coordinator error: %s", e)
+        logger.exception(
+            "Coordinator error",
+            extra={"event": LogEvent.APP_STOPPED, "error": str(e)},
+        )
     finally:
         await ic.close()
         await sp.close()
