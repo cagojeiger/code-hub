@@ -51,6 +51,17 @@ class LogEvent(StrEnum):
     WAKE_PUBLISHED = "wake_published"
     SSE_PUBLISHED = "sse_published"
 
+    # WebSocket/Proxy events
+    WS_CONNECTED = "ws_connected"
+    WS_DISCONNECTED = "ws_disconnected"
+    WS_ERROR = "ws_error"
+    UPSTREAM_ERROR = "upstream_error"
+
+    # SSE events
+    SSE_CONNECTED = "sse_connected"
+    SSE_DISCONNECTED = "sse_disconnected"
+    SSE_RECEIVED = "sse_received"
+
 
 class ErrorClass(StrEnum):
     """Error classification for structured error logging.
