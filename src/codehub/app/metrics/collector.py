@@ -125,28 +125,38 @@ OPERATION_TOTAL = Counter(
 # Q5: 용량은 괜찮아? (Is capacity OK?) - Resource Saturation
 # =============================================================================
 
+# DB Pool metrics use worker_pid label with liveall mode.
+# Each worker has its own connection pool, so we report per-worker values.
+# Dashboard queries should use sum() or avg() to aggregate across workers.
+# Note: SQLAlchemy pool.overflow() returns negative values (-max_overflow) when
+# no overflow connections exist, so collectors must use max(0, overflow).
+
 DB_POOL_UTILIZATION = Gauge(
     "codehub_db_pool_utilization",
     "Database connection pool utilization ratio (0.0-1.0)",
-    multiprocess_mode="livesum",
+    ["worker_pid"],
+    multiprocess_mode="liveall",
 )
 
 DB_POOL_IDLE = Gauge(
     "codehub_db_pool_idle",
     "Number of idle database connections in pool",
-    multiprocess_mode="livesum",
+    ["worker_pid"],
+    multiprocess_mode="liveall",
 )
 
 DB_POOL_ACTIVE = Gauge(
     "codehub_db_pool_active",
     "Number of active database connections in use",
-    multiprocess_mode="livesum",
+    ["worker_pid"],
+    multiprocess_mode="liveall",
 )
 
 DB_POOL_OVERFLOW = Gauge(
     "codehub_db_pool_overflow",
     "Number of overflow database connections",
-    multiprocess_mode="livesum",
+    ["worker_pid"],
+    multiprocess_mode="liveall",
 )
 
 WORKSPACES_BY_PHASE = Gauge(

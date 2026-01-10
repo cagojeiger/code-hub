@@ -299,7 +299,12 @@ _worker_pid = str(os.getpid())
 
 
 def _update_db_pool_metrics() -> None:
-    """Update database pool metrics."""
+    """Update database pool metrics.
+
+    Note: SQLAlchemy pool.overflow() returns the internal _overflow counter,
+    which starts at -max_overflow and increments when overflow connections are
+    created. We use max(0, overflow) to get the actual overflow connection count.
+    """
     try:
         engine = get_engine()
         pool = engine.pool
@@ -307,13 +312,17 @@ def _update_db_pool_metrics() -> None:
 
         idle = pool.checkedin()
         active = pool.checkedout()
-        overflow = pool.overflow()
-        max_connections = settings.database.pool_size + settings.database.max_overflow
+        # Fix: pool.overflow() can be negative (-max_overflow when no overflow)
+        overflow = max(0, pool.overflow())
+        pool_size = settings.database.pool_size
+        max_overflow = settings.database.max_overflow
+        max_connections = pool_size + max_overflow
 
-        DB_POOL_IDLE.set(idle)
-        DB_POOL_ACTIVE.set(active)
-        DB_POOL_OVERFLOW.set(overflow)
-        DB_POOL_UTILIZATION.set((active + overflow) / max_connections if max_connections > 0 else 0)
+        DB_POOL_IDLE.labels(worker_pid=_worker_pid).set(idle)
+        DB_POOL_ACTIVE.labels(worker_pid=_worker_pid).set(active)
+        DB_POOL_OVERFLOW.labels(worker_pid=_worker_pid).set(overflow)
+        utilization = (active + overflow) / max_connections if max_connections > 0 else 0
+        DB_POOL_UTILIZATION.labels(worker_pid=_worker_pid).set(utilization)
         INFRA_UP.labels(component="db", worker_pid=_worker_pid).set(1)
     except Exception:
         INFRA_UP.labels(component="db", worker_pid=_worker_pid).set(0)
@@ -321,6 +330,10 @@ def _update_db_pool_metrics() -> None:
 
 async def _update_infra_status() -> None:
     """Update infrastructure connection status metrics."""
+    import httpx
+
+    settings = get_settings()
+
     # Redis
     try:
         redis_client = get_redis()
@@ -336,6 +349,18 @@ async def _update_infra_status() -> None:
         INFRA_UP.labels(component="s3", worker_pid=_worker_pid).set(1)
     except Exception:
         INFRA_UP.labels(component="s3", worker_pid=_worker_pid).set(0)
+
+    # Docker (via docker-proxy)
+    try:
+        docker_url = settings.docker.host.replace("tcp://", "http://")
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{docker_url}/_ping")
+            if response.status_code == 200:
+                INFRA_UP.labels(component="docker", worker_pid=_worker_pid).set(1)
+            else:
+                INFRA_UP.labels(component="docker", worker_pid=_worker_pid).set(0)
+    except Exception:
+        INFRA_UP.labels(component="docker", worker_pid=_worker_pid).set(0)
 
 
 async def _metrics_updater_loop() -> None:

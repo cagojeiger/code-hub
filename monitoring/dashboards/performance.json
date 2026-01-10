@@ -86,9 +86,10 @@
       "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "pluginVersion": "10.0.0",
       "targets": [
-        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(codehub_reconcile_stage_duration_seconds_bucket{coordinator=\"wc\"}[5m])) by (stage, le))", "legendFormat": "{{stage}}", "refId": "A" }
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(codehub_reconcile_stage_duration_seconds_bucket{coordinator=\"wc\"}[5m])) by (stage, le))", "legendFormat": "{{stage}} p95", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.99, sum(rate(codehub_reconcile_stage_duration_seconds_bucket{coordinator=\"wc\"}[5m])) by (stage, le))", "legendFormat": "{{stage}} p99", "refId": "B" }
       ],
-      "title": "WC Stage Duration p95 (load/plan/execute/persist)",
+      "title": "WC Stage Duration (p95/p99)",
       "type": "timeseries"
     },
     {
@@ -116,9 +117,10 @@
       "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "pluginVersion": "10.0.0",
       "targets": [
-        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(codehub_infra_operation_duration_seconds_bucket{infra=\"docker\"}[5m])) by (operation, le))", "legendFormat": "docker/{{operation}}", "refId": "A" }
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(codehub_infra_operation_duration_seconds_bucket{infra=\"docker\"}[5m])) by (operation, le))", "legendFormat": "{{operation}} p95", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.99, sum(rate(codehub_infra_operation_duration_seconds_bucket{infra=\"docker\"}[5m])) by (operation, le))", "legendFormat": "{{operation}} p99", "refId": "B" }
       ],
-      "title": "Docker Operations p95",
+      "title": "Docker Operations (p95/p99)",
       "type": "timeseries"
     },
     {
@@ -138,9 +140,10 @@
       "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "pluginVersion": "10.0.0",
       "targets": [
-        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(codehub_infra_operation_duration_seconds_bucket{infra=\"s3\"}[5m])) by (operation, le))", "legendFormat": "s3/{{operation}}", "refId": "A" }
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(codehub_infra_operation_duration_seconds_bucket{infra=\"s3\"}[5m])) by (operation, le))", "legendFormat": "{{operation}} p95", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.99, sum(rate(codehub_infra_operation_duration_seconds_bucket{infra=\"s3\"}[5m])) by (operation, le))", "legendFormat": "{{operation}} p99", "refId": "B" }
       ],
-      "title": "S3 Operations p95",
+      "title": "S3 Operations (p95/p99)",
       "type": "timeseries"
     },
     {

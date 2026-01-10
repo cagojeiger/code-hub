@@ -32,7 +32,7 @@
       "id": 2,
       "options": { "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showThresholdLabels": false, "showThresholdMarkers": true },
       "pluginVersion": "10.0.0",
-      "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "codehub_db_pool_utilization or vector(0)", "legendFormat": "Utilization", "refId": "A" }],
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "avg(codehub_db_pool_utilization) or vector(0)", "legendFormat": "Utilization", "refId": "A" }],
       "title": "DB Pool Utilization",
       "type": "gauge"
     },
@@ -53,9 +53,9 @@
       "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "pluginVersion": "10.0.0",
       "targets": [
-        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "codehub_db_pool_idle", "legendFormat": "Idle", "refId": "A" },
-        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "codehub_db_pool_active", "legendFormat": "Active", "refId": "B" },
-        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "codehub_db_pool_overflow", "legendFormat": "Overflow", "refId": "C" }
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(codehub_db_pool_idle)", "legendFormat": "Idle", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(codehub_db_pool_active)", "legendFormat": "Active", "refId": "B" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(codehub_db_pool_overflow)", "legendFormat": "Overflow", "refId": "C" }
       ],
       "title": "DB Pool Connections",
       "type": "timeseries"
@@ -202,8 +202,11 @@
       "id": 12,
       "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "pluginVersion": "10.0.0",
-      "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(codehub_proxy_ws_message_latency_seconds_bucket[5m])) by (direction, le))", "legendFormat": "{{direction}} p95", "refId": "A" }],
-      "title": "WebSocket Message Latency p95",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.95, sum(rate(codehub_proxy_ws_message_latency_seconds_bucket[5m])) by (direction, le))", "legendFormat": "{{direction}} p95", "refId": "A" },
+        { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.99, sum(rate(codehub_proxy_ws_message_latency_seconds_bucket[5m])) by (direction, le))", "legendFormat": "{{direction}} p99", "refId": "B" }
+      ],
+      "title": "WebSocket Message Latency (p95/p99)",
       "type": "timeseries"
     }
   ],
