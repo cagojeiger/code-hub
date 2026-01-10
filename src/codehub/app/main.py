@@ -20,6 +20,7 @@ from codehub.adapters.storage import S3StorageProvider
 from codehub.app.api.v1 import auth_router, events_router, workspaces_router
 from codehub.app.config import get_settings
 from codehub.app.logging import setup_logging
+from codehub.app.middleware import LoggingMiddleware
 from codehub.core.errors import CodeHubError
 from codehub.core.models import User
 from codehub.core.security import hash_password
@@ -215,6 +216,7 @@ async def _run_coordinators() -> None:
 
 
 app = FastAPI(title="CodeHub", version=__version__, lifespan=lifespan)
+app.add_middleware(LoggingMiddleware)
 
 
 @app.exception_handler(CodeHubError)

@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from codehub.app.config import get_settings
+from codehub.core.logging_schema import LogEvent
 from codehub.infra.pg_leader import SQLAlchemyLeaderElection
 from codehub.infra.redis_pubsub import ChannelPublisher
 
@@ -147,10 +148,12 @@ class EventListener:
                     if not self._running:
                         break
                     logger.info(
-                        "[%s] NOTIFY received: channel=%s, payload=%s",
+                        "[%s] NOTIFY received",
                         self._log_prefix,
-                        notify.channel,
-                        notify.payload[:100] if notify.payload else "",
+                        extra={
+                            "event": LogEvent.NOTIFY_RECEIVED,
+                            "channel": notify.channel,
+                        },
                     )
                     await self._event_queue.put((notify.channel, notify.payload or ""))
             finally:
@@ -240,11 +243,14 @@ class EventListener:
             channel = f"{_channel_config.sse_prefix}:{user_id}"
             await self._publisher.publish(channel, json.dumps(workspace_data))
             logger.info(
-                "[%s] SSE -> publish user=%s ws=%s deleted=%s",
+                "[%s] SSE published",
                 self._log_prefix,
-                user_id,
-                workspace_id,
-                workspace_data.get("deleted_at") is not None,
+                extra={
+                    "event": LogEvent.SSE_PUBLISHED,
+                    "user_id": user_id,
+                    "ws_id": workspace_id,
+                    "deleted": workspace_data.get("deleted_at") is not None,
+                },
             )
         except json.JSONDecodeError as e:
             logger.warning(
@@ -302,10 +308,13 @@ class EventListener:
                 self._publisher.publish(wc_channel),
             )
             logger.info(
-                "[%s] Wake -> ob=%d, wc=%d",
+                "[%s] Wake published",
                 self._log_prefix,
-                ob_count,
-                wc_count,
+                extra={
+                    "event": LogEvent.WAKE_PUBLISHED,
+                    "ob_count": ob_count,
+                    "wc_count": wc_count,
+                },
             )
         except Exception as e:
             logger.exception("[%s] Wake error: %s", self._log_prefix, e)

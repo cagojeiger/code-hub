@@ -20,6 +20,7 @@ from codehub.control.coordinator.base import (
     LeaderElection,
 )
 from codehub.core.interfaces import InstanceController, StorageProvider
+from codehub.core.logging_schema import LogEvent
 
 logger = logging.getLogger(__name__)
 
@@ -98,10 +99,13 @@ class ArchiveGC(CoordinatorBase):
         # 4. 즉시 삭제
         deleted = await self._delete_archives(orphans)
         logger.info(
-            "[%s] Deleted %d/%d orphan archives",
+            "[%s] Deleted orphan archives",
             self.name,
-            deleted,
-            len(orphans),
+            extra={
+                "event": LogEvent.OPERATION_SUCCESS,
+                "deleted": deleted,
+                "total": len(orphans),
+            },
         )
 
     async def _cleanup_orphan_resources(self) -> None:
@@ -143,10 +147,13 @@ class ArchiveGC(CoordinatorBase):
 
         if orphan_containers or orphan_volumes:
             logger.info(
-                "[%s] Deleted orphan resources: %d containers, %d volumes",
+                "[%s] Deleted orphan resources",
                 self.name,
-                len(orphan_containers),
-                len(orphan_volumes),
+                extra={
+                    "event": LogEvent.OPERATION_SUCCESS,
+                    "containers": len(orphan_containers),
+                    "volumes": len(orphan_volumes),
+                },
             )
 
     async def _list_archives(self) -> set[str] | None:

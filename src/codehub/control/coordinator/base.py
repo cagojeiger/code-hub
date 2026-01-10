@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from codehub.app.config import get_settings
 from codehub.core.interfaces.leader import LeaderElection
+from codehub.core.logging_schema import LogEvent
 from codehub.infra.redis_pubsub import ChannelSubscriber
 
 logger = logging.getLogger(__name__)
@@ -124,7 +125,11 @@ class CoordinatorBase(ABC):
     async def run(self) -> None:
         """Main coordinator loop."""
         self._running = True
-        logger.info("[%s] Starting coordinator", self.name)
+        logger.info(
+            "[%s] Starting coordinator",
+            self.name,
+            extra={"event": LogEvent.APP_STARTED},
+        )
 
         try:
             while self._running:
@@ -220,7 +225,11 @@ class CoordinatorBase(ABC):
 
     async def _cleanup(self) -> None:
         """Cleanup on shutdown."""
-        logger.info("[%s] Cleaning up", self.name)
+        logger.info(
+            "[%s] Cleaning up",
+            self.name,
+            extra={"event": LogEvent.APP_STOPPED},
+        )
         await self._release_subscription()
         try:
             await self._leader.release()

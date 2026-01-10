@@ -25,6 +25,7 @@ from codehub.control.coordinator.base import (
     LeaderElection,
 )
 from codehub.core.domain.workspace import DesiredState, Operation, Phase
+from codehub.core.logging_schema import LogEvent
 from codehub.infra.redis_kv import ActivityStore
 from codehub.infra.redis_pubsub import ChannelPublisher
 
@@ -82,10 +83,13 @@ class TTLManager(CoordinatorBase):
             wc_channel = f"{_channel_config.wake_prefix}:wc"
             await self._publisher.publish(wc_channel)
             logger.info(
-                "[%s] TTL expired: standby=%d, archive=%d",
+                "[%s] TTL expired",
                 self.name,
-                standby_expired,
-                archive_expired,
+                extra={
+                    "event": LogEvent.STATE_CHANGED,
+                    "standby_expired": standby_expired,
+                    "archive_expired": archive_expired,
+                },
             )
 
         await self._conn.commit()
@@ -163,7 +167,15 @@ class TTLManager(CoordinatorBase):
         updated_ids = [row[0] for row in result.fetchall()]
 
         if updated_ids:
-            logger.info("[%s] standby_ttl expired for %d workspaces", self.name, len(updated_ids))
+            logger.info(
+                "[%s] standby_ttl expired",
+                self.name,
+                extra={
+                    "event": LogEvent.STATE_CHANGED,
+                    "ttl_type": "standby",
+                    "count": len(updated_ids),
+                },
+            )
         return len(updated_ids)
 
     async def _check_archive_ttl(self) -> int:
@@ -199,5 +211,13 @@ class TTLManager(CoordinatorBase):
         updated_ids = [row[0] for row in result.fetchall()]
 
         if updated_ids:
-            logger.info("[%s] archive_ttl expired for %d workspaces", self.name, len(updated_ids))
+            logger.info(
+                "[%s] archive_ttl expired",
+                self.name,
+                extra={
+                    "event": LogEvent.STATE_CHANGED,
+                    "ttl_type": "archive",
+                    "count": len(updated_ids),
+                },
+            )
         return len(updated_ids)
