@@ -1,28 +1,13 @@
-"""Logging field schema - v1.0
+"""Log event and error classification enums.
 
-Standard fields (added to all logs):
-- schema_version: Log schema version
-- service: Service name (codehub-control-plane)
-- component: Component name (WC, OB, TTL, GC, API)
-- event: Event type (reconcile_complete, operation_failed, etc.)
-- trace_id: Distributed trace ID (W3C traceparent)
-- duration_ms: Duration in milliseconds
-
-High cardinality fields (OK in logs, NOT in metric labels):
-- ws_id: Workspace ID
-- user_id: User ID
-- request_id: Request ID
+See docs/LOGGING.md for detailed usage guide.
 """
 
 from enum import StrEnum
 
 
 class LogEvent(StrEnum):
-    """Standard log event types.
-
-    Use these event types in the 'event' extra field for consistent
-    log filtering and analysis.
-    """
+    """Log event types. See docs/LOGGING.md for usage."""
 
     # Coordinator events
     RECONCILE_COMPLETE = "reconcile_complete"
@@ -89,11 +74,7 @@ class LogEvent(StrEnum):
 
 
 class ErrorClass(StrEnum):
-    """Error classification for structured error logging.
-
-    Use these in the 'error_class' extra field to enable
-    filtering by error type and setting up alerts.
-    """
+    """Error classification. See docs/LOGGING.md for usage."""
 
     TRANSIENT = "transient"  # Retryable (network timeout, temp failure)
     PERMANENT = "permanent"  # Not retryable (invalid input, not found)
