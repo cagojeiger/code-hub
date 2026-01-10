@@ -92,31 +92,6 @@
 - `wake_published`: Wake 신호 발행
 - `sse_published`: SSE 이벤트 발행
 
-## 에러 분류 (error_class 필드)
-
-`extra={"error_class": ErrorClass.XXX}` 형태로 사용:
-
-| 분류 | 설명 | 처리 |
-|-----|------|------|
-| `transient` | 일시적 오류 (네트워크, 리소스 부족) | 재시도 |
-| `permanent` | 영구적 오류 (잘못된 입력, 권한 없음) | 실패 처리 |
-| `timeout` | 타임아웃 | 재시도 또는 알림 |
-| `rate_limited` | Rate limit 초과 | 대기 후 재시도 |
-
-## 컴포넌트 식별자 (component 필드)
-
-`extra={"component": Component.XXX}` 형태로 사용:
-
-| 식별자 | 설명 |
-|-------|------|
-| `wc` | WorkspaceController |
-| `ob` | Observer |
-| `ttl` | TTL Coordinator |
-| `gc` | Garbage Collector |
-| `api` | REST API |
-| `sse` | Server-Sent Events |
-| `cdc` | Change Data Capture (EventListener) |
-
 ## 고카디널리티 규칙
 
 ### 로그에는 OK
@@ -157,7 +132,7 @@ LOGGING_SLOW_THRESHOLD_MS=1000
 ### Coordinator 로그
 
 ```python
-from codehub.core.logging_schema import LogEvent, ErrorClass
+from codehub.core.logging_schema import LogEvent
 
 # Reconcile 완료 (INFO)
 logger.info(
@@ -180,8 +155,7 @@ logger.error(
         "event": LogEvent.OPERATION_FAILED,
         "ws_id": ws.id,
         "operation": "STARTING",
-        "error_class": ErrorClass.TRANSIENT,
-        "retryable": True,
+        "error": str(exc),
     },
 )
 ```
