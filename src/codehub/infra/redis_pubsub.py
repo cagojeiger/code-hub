@@ -10,6 +10,8 @@ import logging
 
 import redis.asyncio as redis
 
+from codehub.core.logging_schema import LogEvent
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,7 +80,7 @@ class ChannelSubscriber:
         await self._pubsub.subscribe(channel)
         logger.info(
             "Redis subscribed",
-            extra={"event": "redis_subscribed", "channel": channel},
+            extra={"event": LogEvent.REDIS_SUBSCRIBED, "channel": channel},
         )
 
     async def unsubscribe(self) -> None:
@@ -122,7 +124,7 @@ class ChannelSubscriber:
             logger.warning(
                 "Redis connection error",
                 extra={
-                    "event": "redis_connection_error",
+                    "event": LogEvent.REDIS_CONNECTION_ERROR,
                     "channel": self._channel,
                     "error_type": "connection_lost",
                     "error": str(e),

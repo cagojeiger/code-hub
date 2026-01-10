@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from codehub.app.config import get_settings
+from codehub.core.logging_schema import LogEvent
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ async def init_db() -> None:
         logger.info(
             "PostgreSQL connected",
             extra={
-                "event": "db_connected",
+                "event": LogEvent.DB_CONNECTED,
                 "pool_size": settings.database.pool_size,
                 "max_overflow": settings.database.max_overflow,
             },
@@ -52,7 +53,7 @@ async def init_db() -> None:
         logger.error(
             "PostgreSQL connection failed",
             extra={
-                "event": "db_error",
+                "event": LogEvent.DB_ERROR,
                 "error_type": type(e).__name__,
                 "error": str(e),
             },

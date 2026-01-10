@@ -29,7 +29,6 @@ class LogEvent(StrEnum):
     RECONCILE_SLOW = "reconcile_slow"
     OBSERVATION_COMPLETE = "observation_complete"
     STATE_CHANGED = "state_changed"
-    OPERATION_STARTED = "operation_started"
     OPERATION_FAILED = "operation_failed"
     OPERATION_TIMEOUT = "operation_timeout"
     OPERATION_SUCCESS = "operation_success"
@@ -49,6 +48,7 @@ class LogEvent(StrEnum):
     # API events
     REQUEST_COMPLETE = "request_complete"
     REQUEST_FAILED = "request_failed"
+    REQUEST_SLOW = "request_slow"
 
     # CDC/EventListener events
     NOTIFY_RECEIVED = "notify_received"
@@ -56,8 +56,6 @@ class LogEvent(StrEnum):
     SSE_PUBLISHED = "sse_published"
 
     # WebSocket/Proxy events
-    WS_CONNECTED = "ws_connected"
-    WS_DISCONNECTED = "ws_disconnected"
     WS_ERROR = "ws_error"
     UPSTREAM_ERROR = "upstream_error"
 
@@ -65,6 +63,15 @@ class LogEvent(StrEnum):
     SSE_CONNECTED = "sse_connected"
     SSE_DISCONNECTED = "sse_disconnected"
     SSE_RECEIVED = "sse_received"
+
+    # Infrastructure events
+    DB_CONNECTED = "db_connected"
+    DB_ERROR = "db_error"
+    S3_CONNECTED = "s3_connected"
+    S3_BUCKET_CREATED = "s3_bucket_created"
+    S3_ERROR = "s3_error"
+    REDIS_SUBSCRIBED = "redis_subscribed"
+    REDIS_CONNECTION_ERROR = "redis_connection_error"
 
 
 class ErrorClass(StrEnum):

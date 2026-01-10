@@ -84,7 +84,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 logger.warning(
                     "Slow request detected",
                     extra={
-                        "event": LogEvent.REQUEST_FAILED,  # Reuse for slow warning
+                        "event": LogEvent.REQUEST_SLOW,
                         "method": request.method,
                         "path": request.url.path,
                         "status": response.status_code,

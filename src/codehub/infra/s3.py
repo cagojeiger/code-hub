@@ -8,6 +8,7 @@ from botocore.exceptions import ClientError
 from types_aiobotocore_s3 import S3Client
 
 from codehub.app.config import get_settings
+from codehub.core.logging_schema import LogEvent
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ async def init_storage() -> None:
                 logger.info(
                     "S3 storage connected",
                     extra={
-                        "event": "s3_connected",
+                        "event": LogEvent.S3_CONNECTED,
                         "bucket": settings.storage.bucket_name,
                         "endpoint": settings.storage.endpoint_url,
                     },
@@ -43,7 +44,7 @@ async def init_storage() -> None:
                 logger.info(
                     "S3 bucket created",
                     extra={
-                        "event": "s3_bucket_created",
+                        "event": LogEvent.S3_BUCKET_CREATED,
                         "bucket": settings.storage.bucket_name,
                         "endpoint": settings.storage.endpoint_url,
                     },
@@ -52,7 +53,7 @@ async def init_storage() -> None:
         logger.error(
             "S3 connection failed",
             extra={
-                "event": "s3_error",
+                "event": LogEvent.S3_ERROR,
                 "error_type": type(e).__name__,
                 "error": str(e),
                 "bucket": settings.storage.bucket_name,

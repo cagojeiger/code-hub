@@ -42,10 +42,24 @@
 ### Leadership 이벤트
 - `leadership_acquired`: 리더십 획득
 - `leadership_lost`: 리더십 상실
+- `leadership_waiting`: 리더십 대기 중
+
+### Resource 이벤트
+- `container_disappeared`: 컨테이너 사라짐 (OOM/crash 감지용)
 
 ### API 이벤트
 - `request_complete`: 요청 완료
 - `request_failed`: 요청 실패
+- `request_slow`: 느린 요청 (threshold 초과)
+
+### Infrastructure 이벤트
+- `db_connected`: PostgreSQL 연결 성공
+- `db_error`: PostgreSQL 연결 실패
+- `s3_connected`: S3 스토리지 연결 성공
+- `s3_bucket_created`: S3 버킷 생성됨
+- `s3_error`: S3 연결 실패
+- `redis_subscribed`: Redis PUB/SUB 구독
+- `redis_connection_error`: Redis 연결 오류
 
 ### CDC 이벤트
 - `notify_received`: PG NOTIFY 수신
