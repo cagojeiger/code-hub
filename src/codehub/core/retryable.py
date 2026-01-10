@@ -232,7 +232,7 @@ async def with_retry(
         result = await with_retry(lambda: upload_file(), max_retries=5)
         result = await with_retry(lambda: call_api(), circuit_breaker="external")
     """
-    cb = get_circuit_breaker(circuit_breaker) if circuit_breaker else None
+    cb = get_circuit_breaker(circuit_breaker, error_classifier=classify_error) if circuit_breaker else None
     last_exc: Exception | None = None
 
     for attempt in range(max_retries + 1):
