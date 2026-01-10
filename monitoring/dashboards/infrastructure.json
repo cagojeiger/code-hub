@@ -14,7 +14,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Total connections across all workers vs system limit",
+      "description": "Total connections across all workers vs system limit\nLimit = (pool_size + max_overflow) × worker count",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -53,7 +53,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_postgresql_pool_size + codehub_postgresql_max_overflow",
+          "expr": "(codehub_postgresql_pool_size + codehub_postgresql_max_overflow) * count(codehub_postgresql_connected_workers)",
           "legendFormat": "limit",
           "refId": "B"
         }
@@ -72,7 +72,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Total Redis connections across all workers",
+      "description": "Total Redis connections across all workers\nLimit = max_connections × worker count",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -111,7 +111,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_redis_max_connections",
+          "expr": "codehub_redis_max_connections * count(codehub_redis_connected_workers)",
           "legendFormat": "limit",
           "refId": "B"
         }
@@ -242,7 +242,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_workers_total",
+          "expr": "count(codehub_postgresql_connected_workers)",
           "legendFormat": "",
           "refId": "A"
         }
@@ -301,13 +301,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "sum(codehub_postgresql_connected_workers)",
+          "expr": "count(codehub_postgresql_connected_workers)",
           "legendFormat": "PostgreSQL",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "sum(codehub_redis_connected_workers)",
+          "expr": "count(codehub_redis_connected_workers)",
           "legendFormat": "Redis",
           "refId": "B"
         }
@@ -323,7 +323,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Total pool connections (sum of all workers)",
+      "description": "Total pool connections (sum of all workers)\nLimit = (pool_size + max_overflow) × workers",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -403,7 +403,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_postgresql_pool_size + codehub_postgresql_max_overflow",
+          "expr": "(codehub_postgresql_pool_size + codehub_postgresql_max_overflow) * count(codehub_postgresql_connected_workers)",
           "legendFormat": "limit",
           "refId": "D"
         }
@@ -476,7 +476,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Per-worker breakdown for debugging",
+      "description": "Per-worker metrics breakdown",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -491,12 +491,7 @@
             "steps": [{ "color": "green", "value": null }]
           }
         },
-        "overrides": [
-          {
-            "matcher": { "id": "byName", "options": "worker_id" },
-            "properties": [{ "id": "custom.width", "value": 100 }]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 20 },
       "id": 12,
@@ -513,48 +508,47 @@
           "expr": "codehub_postgresql_pool_idle",
           "format": "table",
           "instant": true,
-          "legendFormat": "",
-          "refId": "A"
+          "refId": "idle"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
           "expr": "codehub_postgresql_pool_active",
           "format": "table",
           "instant": true,
-          "legendFormat": "",
-          "refId": "B"
+          "refId": "active"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
           "expr": "codehub_postgresql_pool_total",
           "format": "table",
           "instant": true,
-          "legendFormat": "",
-          "refId": "C"
+          "refId": "total"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
           "expr": "codehub_postgresql_pool_overflow",
           "format": "table",
           "instant": true,
-          "legendFormat": "",
-          "refId": "D"
+          "refId": "overflow"
         }
       ],
-      "title": "Worker Breakdown (PostgreSQL)",
+      "title": "Worker Details (PostgreSQL)",
       "transformations": [
-        { "id": "merge", "options": {} },
+        {
+          "id": "joinByField",
+          "options": { "byField": "pid", "mode": "outer" }
+        },
         {
           "id": "organize",
           "options": {
-            "excludeByName": { "Time": true, "__name__": true, "instance": true, "job": true },
-            "renameByName": {
-              "Value #A": "idle",
-              "Value #B": "active",
-              "Value #C": "total",
-              "Value #D": "overflow"
-            }
+            "excludeByName": { "Time 1": true, "Time 2": true, "Time 3": true, "Time 4": true, "__name__ 1": true, "__name__ 2": true, "__name__ 3": true, "__name__ 4": true, "job 1": true, "job 2": true, "job 3": true, "job 4": true, "instance 2": true, "instance 3": true, "instance 4": true },
+            "indexByName": { "instance 1": 0, "pid": 1, "Value #idle": 2, "Value #active": 3, "Value #total": 4, "Value #overflow": 5 },
+            "renameByName": { "instance 1": "instance", "Value #idle": "idle", "Value #active": "active", "Value #total": "total", "Value #overflow": "overflow" }
           }
+        },
+        {
+          "id": "sortBy",
+          "options": { "sort": [{ "field": "pid" }] }
         }
       ],
       "type": "table"
@@ -567,7 +561,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Total Redis pool connections (sum of all workers)",
+      "description": "Total Redis pool connections (sum of all workers)\nLimit = max_connections × workers",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -647,7 +641,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_redis_max_connections",
+          "expr": "codehub_redis_max_connections * count(codehub_redis_connected_workers)",
           "legendFormat": "limit",
           "refId": "D"
         }
@@ -657,7 +651,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Per-worker breakdown for debugging",
+      "description": "Per-worker metrics breakdown",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -672,12 +666,7 @@
             "steps": [{ "color": "green", "value": null }]
           }
         },
-        "overrides": [
-          {
-            "matcher": { "id": "byName", "options": "worker_id" },
-            "properties": [{ "id": "custom.width", "value": 100 }]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 35 },
       "id": 21,
@@ -694,39 +683,40 @@
           "expr": "codehub_redis_pool_idle",
           "format": "table",
           "instant": true,
-          "legendFormat": "",
-          "refId": "A"
+          "refId": "idle"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
           "expr": "codehub_redis_pool_active",
           "format": "table",
           "instant": true,
-          "legendFormat": "",
-          "refId": "B"
+          "refId": "active"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
           "expr": "codehub_redis_pool_total",
           "format": "table",
           "instant": true,
-          "legendFormat": "",
-          "refId": "C"
+          "refId": "total"
         }
       ],
-      "title": "Worker Breakdown (Redis)",
+      "title": "Worker Details (Redis)",
       "transformations": [
-        { "id": "merge", "options": {} },
+        {
+          "id": "joinByField",
+          "options": { "byField": "pid", "mode": "outer" }
+        },
         {
           "id": "organize",
           "options": {
-            "excludeByName": { "Time": true, "__name__": true, "instance": true, "job": true },
-            "renameByName": {
-              "Value #A": "idle",
-              "Value #B": "active",
-              "Value #C": "total"
-            }
+            "excludeByName": { "Time 1": true, "Time 2": true, "Time 3": true, "__name__ 1": true, "__name__ 2": true, "__name__ 3": true, "job 1": true, "job 2": true, "job 3": true, "instance 2": true, "instance 3": true },
+            "indexByName": { "instance 1": 0, "pid": 1, "Value #idle": 2, "Value #active": 3, "Value #total": 4 },
+            "renameByName": { "instance 1": "instance", "Value #idle": "idle", "Value #active": "active", "Value #total": "total" }
           }
+        },
+        {
+          "id": "sortBy",
+          "options": { "sort": [{ "field": "pid" }] }
         }
       ],
       "type": "table"

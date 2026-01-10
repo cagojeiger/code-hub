@@ -17,43 +17,37 @@ os.environ["PROMETHEUS_MULTIPROC_DIR"] = _multiproc_dir
 # These metrics are only measurable from the application
 # (PostgreSQL doesn't know about SQLAlchemy pool)
 #
-# Use worker_id label to enable:
-# - sum(): total system connections
-# - max(): worst worker (anomaly detection)
-# - by (instance, worker_id): per-worker breakdown
+# multiprocess_mode="all" automatically adds pid label for per-worker breakdown
+# Prometheus adds instance label for per-pod identification
+# Combined: instance + pid uniquely identifies each worker across all pods
 
 POSTGRESQL_CONNECTED_WORKERS = Gauge(
     "codehub_postgresql_connected_workers",
     "Number of workers connected to PostgreSQL (1 if connected, 0 if not)",
-    ["worker_id"],
     multiprocess_mode="all",
 )
 
 POSTGRESQL_POOL_IDLE = Gauge(
     "codehub_postgresql_pool_idle",
     "PostgreSQL connections idle in pool",
-    ["worker_id"],
     multiprocess_mode="all",
 )
 
 POSTGRESQL_POOL_ACTIVE = Gauge(
     "codehub_postgresql_pool_active",
     "PostgreSQL connections in use",
-    ["worker_id"],
     multiprocess_mode="all",
 )
 
 POSTGRESQL_POOL_TOTAL = Gauge(
     "codehub_postgresql_pool_total",
     "Total PostgreSQL connections (idle + active)",
-    ["worker_id"],
     multiprocess_mode="all",
 )
 
 POSTGRESQL_POOL_OVERFLOW = Gauge(
     "codehub_postgresql_pool_overflow",
     "PostgreSQL overflow connections (negative=headroom, positive=overflow)",
-    ["worker_id"],
     multiprocess_mode="all",
 )
 
@@ -61,6 +55,7 @@ POSTGRESQL_POOL_OVERFLOW = Gauge(
 # PostgreSQL Configuration (Static - set once at startup)
 # =============================================================================
 # Use max mode so all workers report the same value and we get the config value
+# Limit calculation: (pool_size + max_overflow) * count(connected_workers)
 
 POSTGRESQL_POOL_SIZE = Gauge(
     "codehub_postgresql_pool_size",
@@ -81,28 +76,24 @@ POSTGRESQL_MAX_OVERFLOW = Gauge(
 REDIS_CONNECTED_WORKERS = Gauge(
     "codehub_redis_connected_workers",
     "Number of workers connected to Redis (1 if connected, 0 if not)",
-    ["worker_id"],
     multiprocess_mode="all",
 )
 
 REDIS_POOL_IDLE = Gauge(
     "codehub_redis_pool_idle",
     "Redis connections idle in pool",
-    ["worker_id"],
     multiprocess_mode="all",
 )
 
 REDIS_POOL_ACTIVE = Gauge(
     "codehub_redis_pool_active",
     "Redis connections in use",
-    ["worker_id"],
     multiprocess_mode="all",
 )
 
 REDIS_POOL_TOTAL = Gauge(
     "codehub_redis_pool_total",
     "Total Redis connections (idle + active)",
-    ["worker_id"],
     multiprocess_mode="all",
 )
 

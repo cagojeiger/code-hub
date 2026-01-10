@@ -314,14 +314,13 @@ def _init_config_metrics() -> None:
     WORKERS_TOTAL.set(workers)
 
 
-def _get_worker_id() -> str:
-    """Get unique worker identifier (PID)."""
-    return str(os.getpid())
-
-
 def _update_postgresql_pool_metrics() -> None:
-    """Update PostgreSQL pool metrics with worker_id label."""
-    worker_id = _get_worker_id()
+    """Update PostgreSQL pool metrics.
+
+    prometheus_client automatically adds pid label with multiprocess_mode="all".
+    Prometheus adds instance label when scraping.
+    Combined: instance + pid uniquely identifies each worker.
+    """
     try:
         engine = get_engine()
         pool = engine.pool
@@ -329,18 +328,21 @@ def _update_postgresql_pool_metrics() -> None:
         active = pool.checkedout()
         overflow = pool.overflow()
 
-        POSTGRESQL_CONNECTED_WORKERS.labels(worker_id=worker_id).set(1)
-        POSTGRESQL_POOL_IDLE.labels(worker_id=worker_id).set(idle)
-        POSTGRESQL_POOL_ACTIVE.labels(worker_id=worker_id).set(active)
-        POSTGRESQL_POOL_TOTAL.labels(worker_id=worker_id).set(idle + active)
-        POSTGRESQL_POOL_OVERFLOW.labels(worker_id=worker_id).set(overflow)
+        POSTGRESQL_CONNECTED_WORKERS.set(1)
+        POSTGRESQL_POOL_IDLE.set(idle)
+        POSTGRESQL_POOL_ACTIVE.set(active)
+        POSTGRESQL_POOL_TOTAL.set(idle + active)
+        POSTGRESQL_POOL_OVERFLOW.set(overflow)
     except Exception:
-        POSTGRESQL_CONNECTED_WORKERS.labels(worker_id=worker_id).set(0)
+        POSTGRESQL_CONNECTED_WORKERS.set(0)
 
 
 def _update_redis_pool_metrics() -> None:
-    """Update Redis pool metrics with worker_id label."""
-    worker_id = _get_worker_id()
+    """Update Redis pool metrics.
+
+    prometheus_client automatically adds pid label with multiprocess_mode="all".
+    Prometheus adds instance label when scraping.
+    """
     try:
         client = get_redis()
         pool = client.connection_pool
@@ -349,12 +351,12 @@ def _update_redis_pool_metrics() -> None:
         idle = len(pool._available_connections)
         active = len(pool._in_use_connections)
 
-        REDIS_CONNECTED_WORKERS.labels(worker_id=worker_id).set(1)
-        REDIS_POOL_IDLE.labels(worker_id=worker_id).set(idle)
-        REDIS_POOL_ACTIVE.labels(worker_id=worker_id).set(active)
-        REDIS_POOL_TOTAL.labels(worker_id=worker_id).set(idle + active)
+        REDIS_CONNECTED_WORKERS.set(1)
+        REDIS_POOL_IDLE.set(idle)
+        REDIS_POOL_ACTIVE.set(active)
+        REDIS_POOL_TOTAL.set(idle + active)
     except Exception:
-        REDIS_CONNECTED_WORKERS.labels(worker_id=worker_id).set(0)
+        REDIS_CONNECTED_WORKERS.set(0)
 
 
 async def _metrics_updater_loop() -> None:
