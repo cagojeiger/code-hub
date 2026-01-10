@@ -120,6 +120,7 @@ async def proxy_http_to_upstream(
             extra={
                 "event": LogEvent.UPSTREAM_ERROR,
                 "ws_id": workspace_id,
+                "target_url": target_url,
                 "error_type": "connection_error",
                 "error": str(exc),
             },
@@ -131,6 +132,7 @@ async def proxy_http_to_upstream(
             extra={
                 "event": LogEvent.UPSTREAM_ERROR,
                 "ws_id": workspace_id,
+                "target_url": target_url,
                 "error_type": "timeout",
                 "error": str(exc),
             },
@@ -171,6 +173,7 @@ async def proxy_ws_to_upstream(
             extra={
                 "event": LogEvent.WS_ERROR,
                 "ws_id": workspace_id,
+                "upstream_url": upstream_ws_uri,
                 "error_type": "invalid_uri",
                 "error": str(exc),
             },
@@ -184,6 +187,7 @@ async def proxy_ws_to_upstream(
             extra={
                 "event": LogEvent.WS_ERROR,
                 "ws_id": workspace_id,
+                "upstream_url": upstream_ws_uri,
                 "error_type": "handshake_failed",
                 "error": str(exc),
             },
@@ -197,6 +201,7 @@ async def proxy_ws_to_upstream(
             extra={
                 "event": LogEvent.WS_ERROR,
                 "ws_id": workspace_id,
+                "upstream_url": upstream_ws_uri,
                 "error_type": "connection_failed",
                 "error": str(exc),
             },
@@ -228,6 +233,7 @@ async def proxy_ws_to_upstream(
             extra={
                 "event": LogEvent.WS_ERROR,
                 "ws_id": workspace_id,
+                "upstream_url": upstream_ws_uri,
                 "error_type": "relay_error",
                 "error": str(exc),
             },

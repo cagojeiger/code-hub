@@ -76,7 +76,10 @@ class ChannelSubscriber:
         self._channel = channel
         self._pubsub = self._client.pubsub()
         await self._pubsub.subscribe(channel)
-        logger.debug("SUBSCRIBE %s", channel)
+        logger.info(
+            "Redis subscribed",
+            extra={"event": "redis_subscribed", "channel": channel},
+        )
 
     async def unsubscribe(self) -> None:
         """Unsubscribe and close PubSub connection."""
@@ -117,9 +120,13 @@ class ChannelSubscriber:
 
         except redis.ConnectionError as e:
             logger.warning(
-                "Redis connection error: %s",
-                e,
-                extra={"error_type": "connection", "channel": self._channel},
+                "Redis connection error",
+                extra={
+                    "event": "redis_connection_error",
+                    "channel": self._channel,
+                    "error_type": "connection_lost",
+                    "error": str(e),
+                },
             )
             return None
         except Exception as e:

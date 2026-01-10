@@ -1,5 +1,6 @@
 """Database session management."""
 
+import logging
 from collections.abc import AsyncGenerator
 
 from sqlalchemy import text
@@ -7,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
 from codehub.app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 _engine = None
 _session_factory = None
@@ -34,8 +37,27 @@ async def init_db() -> None:
         expire_on_commit=False,
     )
 
-    async with _engine.begin() as conn:
-        await conn.execute(text("SELECT 1"))
+    try:
+        async with _engine.begin() as conn:
+            await conn.execute(text("SELECT 1"))
+        logger.info(
+            "PostgreSQL connected",
+            extra={
+                "event": "db_connected",
+                "pool_size": settings.database.pool_size,
+                "max_overflow": settings.database.max_overflow,
+            },
+        )
+    except Exception as e:
+        logger.error(
+            "PostgreSQL connection failed",
+            extra={
+                "event": "db_error",
+                "error_type": type(e).__name__,
+                "error": str(e),
+            },
+        )
+        raise
 
 
 async def close_db() -> None:

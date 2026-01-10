@@ -1,5 +1,6 @@
 """S3/MinIO storage client management."""
 
+import logging
 from types import TracebackType
 
 import aioboto3
@@ -7,6 +8,8 @@ from botocore.exceptions import ClientError
 from types_aiobotocore_s3 import S3Client
 
 from codehub.app.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 _session: aioboto3.Session | None = None
 
@@ -17,17 +20,46 @@ async def init_storage() -> None:
     _session = aioboto3.Session()
 
     settings = get_settings()
-    async with _session.client(
-        "s3",
-        endpoint_url=settings.storage.endpoint_url,
-        aws_access_key_id=settings.storage.access_key,
-        aws_secret_access_key=settings.storage.secret_key,
-    ) as s3:
-        # Ensure bucket exists
-        try:
-            await s3.head_bucket(Bucket=settings.storage.bucket_name)
-        except ClientError:
-            await s3.create_bucket(Bucket=settings.storage.bucket_name)
+    try:
+        async with _session.client(
+            "s3",
+            endpoint_url=settings.storage.endpoint_url,
+            aws_access_key_id=settings.storage.access_key,
+            aws_secret_access_key=settings.storage.secret_key,
+        ) as s3:
+            # Ensure bucket exists
+            try:
+                await s3.head_bucket(Bucket=settings.storage.bucket_name)
+                logger.info(
+                    "S3 storage connected",
+                    extra={
+                        "event": "s3_connected",
+                        "bucket": settings.storage.bucket_name,
+                        "endpoint": settings.storage.endpoint_url,
+                    },
+                )
+            except ClientError:
+                await s3.create_bucket(Bucket=settings.storage.bucket_name)
+                logger.info(
+                    "S3 bucket created",
+                    extra={
+                        "event": "s3_bucket_created",
+                        "bucket": settings.storage.bucket_name,
+                        "endpoint": settings.storage.endpoint_url,
+                    },
+                )
+    except Exception as e:
+        logger.error(
+            "S3 connection failed",
+            extra={
+                "event": "s3_error",
+                "error_type": type(e).__name__,
+                "error": str(e),
+                "bucket": settings.storage.bucket_name,
+                "endpoint": settings.storage.endpoint_url,
+            },
+        )
+        raise
 
 
 async def close_storage() -> None:
