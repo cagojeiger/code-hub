@@ -21,6 +21,7 @@ from codehub.core.interfaces import (
     VolumeInfo,
     VolumeProvider,
 )
+from codehub.core.logging_schema import LogEvent
 from codehub.infra import get_s3_client
 
 logger = logging.getLogger(__name__)
@@ -135,12 +136,13 @@ class S3StorageProvider(StorageProvider):
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "Unknown")
             logger.error(
-                "Failed to list archives: %s",
-                e,
+                "Failed to list archives",
                 extra={
+                    "event": LogEvent.S3_ERROR,
                     "bucket": settings.storage.bucket_name,
                     "prefix": prefix,
                     "error_code": error_code,
+                    "error": str(e),
                 },
             )
             raise  # Propagate to caller (Observer uses _safe() wrapper)
@@ -182,12 +184,13 @@ class S3StorageProvider(StorageProvider):
         except ClientError as e:
             error_code = e.response.get("Error", {}).get("Code", "Unknown")
             logger.error(
-                "Failed to list all archives: %s",
-                e,
+                "Failed to list all archives",
                 extra={
+                    "event": LogEvent.S3_ERROR,
                     "bucket": settings.storage.bucket_name,
                     "prefix": prefix,
                     "error_code": error_code,
+                    "error": str(e),
                 },
             )
             raise  # Propagate to caller (GC handles exception)
@@ -232,9 +235,27 @@ class S3StorageProvider(StorageProvider):
         )
 
         if result.exit_code != 0:
+            logger.error(
+                "Archive job failed",
+                extra={
+                    "event": LogEvent.ARCHIVE_FAILED,
+                    "ws_id": workspace_id,
+                    "op_id": op_id,
+                    "archive_url": archive_url,
+                    "exit_code": result.exit_code,
+                },
+            )
             raise RuntimeError(f"Archive job failed (exit {result.exit_code}): {result.logs}")
 
-        logger.info("Archive complete: %s", archive_key)
+        logger.info(
+            "Archive complete",
+            extra={
+                "event": LogEvent.ARCHIVE_SUCCESS,
+                "ws_id": workspace_id,
+                "op_id": op_id,
+                "archive_key": archive_key,
+            },
+        )
         return archive_key
 
     async def restore(self, workspace_id: str, archive_key: str) -> str:
@@ -272,9 +293,26 @@ class S3StorageProvider(StorageProvider):
         )
 
         if result.exit_code != 0:
+            logger.error(
+                "Restore job failed",
+                extra={
+                    "event": LogEvent.RESTORE_FAILED,
+                    "ws_id": workspace_id,
+                    "archive_key": archive_key,
+                    "archive_url": archive_url,
+                    "exit_code": result.exit_code,
+                },
+            )
             raise RuntimeError(f"Restore job failed (exit {result.exit_code}): {result.logs}")
 
-        logger.info("Restore complete: %s", archive_key)
+        logger.info(
+            "Restore complete",
+            extra={
+                "event": LogEvent.RESTORE_SUCCESS,
+                "ws_id": workspace_id,
+                "archive_key": archive_key,
+            },
+        )
         return archive_key
 
     async def delete_volume(self, workspace_id: str) -> None:

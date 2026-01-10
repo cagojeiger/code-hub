@@ -6,6 +6,7 @@ import httpx
 
 from codehub.app.config import get_settings
 from codehub.core.interfaces import ContainerInfo, InstanceController, UpstreamInfo
+from codehub.core.logging_schema import LogEvent
 from codehub.infra.docker import (
     ContainerAPI,
     ContainerConfig,
@@ -68,13 +69,17 @@ class DockerInstanceController(InstanceController):
         if existing:
             try:
                 await self._containers.start(container_name)
-                logger.info("Started existing container: %s", container_name)
+                logger.info(
+                    "Started existing container",
+                    extra={"event": LogEvent.CONTAINER_STARTED, "container": container_name},
+                )
                 return
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 404:
                     # Container disappeared between inspect and start, recreate it
                     logger.warning(
-                        "Container disappeared, will recreate: %s", container_name
+                        "Container disappeared, will recreate",
+                        extra={"event": LogEvent.CONTAINER_DISAPPEARED, "container": container_name},
                     )
                 else:
                     raise
@@ -101,7 +106,10 @@ class DockerInstanceController(InstanceController):
 
         await self._containers.create(config)
         await self._containers.start(container_name)
-        logger.info("Created and started container: %s", container_name)
+        logger.info(
+            "Created and started container",
+            extra={"event": LogEvent.CONTAINER_STARTED, "container": container_name},
+        )
 
     async def delete(self, workspace_id: str) -> None:
         """Delete container for workspace."""

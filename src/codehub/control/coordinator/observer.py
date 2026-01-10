@@ -11,6 +11,7 @@ Algorithm:
 import asyncio
 import json
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Coroutine
 
@@ -26,10 +27,12 @@ from codehub.control.coordinator.base import (
 )
 from codehub.core.interfaces.instance import ContainerInfo, InstanceController
 from codehub.core.interfaces.storage import ArchiveInfo, StorageProvider, VolumeInfo
+from codehub.core.logging_schema import LogEvent
 from codehub.core.models import Workspace
 
 logger = logging.getLogger(__name__)
 _settings = get_settings()
+_logging_config = _settings.logging
 
 
 class BulkObserver:
@@ -46,16 +49,23 @@ class BulkObserver:
             return await asyncio.wait_for(coro, timeout=self._timeout_s)
         except asyncio.TimeoutError:
             logger.warning(
-                "[BulkObserver] %s timeout (%.1fs)",
-                name, self._timeout_s,
-                extra={"operation": name, "error_type": "timeout", "timeout_s": self._timeout_s},
+                "Operation timeout",
+                extra={
+                    "event": LogEvent.OPERATION_TIMEOUT,
+                    "operation": name,
+                    "timeout_s": self._timeout_s,
+                },
             )
             return None
         except Exception as exc:
             logger.exception(
-                "[BulkObserver] %s failed: %s",
-                name, exc,
-                extra={"operation": name, "error_type": type(exc).__name__},
+                "Operation failed",
+                extra={
+                    "event": LogEvent.OPERATION_FAILED,
+                    "operation": name,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
             )
             return None
 
@@ -94,8 +104,14 @@ class ObserverCoordinator(CoordinatorBase):
     ) -> None:
         super().__init__(conn, leader, subscriber)
         self._observer = BulkObserver(ic, sp)
+        # Track previous state to log only on changes (reduces noise)
+        self._prev_state: tuple[int, int, int, int] | None = None
+        self._last_heartbeat: float = 0.0
+        # Track previous container IDs to detect disappeared containers
+        self._prev_container_ids: set[str] | None = None
 
     async def tick(self) -> None:
+        tick_start = time.monotonic()
         ws_ids = await self._load_workspace_ids()
         if not ws_ids:
             return
@@ -104,17 +120,85 @@ class ObserverCoordinator(CoordinatorBase):
 
         # 하나라도 실패 → skip (상태 일관성 보장, 다음 tick에서 재시도)
         if any(x is None for x in [containers, volumes, archives]):
-            logger.warning("[%s] Observation failed, skipping tick", self.name)
+            logger.warning(
+                "Observation failed, skipping tick",
+                extra={"event": LogEvent.OPERATION_FAILED},
+            )
             return
 
         # Orphan 경고 (DB에 없는데 리소스 있음 → GC 대상)
         observed_ws_ids = set(containers) | set(volumes) | set(archives)
         for ws_id in observed_ws_ids - ws_ids:
-            logger.warning("[%s] Orphan ws_id=%s", self.name, ws_id)
+            logger.warning(
+                "Orphan detected",
+                extra={"event": LogEvent.CONTAINER_DISAPPEARED, "ws_id": ws_id},
+            )
+
+        # Detect disappeared containers (critical for OOM/crash diagnosis)
+        current_container_ids = set(containers.keys())
+        if self._prev_container_ids is not None:
+            disappeared = self._prev_container_ids - current_container_ids
+            for ws_id in disappeared:
+                # Only warn if the workspace still exists (not deleted)
+                if ws_id in ws_ids:
+                    logger.warning(
+                        "Container disappeared",
+                        extra={
+                            "event": LogEvent.CONTAINER_DISAPPEARED,
+                            "ws_id": ws_id,
+                        },
+                    )
+        self._prev_container_ids = current_container_ids
 
         count = await self._bulk_update_conditions(ws_ids, containers, volumes, archives)
         await self._conn.commit()
-        logger.info("[%s] Updated %d workspaces", self.name, count)
+
+        duration_ms = (time.monotonic() - tick_start) * 1000
+
+        # Log only when state changes OR 1-hour heartbeat (reduces noise from ~86k/day)
+        current_state = (count, len(containers), len(volumes), len(archives))
+        now = time.monotonic()
+
+        # 1시간마다 heartbeat (변화 없어도 "살아있음" 확인)
+        if now - self._last_heartbeat >= 3600:
+            logger.info(
+                "Heartbeat",
+                extra={
+                    "event": LogEvent.OBSERVATION_COMPLETE,
+                    "workspaces": count,
+                    "containers": len(containers),
+                    "volumes": len(volumes),
+                    "archives": len(archives),
+                    "duration_ms": duration_ms,
+                },
+            )
+            self._last_heartbeat = now
+            self._prev_state = current_state
+        elif current_state != self._prev_state:
+            logger.info(
+                "Observation completed",
+                extra={
+                    "event": LogEvent.OBSERVATION_COMPLETE,
+                    "workspaces": count,
+                    "containers": len(containers),
+                    "volumes": len(volumes),
+                    "archives": len(archives),
+                    "duration_ms": duration_ms,
+                },
+            )
+            self._prev_state = current_state
+
+        # Slow observation warning (SLO threat detection)
+        if duration_ms > _logging_config.slow_threshold_ms:
+            logger.warning(
+                "Slow observation detected",
+                extra={
+                    "event": LogEvent.RECONCILE_SLOW,
+                    "duration_ms": duration_ms,
+                    "threshold_ms": _logging_config.slow_threshold_ms,
+                    "workspaces": count,
+                },
+            )
 
     async def _load_workspace_ids(self) -> set[str]:
         result = await self._conn.execute(

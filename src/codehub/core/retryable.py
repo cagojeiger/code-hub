@@ -24,6 +24,7 @@ import httpx
 from botocore.exceptions import ClientError
 
 from codehub.core.circuit_breaker import CircuitOpenError, get_circuit_breaker
+from codehub.core.logging_schema import LogEvent
 
 logger = logging.getLogger(__name__)
 
@@ -249,19 +250,27 @@ async def with_retry(
             # Non-retryable errors: fail immediately
             if error_class == "permanent":
                 logger.warning(
-                    "Permanent error (not retrying): %s",
-                    exc,
-                    extra={"error_class": error_class, "attempt": attempt + 1},
+                    "Permanent error (not retrying)",
+                    extra={
+                        "event": LogEvent.OPERATION_FAILED,
+                        "error_class": error_class,
+                        "attempt": attempt + 1,
+                        "error": str(exc),
+                    },
                 )
                 raise
 
             # Last attempt: raise the error
             if attempt == max_retries:
                 logger.error(
-                    "Max retries exceeded (%d attempts): %s",
-                    max_retries + 1,
-                    exc,
-                    extra={"error_class": error_class, "attempt": attempt + 1},
+                    "Max retries exceeded",
+                    extra={
+                        "event": LogEvent.OPERATION_FAILED,
+                        "error_class": error_class,
+                        "attempt": attempt + 1,
+                        "max_retries": max_retries + 1,
+                        "error": str(exc),
+                    },
                 )
                 raise
 
@@ -270,15 +279,14 @@ async def with_retry(
             # Jitter: 50% ~ 150% of delay (prevents thundering herd)
             jittered_delay = delay * (0.5 + random.random())
             logger.warning(
-                "Retryable error (attempt %d/%d, retry in %.1fs): %s",
-                attempt + 1,
-                max_retries + 1,
-                jittered_delay,
-                exc,
+                "Retryable error, will retry",
                 extra={
+                    "event": LogEvent.OPERATION_FAILED,
                     "error_class": error_class,
                     "attempt": attempt + 1,
+                    "max_retries": max_retries + 1,
                     "delay": jittered_delay,
+                    "error": str(exc),
                 },
             )
             await asyncio.sleep(jittered_delay)

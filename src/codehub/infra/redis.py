@@ -13,6 +13,7 @@ import logging
 import redis.asyncio as redis
 
 from codehub.app.config import get_settings
+from codehub.core.logging_schema import LogEvent
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,10 @@ async def init_redis() -> None:
         max_connections=max_connections,
     )
     await _client.ping()
-    logger.info("Redis connected: %s (max_connections=%d)", url, max_connections)
+    logger.info(
+        "Redis connected",
+        extra={"event": LogEvent.DB_CONNECTED, "url": url, "max_connections": max_connections},
+    )
 
 
 async def close_redis() -> None:
@@ -43,7 +47,7 @@ async def close_redis() -> None:
     if _client:
         await _client.aclose()
         _client = None
-        logger.info("Redis disconnected")
+        logger.info("Redis disconnected", extra={"event": LogEvent.APP_STOPPED})
 
         from codehub.infra.redis_kv import reset_activity_store
 

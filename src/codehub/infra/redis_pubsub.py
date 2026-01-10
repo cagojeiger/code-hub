@@ -10,6 +10,8 @@ import logging
 
 import redis.asyncio as redis
 
+from codehub.core.logging_schema import LogEvent
+
 logger = logging.getLogger(__name__)
 
 
@@ -76,7 +78,10 @@ class ChannelSubscriber:
         self._channel = channel
         self._pubsub = self._client.pubsub()
         await self._pubsub.subscribe(channel)
-        logger.debug("SUBSCRIBE %s", channel)
+        logger.info(
+            "Redis subscribed",
+            extra={"event": LogEvent.REDIS_SUBSCRIBED, "channel": channel},
+        )
 
     async def unsubscribe(self) -> None:
         """Unsubscribe and close PubSub connection."""
@@ -85,7 +90,10 @@ class ChannelSubscriber:
                 await self._pubsub.unsubscribe()
                 await self._pubsub.close()
             except Exception as e:
-                logger.warning("Error closing pubsub: %s", e)
+                logger.warning(
+                    "Error closing pubsub",
+                    extra={"event": LogEvent.REDIS_CONNECTION_ERROR, "error": str(e)},
+                )
             self._pubsub = None
         self._channel = None
 
@@ -117,15 +125,23 @@ class ChannelSubscriber:
 
         except redis.ConnectionError as e:
             logger.warning(
-                "Redis connection error: %s",
-                e,
-                extra={"error_type": "connection", "channel": self._channel},
+                "Redis connection error",
+                extra={
+                    "event": LogEvent.REDIS_CONNECTION_ERROR,
+                    "channel": self._channel,
+                    "error_type": "connection_lost",
+                    "error": str(e),
+                },
             )
             return None
         except Exception as e:
             logger.warning(
-                "Error reading from pubsub: %s",
-                e,
-                extra={"error_type": type(e).__name__, "channel": self._channel},
+                "Error reading from pubsub",
+                extra={
+                    "event": LogEvent.REDIS_CONNECTION_ERROR,
+                    "channel": self._channel,
+                    "error_type": type(e).__name__,
+                    "error": str(e),
+                },
             )
             return None

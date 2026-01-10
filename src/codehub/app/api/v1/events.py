@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from codehub.app.config import get_settings
 from codehub.app.proxy.auth import get_user_id_from_session
+from codehub.core.logging_schema import LogEvent
 from codehub.infra import get_redis, get_session
 from codehub.infra.redis_pubsub import ChannelSubscriber
 
@@ -59,7 +60,14 @@ async def _event_generator(
     # Key: workspace_id, Value: (phase, operation, error_reason, name, desc, memo)
     last_sent_state: dict[str, tuple] = {}
 
-    logger.info("[SSE] User %s connected (channel=%s)", user_id, channel)
+    logger.info(
+        "User connected",
+        extra={
+            "event": LogEvent.SSE_CONNECTED,
+            "user_id": user_id,
+            "channel": channel,
+        },
+    )
 
     try:
         await subscriber.subscribe(channel)
@@ -77,12 +85,25 @@ async def _event_generator(
             try:
                 payload = await subscriber.get_message(timeout=1.0)
             except Exception as e:
-                logger.warning("[SSE] Redis read error: %s", e)
+                logger.warning(
+                    "Redis read error",
+                    extra={
+                        "event": LogEvent.SSE_RECEIVED,
+                        "user_id": user_id,
+                        "error": str(e),
+                    },
+                )
                 await asyncio.sleep(1)
                 continue
 
             if payload is not None:
-                logger.info("[SSE] Received message for user %s", user_id)
+                logger.debug(
+                    "Received message",
+                    extra={
+                        "event": LogEvent.SSE_RECEIVED,
+                        "user_id": user_id,
+                    },
+                )
                 try:
                     data = json.loads(payload)
                     workspace_id = data.get("id")
@@ -106,7 +127,14 @@ async def _event_generator(
                         yield f"event: workspace\ndata: {payload}\n\n"
 
                 except json.JSONDecodeError as e:
-                    logger.warning("[SSE] Invalid JSON in message: %s", e)
+                    logger.warning(
+                        "Invalid JSON in message",
+                        extra={
+                            "event": LogEvent.SSE_RECEIVED,
+                            "user_id": user_id,
+                            "error": str(e),
+                        },
+                    )
 
             now = loop.time()
             if now - last_heartbeat >= _sse_config.heartbeat_interval:
@@ -117,7 +145,13 @@ async def _event_generator(
         pass
     finally:
         await subscriber.unsubscribe()
-        logger.info("[SSE] User %s disconnected", user_id)
+        logger.info(
+            "User disconnected",
+            extra={
+                "event": LogEvent.SSE_DISCONNECTED,
+                "user_id": user_id,
+            },
+        )
 
 
 @router.get("/events")

@@ -11,6 +11,8 @@ Configuration via CoordinatorConfig (COORDINATOR_ env prefix).
 
 import asyncio
 import logging
+import time
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -20,6 +22,7 @@ from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
+from codehub.app.logging import clear_trace_context, set_trace_id
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
     CoordinatorBase,
@@ -37,6 +40,7 @@ from codehub.core.domain.workspace import (
 from codehub.core.interfaces.instance import InstanceController
 from codehub.core.interfaces.storage import StorageProvider
 from codehub.core.models import Workspace
+from codehub.core.logging_schema import LogEvent
 from codehub.core.retryable import classify_error, with_retry
 
 logger = logging.getLogger(__name__)
@@ -44,6 +48,7 @@ logger = logging.getLogger(__name__)
 # Module-level settings cache (consistent with base.py pattern)
 _settings = get_settings()
 _coordinator_config = _settings.coordinator
+_logging_config = _settings.logging
 
 
 class PlanAction(BaseModel):
@@ -94,59 +99,135 @@ class WorkspaceController(CoordinatorBase):
         - DB operations: Sequential (asyncpg single connection limit)
         - External operations (Docker/S3): Parallel for performance
         """
-        logger.info("[%s] tick() started", self.name)
-        workspaces = await self._load_for_reconcile()  # DB (순차)
-        logger.info("[%s] loaded %d workspaces for reconcile", self.name, len(workspaces))
+        # Generate tick-scoped trace_id for log correlation
+        tick_id = str(uuid4())[:8]
+        set_trace_id(tick_id)
 
-        # 1. Judge + Plan (순수 계산)
-        plans: list[tuple[Workspace, PlanAction]] = []
-        for ws in workspaces:
-            action = self._judge_and_plan(ws)
-            plans.append((ws, action))
+        try:
+            tick_start = time.monotonic()
 
-        # 2. Execute 병렬 (Docker/S3 - DB 미사용!)
-        async def execute_one(
-            ws: Workspace, action: PlanAction
-        ) -> tuple[Workspace, PlanAction]:
-            if self._needs_execute(action, ws):
+            # Stage 1: Load (DB)
+            load_start = time.monotonic()
+            workspaces = await self._load_for_reconcile()
+            load_ms = (time.monotonic() - load_start) * 1000
+
+            if not workspaces:
+                return  # No reconciliation needed - skip logging for idle state
+
+            # Stage 2: Judge + Plan (CPU)
+            plan_start = time.monotonic()
+            plans: list[tuple[Workspace, PlanAction]] = []
+            for ws in workspaces:
+                action = self._judge_and_plan(ws)
+                plans.append((ws, action))
+            plan_ms = (time.monotonic() - plan_start) * 1000
+
+            # Stage 3: Execute 병렬 (Docker/S3 - DB 미사용!)
+            exec_start = time.monotonic()
+
+            async def execute_one(
+                ws: Workspace, action: PlanAction
+            ) -> tuple[Workspace, PlanAction]:
+                if self._needs_execute(action, ws):
+                    try:
+                        # with_retry handles transient errors with exponential backoff
+                        await asyncio.wait_for(
+                            with_retry(
+                                lambda ws=ws, action=action: self._execute(ws, action),
+                                max_retries=3,
+                                base_delay=1.0,
+                                max_delay=30.0,
+                                circuit_breaker="external",
+                            ),
+                            timeout=self.OPERATION_TIMEOUT,
+                        )
+                    except asyncio.TimeoutError:
+                        logger.error(
+                            "Operation timeout",
+                            extra={
+                                "event": LogEvent.OPERATION_TIMEOUT,
+                                "ws_id": ws.id,
+                                "operation": action.operation.value,
+                                "error_class": "timeout",
+                                "timeout_s": self.OPERATION_TIMEOUT,
+                            },
+                        )
+                    except Exception as exc:
+                        error_class = classify_error(exc)
+                        logger.exception(
+                            "Operation failed",
+                            extra={
+                                "event": LogEvent.OPERATION_FAILED,
+                                "ws_id": ws.id,
+                                "operation": action.operation.value,
+                                "error_class": error_class,
+                                "retryable": error_class == "transient",
+                            },
+                        )
+                return (ws, action)
+
+            results = await asyncio.gather(
+                *[execute_one(ws, action) for ws, action in plans],
+                return_exceptions=False,  # 개별 예외 처리됨
+            )
+            exec_ms = (time.monotonic() - exec_start) * 1000
+
+            # Stage 4: Persist 순차 (DB - ADR-012 준수)
+            persist_start = time.monotonic()
+            action_counts: Counter[str] = Counter()
+            for ws, action in results:
                 try:
-                    # with_retry handles transient errors with exponential backoff
-                    await asyncio.wait_for(
-                        with_retry(
-                            lambda ws=ws, action=action: self._execute(ws, action),
-                            max_retries=3,
-                            base_delay=1.0,
-                            max_delay=30.0,
-                            circuit_breaker="external",
-                        ),
-                        timeout=self.OPERATION_TIMEOUT,
-                    )
-                except asyncio.TimeoutError:
-                    logger.error(
-                        "[%s] Operation %s timeout for ws=%s",
-                        self.name, action.operation, ws.id
-                    )
-                except Exception as exc:
-                    error_class = classify_error(exc)
+                    await self._persist(ws, action)
+                    if action.operation != Operation.NONE:
+                        action_counts[action.operation.value] += 1
+                except Exception:
                     logger.exception(
-                        "Failed to execute %s (class=%s, cause: %s)",
-                        ws.id, error_class, exc.__cause__ or exc
+                        "Failed to persist",
+                        extra={
+                            "event": LogEvent.OPERATION_FAILED,
+                            "ws_id": ws.id,
+                            "operation": action.operation.value,
+                            "error_class": "transient",
+                        },
                     )
-            return (ws, action)
+            persist_ms = (time.monotonic() - persist_start) * 1000
 
-        results = await asyncio.gather(
-            *[execute_one(ws, action) for ws, action in plans],
-            return_exceptions=False,  # 개별 예외 처리됨
-        )
+            # Log reconcile result with structured fields and stage durations
+            duration_ms = (time.monotonic() - tick_start) * 1000
+            logger.info(
+                "Reconcile completed",
+                extra={
+                    "event": LogEvent.RECONCILE_COMPLETE,
+                    "tick_id": tick_id,
+                    "processed": len(workspaces),
+                    "changed": sum(action_counts.values()),
+                    "actions": dict(action_counts) if action_counts else {},
+                    "duration_ms": duration_ms,
+                    "load_ms": load_ms,
+                    "plan_ms": plan_ms,
+                    "exec_ms": exec_ms,
+                    "persist_ms": persist_ms,
+                },
+            )
 
-        # 3. Persist 순차 (DB - ADR-012 준수)
-        for ws, action in results:
-            try:
-                await self._persist(ws, action)
-            except Exception as exc:
-                logger.exception(
-                    "Failed to persist %s (cause: %s)", ws.id, exc.__cause__ or exc
+            # Slow reconcile warning (SLO threat detection)
+            if duration_ms > _logging_config.slow_threshold_ms:
+                logger.warning(
+                    "Slow reconcile detected",
+                    extra={
+                        "event": LogEvent.RECONCILE_SLOW,
+                        "tick_id": tick_id,
+                        "duration_ms": duration_ms,
+                        "threshold_ms": _logging_config.slow_threshold_ms,
+                        "processed": len(workspaces),
+                        "load_ms": load_ms,
+                        "plan_ms": plan_ms,
+                        "exec_ms": exec_ms,
+                        "persist_ms": persist_ms,
+                    },
                 )
+        finally:
+            clear_trace_context()
 
     def _judge_and_plan(self, ws: Workspace) -> PlanAction:
         """Judge + Plan (순수 계산, DB 미사용)."""
@@ -438,13 +519,21 @@ class WorkspaceController(CoordinatorBase):
         await self._conn.commit()
 
         if not success:
-            logger.info("CAS failed for %s (expected_op=%s), will retry next tick", ws.id, ws_op)
-        else:
             logger.debug(
-                "Updated %s: phase=%s, operation=%s",
-                ws.id,
-                action.phase,
-                action.operation,
+                "CAS failed, will retry next tick",
+                extra={"ws_id": ws.id, "expected_op": ws_op.value},
+            )
+        elif action.phase != Phase(ws.phase) or action.operation != Operation.NONE:
+            # Log state changes (phase change or operation in progress)
+            logger.info(
+                "State changed",
+                extra={
+                    "event": LogEvent.STATE_CHANGED,
+                    "ws_id": ws.id,
+                    "phase_from": ws.phase.value if isinstance(ws.phase, Phase) else ws.phase,
+                    "phase_to": action.phase.value,
+                    "operation": action.operation.value,
+                },
             )
 
     # =================================================================

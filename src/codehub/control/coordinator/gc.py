@@ -20,6 +20,7 @@ from codehub.control.coordinator.base import (
     LeaderElection,
 )
 from codehub.core.interfaces import InstanceController, StorageProvider
+from codehub.core.logging_schema import LogEvent
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class ArchiveGC(CoordinatorBase):
             await self._cleanup_orphan_archives()
             await self._cleanup_orphan_resources()
         except Exception as e:
-            logger.exception("[%s] GC cycle failed: %s", self.name, e)
+            logger.exception("GC cycle failed: %s", e)
             # Re-raise to trigger rollback in base class
             raise
 
@@ -77,7 +78,7 @@ class ArchiveGC(CoordinatorBase):
             # S3 error occurred, skip cleanup for this tick
             return
         if not s3_archives:
-            logger.debug("[%s] No archives in storage", self.name)
+            logger.debug("No archives in storage")
             return
 
         # 2. DB 보호 경로
@@ -88,8 +89,7 @@ class ArchiveGC(CoordinatorBase):
 
         if not orphans:
             logger.debug(
-                "[%s] No orphans found (storage=%d, protected=%d)",
-                self.name,
+                "No orphans found (storage=%d, protected=%d)",
                 len(s3_archives),
                 len(protected),
             )
@@ -98,10 +98,12 @@ class ArchiveGC(CoordinatorBase):
         # 4. 즉시 삭제
         deleted = await self._delete_archives(orphans)
         logger.info(
-            "[%s] Deleted %d/%d orphan archives",
-            self.name,
-            deleted,
-            len(orphans),
+            "Deleted orphan archives",
+            extra={
+                "event": LogEvent.OPERATION_SUCCESS,
+                "deleted": deleted,
+                "total": len(orphans),
+            },
         )
 
     async def _cleanup_orphan_resources(self) -> None:
@@ -117,7 +119,7 @@ class ArchiveGC(CoordinatorBase):
         volume_ids = {v.workspace_id for v in volumes}
 
         if not container_ids and not volume_ids:
-            logger.debug("[%s] No containers/volumes in system", self.name)
+            logger.debug("No containers/volumes in system")
             return
 
         # Step 2: DB에서 유효한 workspace_id 조회 (리소스 조회 후!)
@@ -128,25 +130,39 @@ class ArchiveGC(CoordinatorBase):
         orphan_volumes = volume_ids - valid_ws_ids
 
         for ws_id in orphan_containers:
-            logger.warning("[%s] Deleting orphan container: %s", self.name, ws_id)
+            logger.warning(
+                "Deleting orphan container",
+                extra={"event": LogEvent.OPERATION_SUCCESS, "ws_id": ws_id},
+            )
             try:
                 await self._ic.delete(ws_id)
             except Exception as e:
-                logger.warning("[%s] Failed to delete container %s: %s", self.name, ws_id, e)
+                logger.warning(
+                    "Failed to delete container",
+                    extra={"event": LogEvent.OPERATION_FAILED, "ws_id": ws_id, "error": str(e)},
+                )
 
         for ws_id in orphan_volumes:
-            logger.warning("[%s] Deleting orphan volume: %s", self.name, ws_id)
+            logger.warning(
+                "Deleting orphan volume",
+                extra={"event": LogEvent.OPERATION_SUCCESS, "ws_id": ws_id},
+            )
             try:
                 await self._storage.delete_volume(ws_id)
             except Exception as e:
-                logger.warning("[%s] Failed to delete volume %s: %s", self.name, ws_id, e)
+                logger.warning(
+                    "Failed to delete volume",
+                    extra={"event": LogEvent.OPERATION_FAILED, "ws_id": ws_id, "error": str(e)},
+                )
 
         if orphan_containers or orphan_volumes:
             logger.info(
-                "[%s] Deleted orphan resources: %d containers, %d volumes",
-                self.name,
-                len(orphan_containers),
-                len(orphan_volumes),
+                "Deleted orphan resources",
+                extra={
+                    "event": LogEvent.OPERATION_SUCCESS,
+                    "containers": len(orphan_containers),
+                    "volumes": len(orphan_volumes),
+                },
             )
 
     async def _list_archives(self) -> set[str] | None:
@@ -159,10 +175,13 @@ class ArchiveGC(CoordinatorBase):
         """
         try:
             archive_keys = await self._storage.list_all_archive_keys(self._prefix)
-            logger.debug("[%s] Found %d archives in storage", self.name, len(archive_keys))
+            logger.debug("Found %d archives in storage", len(archive_keys))
             return archive_keys
         except Exception as e:
-            logger.error("[%s] Failed to list archives from S3, skipping cleanup: %s", self.name, e)
+            logger.error(
+                "Failed to list archives from S3, skipping cleanup",
+                extra={"event": LogEvent.S3_ERROR, "error": str(e)},
+            )
             return None
 
     async def _get_protected_paths(self) -> set[str]:
@@ -195,7 +214,7 @@ class ArchiveGC(CoordinatorBase):
         )
 
         paths = {row[0] for row in result.fetchall()}
-        logger.debug("[%s] Found %d protected paths in DB", self.name, len(paths))
+        logger.debug("Found %d protected paths in DB", len(paths))
         return paths
 
     async def _delete_archives(self, archive_keys: set[str]) -> int:
@@ -211,7 +230,7 @@ class ArchiveGC(CoordinatorBase):
         for key in archive_keys:
             if await self._storage.delete_archive(key):
                 deleted += 1
-                logger.debug("[%s] Deleted: %s", self.name, key)
+                logger.debug("Deleted: %s", key)
 
         return deleted
 
@@ -224,5 +243,5 @@ class ArchiveGC(CoordinatorBase):
             text("SELECT id::text FROM workspaces WHERE deleted_at IS NULL")
         )
         ws_ids = {row[0] for row in result.fetchall()}
-        logger.debug("[%s] Found %d valid workspaces in DB", self.name, len(ws_ids))
+        logger.debug("Found %d valid workspaces in DB", len(ws_ids))
         return ws_ids

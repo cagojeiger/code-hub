@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from codehub.app.config import get_settings
 from codehub.core.interfaces.leader import LeaderElection
+from codehub.core.logging_schema import LogEvent
 
 logger = logging.getLogger(__name__)
 
@@ -82,18 +83,30 @@ class SQLAlchemyLeaderElection(LeaderElection):
                     row = result.fetchone()
                     acquired = row[0] if row else False
             except (TimeoutError, asyncio.TimeoutError):
-                logger.warning("Leadership acquire timeout (lock=%s)", self._lock_key)
+                logger.warning(
+                    "Leadership acquire timeout",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key},
+                )
                 acquired = False
             except Exception as e:
-                logger.warning("Leadership acquire error (lock=%s): %s", self._lock_key, e)
+                logger.warning(
+                    "Leadership acquire error",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key, "error": str(e)},
+                )
                 acquired = False
 
             self._is_leader = acquired
 
             if self._is_leader and not self._was_leader:
-                logger.info("Acquired leadership (lock=%s, id=%d)", self._lock_key, self._lock_id)
+                logger.info(
+                    "Acquired leadership",
+                    extra={"event": LogEvent.LEADERSHIP_ACQUIRED, "lock": self._lock_key, "lock_id": self._lock_id},
+                )
             elif not self._is_leader and self._was_leader:
-                logger.warning("Lost leadership (lock=%s)", self._lock_key)
+                logger.warning(
+                    "Lost leadership",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key},
+                )
 
             self._was_leader = self._is_leader
             return self._is_leader
@@ -120,15 +133,25 @@ class SQLAlchemyLeaderElection(LeaderElection):
 
                     if not released:
                         logger.warning(
-                            "Lock was not held during release (lock=%s)", self._lock_key
+                            "Lock was not held during release",
+                            extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key},
                         )
             except (TimeoutError, asyncio.TimeoutError):
-                logger.warning("Leadership release timeout (lock=%s)", self._lock_key)
+                logger.warning(
+                    "Leadership release timeout",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key},
+                )
             except Exception as e:
-                logger.warning("Leadership release error (lock=%s): %s", self._lock_key, e)
+                logger.warning(
+                    "Leadership release error",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key, "error": str(e)},
+                )
 
             self._is_leader = False
-            logger.info("Released leadership (lock=%s)", self._lock_key)
+            logger.info(
+                "Released leadership",
+                extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key},
+            )
 
     async def verify_holding(self, timeout: float | None = None) -> bool:
         """Verify that we still hold the advisory lock by querying pg_locks."""
@@ -161,16 +184,25 @@ class SQLAlchemyLeaderElection(LeaderElection):
                     row = result.fetchone()
                     holding = row[0] if row else False
             except (TimeoutError, asyncio.TimeoutError):
-                logger.warning("Leadership verify timeout (lock=%s)", self._lock_key)
+                logger.warning(
+                    "Leadership verify timeout",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key},
+                )
                 self._is_leader = False
                 return False
             except Exception as e:
-                logger.warning("Leadership verify error (lock=%s): %s", self._lock_key, e)
+                logger.warning(
+                    "Leadership verify error",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key, "error": str(e)},
+                )
                 self._is_leader = False
                 return False
 
             if not holding:
-                logger.warning("Leadership lost (lock=%s) - detected via pg_locks", self._lock_key)
+                logger.warning(
+                    "Leadership lost - detected via pg_locks",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key},
+                )
                 self._is_leader = False
                 self._was_leader = False
 
@@ -227,18 +259,30 @@ class PsycopgLeaderElection(LeaderElection):
                     row = await result.fetchone()
                     acquired = row[0] if row else False
             except (TimeoutError, asyncio.TimeoutError):
-                logger.warning("Leadership acquire timeout (lock=%s)", self._lock_key)
+                logger.warning(
+                    "Leadership acquire timeout",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key},
+                )
                 acquired = False
             except Exception as e:
-                logger.warning("Leadership acquire error (lock=%s): %s", self._lock_key, e)
+                logger.warning(
+                    "Leadership acquire error",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key, "error": str(e)},
+                )
                 acquired = False
 
             self._is_leader = acquired
 
             if self._is_leader and not self._was_leader:
-                logger.info("Acquired leadership (lock=%s, id=%d)", self._lock_key, self._lock_id)
+                logger.info(
+                    "Acquired leadership",
+                    extra={"event": LogEvent.LEADERSHIP_ACQUIRED, "lock": self._lock_key, "lock_id": self._lock_id},
+                )
             elif not self._is_leader and self._was_leader:
-                logger.warning("Lost leadership (lock=%s)", self._lock_key)
+                logger.warning(
+                    "Lost leadership",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key},
+                )
 
             self._was_leader = self._is_leader
             return self._is_leader
@@ -264,15 +308,25 @@ class PsycopgLeaderElection(LeaderElection):
 
                     if not released:
                         logger.warning(
-                            "Lock was not held during release (lock=%s)", self._lock_key
+                            "Lock was not held during release",
+                            extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key},
                         )
             except (TimeoutError, asyncio.TimeoutError):
-                logger.warning("Leadership release timeout (lock=%s)", self._lock_key)
+                logger.warning(
+                    "Leadership release timeout",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key},
+                )
             except Exception as e:
-                logger.warning("Leadership release error (lock=%s): %s", self._lock_key, e)
+                logger.warning(
+                    "Leadership release error",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key, "error": str(e)},
+                )
 
             self._is_leader = False
-            logger.info("Released leadership (lock=%s)", self._lock_key)
+            logger.info(
+                "Released leadership",
+                extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key},
+            )
 
     async def verify_holding(self, timeout: float | None = None) -> bool:
         """Verify that we still hold the advisory lock by querying pg_locks."""
@@ -305,16 +359,25 @@ class PsycopgLeaderElection(LeaderElection):
                     row = await result.fetchone()
                     holding = row[0] if row else False
             except (TimeoutError, asyncio.TimeoutError):
-                logger.warning("Leadership verify timeout (lock=%s)", self._lock_key)
+                logger.warning(
+                    "Leadership verify timeout",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key},
+                )
                 self._is_leader = False
                 return False
             except Exception as e:
-                logger.warning("Leadership verify error (lock=%s): %s", self._lock_key, e)
+                logger.warning(
+                    "Leadership verify error",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key, "error": str(e)},
+                )
                 self._is_leader = False
                 return False
 
             if not holding:
-                logger.warning("Leadership lost (lock=%s) - detected via pg_locks", self._lock_key)
+                logger.warning(
+                    "Leadership lost - detected via pg_locks",
+                    extra={"event": LogEvent.LEADERSHIP_LOST, "lock": self._lock_key},
+                )
                 self._is_leader = False
                 self._was_leader = False
 

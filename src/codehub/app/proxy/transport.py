@@ -25,6 +25,7 @@ from codehub.app.metrics.collector import (
 )
 from codehub.core.errors import UpstreamUnavailableError
 from codehub.core.interfaces import UpstreamInfo
+from codehub.core.logging_schema import LogEvent
 
 from .activity import get_activity_buffer
 from .client import WS_HOP_BY_HOP_HEADERS, filter_headers, get_http_client
@@ -114,10 +115,28 @@ async def proxy_http_to_upstream(
             headers=response_headers,
         )
     except httpx.ConnectError as exc:
-        logger.warning("Connection error to upstream %s: %s", workspace_id, exc)
+        logger.warning(
+            "Connection error to upstream",
+            extra={
+                "event": LogEvent.UPSTREAM_ERROR,
+                "ws_id": workspace_id,
+                "target_url": target_url,
+                "error_type": "connection_error",
+                "error": str(exc),
+            },
+        )
         raise UpstreamUnavailableError() from exc
     except httpx.TimeoutException as exc:
-        logger.warning("Timeout connecting to upstream %s: %s", workspace_id, exc)
+        logger.warning(
+            "Timeout connecting to upstream",
+            extra={
+                "event": LogEvent.UPSTREAM_ERROR,
+                "ws_id": workspace_id,
+                "target_url": target_url,
+                "error_type": "timeout",
+                "error": str(exc),
+            },
+        )
         raise UpstreamUnavailableError() from exc
 
 
@@ -149,17 +168,44 @@ async def proxy_ws_to_upstream(
         )
     except websockets.InvalidURI as exc:
         WS_ERRORS.labels(error_type="invalid_uri").inc()
-        logger.warning("Invalid WebSocket URI for %s: %s", workspace_id, exc)
+        logger.warning(
+            "Invalid WebSocket URI",
+            extra={
+                "event": LogEvent.WS_ERROR,
+                "ws_id": workspace_id,
+                "upstream_url": upstream_ws_uri,
+                "error_type": "invalid_uri",
+                "error": str(exc),
+            },
+        )
         await websocket.close(code=1011, reason="Invalid upstream URI")
         return
     except websockets.InvalidHandshake as exc:
         WS_ERRORS.labels(error_type="handshake_failed").inc()
-        logger.warning("WebSocket handshake failed for %s: %s", workspace_id, exc)
+        logger.warning(
+            "WebSocket handshake failed",
+            extra={
+                "event": LogEvent.WS_ERROR,
+                "ws_id": workspace_id,
+                "upstream_url": upstream_ws_uri,
+                "error_type": "handshake_failed",
+                "error": str(exc),
+            },
+        )
         await websocket.close(code=1011, reason="Upstream handshake failed")
         return
     except Exception as exc:
         WS_ERRORS.labels(error_type="connection_failed").inc()
-        logger.warning("Failed to connect to upstream %s: %s", workspace_id, exc)
+        logger.warning(
+            "Failed to connect to upstream WebSocket",
+            extra={
+                "event": LogEvent.WS_ERROR,
+                "ws_id": workspace_id,
+                "upstream_url": upstream_ws_uri,
+                "error_type": "connection_failed",
+                "error": str(exc),
+            },
+        )
         await websocket.close(code=1011, reason="Upstream connection failed")
         return
 
@@ -182,7 +228,16 @@ async def proxy_ws_to_upstream(
                 WS_ERRORS.labels(error_type="connection_closed").inc()
     except Exception as exc:
         WS_ERRORS.labels(error_type="relay_error").inc()
-        logger.error("WebSocket proxy error for %s: %s", workspace_id, exc)
+        logger.error(
+            "WebSocket proxy error",
+            extra={
+                "event": LogEvent.WS_ERROR,
+                "ws_id": workspace_id,
+                "upstream_url": upstream_ws_uri,
+                "error_type": "relay_error",
+                "error": str(exc),
+            },
+        )
     finally:
         WS_ACTIVE_CONNECTIONS.dec()
         with contextlib.suppress(Exception):

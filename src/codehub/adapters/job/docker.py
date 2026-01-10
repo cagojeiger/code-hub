@@ -5,6 +5,7 @@ import uuid
 
 from codehub.app.config import get_settings
 from codehub.core.interfaces import JobResult, JobRunner
+from codehub.core.logging_schema import LogEvent
 from codehub.infra.docker import ContainerAPI, ContainerConfig, HostConfig
 
 logger = logging.getLogger(__name__)
@@ -66,7 +67,14 @@ class DockerJobRunner(JobRunner):
             exit_code = await self._containers.wait(helper_name, timeout=self._timeout)
             logs = await self._containers.logs(helper_name)
 
-            logger.info("Archive job %s completed with exit code %d", helper_name, exit_code)
+            logger.info(
+                "Archive job completed",
+                extra={
+                    "event": LogEvent.ARCHIVE_SUCCESS if exit_code == 0 else LogEvent.ARCHIVE_FAILED,
+                    "job": helper_name,
+                    "exit_code": exit_code,
+                },
+            )
             return JobResult(exit_code=exit_code, logs=logs.decode("utf-8", errors="replace"))
 
         finally:
@@ -74,7 +82,10 @@ class DockerJobRunner(JobRunner):
                 await self._containers.remove(helper_name)
             except Exception as e:
                 # Log but don't mask the actual job result
-                logger.error("Failed to cleanup archive job container %s: %s", helper_name, e)
+                logger.error(
+                    "Failed to cleanup archive job container",
+                    extra={"event": LogEvent.OPERATION_FAILED, "job": helper_name, "error": str(e)},
+                )
 
     async def run_restore(
         self,
@@ -110,7 +121,14 @@ class DockerJobRunner(JobRunner):
             exit_code = await self._containers.wait(helper_name, timeout=self._timeout)
             logs = await self._containers.logs(helper_name)
 
-            logger.info("Restore job %s completed with exit code %d", helper_name, exit_code)
+            logger.info(
+                "Restore job completed",
+                extra={
+                    "event": LogEvent.RESTORE_SUCCESS if exit_code == 0 else LogEvent.RESTORE_FAILED,
+                    "job": helper_name,
+                    "exit_code": exit_code,
+                },
+            )
             return JobResult(exit_code=exit_code, logs=logs.decode("utf-8", errors="replace"))
 
         finally:
@@ -118,4 +136,7 @@ class DockerJobRunner(JobRunner):
                 await self._containers.remove(helper_name)
             except Exception as e:
                 # Log but don't mask the actual job result
-                logger.error("Failed to cleanup restore job container %s: %s", helper_name, e)
+                logger.error(
+                    "Failed to cleanup restore job container",
+                    extra={"event": LogEvent.OPERATION_FAILED, "job": helper_name, "error": str(e)},
+                )

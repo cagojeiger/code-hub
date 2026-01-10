@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from codehub.app.config import get_settings
 from codehub.core.interfaces.leader import LeaderElection
+from codehub.core.logging_schema import LogEvent
 from codehub.infra.redis_pubsub import ChannelSubscriber
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,8 @@ class CoordinatorBase(ABC):
         self._active_until = time.time() + self.ACTIVE_DURATION
         self._last_verify = 0.0
         self._last_tick = 0.0
+        # Leadership waiting state tracking (for LEADERSHIP_ACQUIRED log)
+        self._waiting_since: float | None = None
 
     @property
     def name(self) -> str:
@@ -95,7 +98,10 @@ class CoordinatorBase(ABC):
 
     def accelerate(self) -> None:
         self._active_until = time.time() + self.ACTIVE_DURATION
-        logger.info("[%s] Accelerating for %.0fs", self.name, self.ACTIVE_DURATION)
+        logger.info(
+            "Accelerating",
+            extra={"event": LogEvent.STATE_CHANGED, "duration": self.ACTIVE_DURATION},
+        )
 
     def _get_interval(self) -> float:
         return self.ACTIVE_INTERVAL if self.is_active else self.IDLE_INTERVAL
@@ -114,7 +120,10 @@ class CoordinatorBase(ABC):
         try:
             await self._conn.rollback()
         except Exception as e:
-            logger.warning("[%s] Rollback failed: %s", self.name, e)
+            logger.warning(
+                "Rollback failed",
+                extra={"event": LogEvent.DB_ERROR, "error": str(e)},
+            )
 
     @abstractmethod
     async def tick(self) -> None:
@@ -124,16 +133,14 @@ class CoordinatorBase(ABC):
     async def run(self) -> None:
         """Main coordinator loop."""
         self._running = True
-        logger.info("[%s] Starting coordinator", self.name)
+        logger.info("Starting coordinator", extra={"event": LogEvent.APP_STARTED})
 
         try:
             while self._running:
                 if not await self._ensure_leadership():
                     continue
                 await self._ensure_subscribed()
-                logger.info("[%s] run() loop: before _throttle()", self.name)
                 await self._throttle()
-                logger.info("[%s] run() loop: before _execute_tick()", self.name)
                 if not await self._execute_tick():
                     break
                 await self._wait_for_notify(self._get_interval())
@@ -145,20 +152,39 @@ class CoordinatorBase(ABC):
         now = time.time()
         # P5: Use jittered interval to prevent Thundering Herd
         if now - self._last_verify <= self._jittered_verify_interval() and self._leader.is_leader:
+            # Reset waiting state when we have leadership
+            self._waiting_since = None
             return True
 
         try:
             acquired = await self._leader.try_acquire()
         except Exception as e:
-            logger.warning("[%s] Error acquiring leadership: %s", self.name, e)
+            logger.warning(
+                "Error acquiring leadership",
+                extra={"event": LogEvent.LEADERSHIP_LOST, "error": str(e)},
+            )
             await self._safe_rollback()
             acquired = False
 
         if not acquired:
             await self._release_subscription()
+            # Track waiting state for LEADERSHIP_ACQUIRED log
+            if self._waiting_since is None:
+                self._waiting_since = now
             await asyncio.sleep(self.LEADER_RETRY_INTERVAL)
             return False
 
+        # Leadership acquired - reset waiting state and log
+        if self._waiting_since is not None:
+            wait_seconds = now - self._waiting_since
+            logger.info(
+                "Leadership acquired after waiting",
+                extra={
+                    "event": LogEvent.LEADERSHIP_ACQUIRED,
+                    "wait_seconds": round(wait_seconds, 1),
+                },
+            )
+        self._waiting_since = None
         self._last_verify = now
         return True
 
@@ -177,11 +203,12 @@ class CoordinatorBase(ABC):
 
     async def _execute_tick(self) -> bool:
         """Execute tick. Returns False if cancelled or leadership lost."""
-        logger.info("[%s] _execute_tick() entering tick()", self.name)
-
         # P6: Verify leadership before tick to detect Split Brain early
         if not await self._leader.verify_holding():
-            logger.warning("[%s] Leadership lost before tick - skipping", self.name)
+            logger.warning(
+                "Leadership lost before tick - skipping",
+                extra={"event": LogEvent.LEADERSHIP_LOST},
+            )
             await self._release_subscription()
             return True  # Continue loop to re-acquire leadership
 
@@ -192,7 +219,7 @@ class CoordinatorBase(ABC):
         except asyncio.CancelledError:
             return False
         except Exception as e:
-            logger.exception("[%s] Error in tick: %s", self.name, e)
+            logger.exception("Error in tick: %s", e)
             await self._safe_rollback()
             self._last_tick = time.time()
             return True
@@ -210,7 +237,10 @@ class CoordinatorBase(ABC):
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning("[%s] Error checking notify: %s", self.name, e)
+            logger.warning(
+                "Error checking notify",
+                extra={"event": LogEvent.REDIS_CONNECTION_ERROR, "error": str(e)},
+            )
             await asyncio.sleep(interval)
 
     async def _release_subscription(self) -> None:
@@ -219,14 +249,20 @@ class CoordinatorBase(ABC):
             try:
                 await self._subscriber.unsubscribe()
             except Exception as e:
-                logger.warning("[%s] Error unsubscribing: %s", self.name, e)
+                logger.warning(
+                    "Error unsubscribing",
+                    extra={"event": LogEvent.REDIS_CONNECTION_ERROR, "error": str(e)},
+                )
             self._subscribed = False
 
     async def _cleanup(self) -> None:
         """Cleanup on shutdown."""
-        logger.info("[%s] Cleaning up", self.name)
+        logger.info("Cleaning up", extra={"event": LogEvent.APP_STOPPED})
         await self._release_subscription()
         try:
             await self._leader.release()
         except Exception as e:
-            logger.warning("[%s] Error releasing leadership: %s", self.name, e)
+            logger.warning(
+                "Error releasing leadership",
+                extra={"event": LogEvent.LEADERSHIP_LOST, "error": str(e)},
+            )
