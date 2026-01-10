@@ -61,7 +61,7 @@ async def _event_generator(
     last_sent_state: dict[str, tuple] = {}
 
     logger.info(
-        "[SSE] User connected",
+        "User connected",
         extra={
             "event": LogEvent.SSE_CONNECTED,
             "user_id": user_id,
@@ -86,7 +86,7 @@ async def _event_generator(
                 payload = await subscriber.get_message(timeout=1.0)
             except Exception as e:
                 logger.warning(
-                    "[SSE] Redis read error",
+                    "Redis read error",
                     extra={
                         "event": LogEvent.SSE_RECEIVED,
                         "user_id": user_id,
@@ -98,7 +98,7 @@ async def _event_generator(
 
             if payload is not None:
                 logger.debug(
-                    "[SSE] Received message",
+                    "Received message",
                     extra={
                         "event": LogEvent.SSE_RECEIVED,
                         "user_id": user_id,
@@ -128,7 +128,7 @@ async def _event_generator(
 
                 except json.JSONDecodeError as e:
                     logger.warning(
-                        "[SSE] Invalid JSON in message",
+                        "Invalid JSON in message",
                         extra={
                             "event": LogEvent.SSE_RECEIVED,
                             "user_id": user_id,
@@ -146,7 +146,7 @@ async def _event_generator(
     finally:
         await subscriber.unsubscribe()
         logger.info(
-            "[SSE] User disconnected",
+            "User disconnected",
             extra={
                 "event": LogEvent.SSE_DISCONNECTED,
                 "user_id": user_id,
