@@ -108,7 +108,7 @@
       "id": 6,
       "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
       "pluginVersion": "10.0.0",
-      "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "codehub_workspaces_by_phase", "legendFormat": "{{phase}}", "refId": "A" }],
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "codehub_workspaces_by_phase{phase!~\"DELETING|DELETED\"}", "legendFormat": "{{phase}}", "refId": "A" }],
       "title": "Workspaces by Phase (Timeline)",
       "type": "timeseries"
     },
