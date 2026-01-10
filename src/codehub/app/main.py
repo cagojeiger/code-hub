@@ -352,7 +352,8 @@ async def _update_infra_status() -> None:
 
     # Docker (via docker-proxy)
     try:
-        docker_url = settings.docker.host.replace("tcp://", "http://")
+        docker_host = os.getenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+        docker_url = docker_host.replace("tcp://", "http://")
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(f"{docker_url}/_ping")
             if response.status_code == 200:
