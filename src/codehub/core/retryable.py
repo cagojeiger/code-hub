@@ -4,10 +4,10 @@ Classifies errors as retryable (transient) or non-retryable (permanent).
 Used by coordinators to decide whether to retry operations.
 
 Usage:
-    from codehub.core.retryable import is_retryable, with_retry
+    from codehub.core.retryable import classify_error, with_retry
 
     # Check if error is retryable
-    if is_retryable(exc):
+    if classify_error(exc) == "retryable":
         # retry logic
 
     # Execute with automatic retry
@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 #   class RetryableError(Exception): pass
 #   class VolumeInUseError(RetryableError): pass
 #   class ContainerStartupError(RetryableError): pass
-#   → is_retryable()에서 isinstance(exc, RetryableError)로 일괄 처리
+#   → classify_error()에서 isinstance(exc, RetryableError)로 일괄 처리
 
 
 class VolumeInUseError(Exception):
@@ -121,39 +121,6 @@ def is_s3_retryable(exc: ClientError) -> bool:
 # =============================================================================
 # Unified classification
 # =============================================================================
-
-
-def is_retryable(exc: Exception) -> bool:
-    """Check if error is retryable (transient).
-
-    Args:
-        exc: Exception to classify
-
-    Returns:
-        True if error is transient and operation can be retried
-    """
-    # asyncio timeout is retryable
-    if isinstance(exc, asyncio.TimeoutError):
-        return True
-
-    # Docker volume in use - retryable (container deletion may free volume)
-    if isinstance(exc, VolumeInUseError):
-        return True
-
-    # httpx errors
-    if isinstance(exc, httpx.HTTPStatusError):
-        return is_httpx_retryable(exc)
-    if isinstance(exc, HTTPX_RETRYABLE):
-        return True
-    if isinstance(exc, HTTPX_NON_RETRYABLE):
-        return False
-
-    # S3 (botocore) errors
-    if isinstance(exc, ClientError):
-        return is_s3_retryable(exc)
-
-    # Unknown errors - conservative: not retryable
-    return False
 
 
 def classify_error(exc: Exception) -> str:

@@ -3,7 +3,7 @@
 Reference: docs/architecture_v2/wc-judge.md
 """
 
-from codehub.control.coordinator.judge import (
+from codehub.control.coordinator.wc_judge import (
     JudgeInput,
     JudgeOutput,
     check_invariants,

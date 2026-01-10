@@ -6,8 +6,6 @@ from codehub.core.errors import (
     CodeHubError,
     ErrorCode,
     ForbiddenError,
-    InvalidRequestError,
-    InvalidStateError,
     RunningLimitExceededError,
     TooManyRequestsError,
     UnauthorizedError,
@@ -65,15 +63,12 @@ class TestErrorCodeEnum:
     def test_all_error_codes(self) -> None:
         """All expected error codes should exist."""
         expected = [
-            "INVALID_REQUEST",
             "UNAUTHORIZED",
             "FORBIDDEN",
             "WORKSPACE_NOT_FOUND",
-            "INVALID_STATE",
             "TOO_MANY_REQUESTS",
             "RUNNING_LIMIT_EXCEEDED",
             "UPSTREAM_UNAVAILABLE",
-            "INTERNAL_ERROR",
         ]
         for code in expected:
             assert hasattr(ErrorCode, code)
@@ -85,11 +80,9 @@ class TestOtherErrors:
     @pytest.mark.parametrize(
         "error_class,expected_code,expected_status",
         [
-            (InvalidRequestError, ErrorCode.INVALID_REQUEST, 400),
             (UnauthorizedError, ErrorCode.UNAUTHORIZED, 401),
             (ForbiddenError, ErrorCode.FORBIDDEN, 403),
             (WorkspaceNotFoundError, ErrorCode.WORKSPACE_NOT_FOUND, 404),
-            (InvalidStateError, ErrorCode.INVALID_STATE, 409),
             (UpstreamUnavailableError, ErrorCode.UPSTREAM_UNAVAILABLE, 502),
         ],
     )
