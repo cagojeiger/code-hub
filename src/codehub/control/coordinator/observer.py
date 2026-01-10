@@ -27,10 +27,12 @@ from codehub.control.coordinator.base import (
 )
 from codehub.core.interfaces.instance import ContainerInfo, InstanceController
 from codehub.core.interfaces.storage import ArchiveInfo, StorageProvider, VolumeInfo
+from codehub.core.logging_schema import LogEvent
 from codehub.core.models import Workspace
 
 logger = logging.getLogger(__name__)
 _settings = get_settings()
+_logging_config = _settings.logging
 
 
 class BulkObserver:
@@ -119,14 +121,30 @@ class ObserverCoordinator(CoordinatorBase):
 
         duration_ms = (time.monotonic() - tick_start) * 1000
         logger.info(
-            "[%s] Observation completed: workspaces=%d, containers=%d, volumes=%d, archives=%d, duration_ms=%.1f",
+            "[%s] Observation completed",
             self.name,
-            count,
-            len(containers),
-            len(volumes),
-            len(archives),
-            duration_ms,
+            extra={
+                "event": LogEvent.OBSERVATION_COMPLETE,
+                "workspaces": count,
+                "containers": len(containers),
+                "volumes": len(volumes),
+                "archives": len(archives),
+                "duration_ms": duration_ms,
+            },
         )
+
+        # Slow observation warning (SLO threat detection)
+        if duration_ms > _logging_config.slow_threshold_ms:
+            logger.warning(
+                "[%s] Slow observation detected",
+                self.name,
+                extra={
+                    "event": LogEvent.RECONCILE_SLOW,
+                    "duration_ms": duration_ms,
+                    "threshold_ms": _logging_config.slow_threshold_ms,
+                    "workspaces": count,
+                },
+            )
 
     async def _load_workspace_ids(self) -> set[str]:
         result = await self._conn.execute(

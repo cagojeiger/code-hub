@@ -254,6 +254,27 @@ class MetricsConfig(BaseSettings):
     update_interval: float = Field(default=10.0)  # seconds
 
 
+class LoggingConfig(BaseSettings):
+    """Logging configuration.
+
+    Standard fields added to all logs:
+    - schema_version: Log schema version for backwards compatibility
+    - service: Service name (codehub-control-plane)
+
+    Rate limiting:
+    - Prevents log storms from repeated messages
+    - ERROR logs bypass rate limiting (always logged)
+    """
+
+    model_config = SettingsConfigDict(env_prefix="LOGGING_")
+
+    level: str = Field(default="INFO")
+    schema_version: str = Field(default="1.0")
+    slow_threshold_ms: float = Field(default=1000.0)  # 1초 이상이면 WARN
+    rate_limit_per_minute: int = Field(default=100)  # 동일 메시지 분당 최대 횟수
+    service_name: str = Field(default="codehub-control-plane")
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CODEHUB_",
@@ -277,6 +298,7 @@ class Settings(BaseSettings):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     activity: ActivityConfig = Field(default_factory=ActivityConfig)
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
+    logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
 
 @lru_cache

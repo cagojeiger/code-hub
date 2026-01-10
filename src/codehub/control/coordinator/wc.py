@@ -39,6 +39,7 @@ from codehub.core.domain.workspace import (
 from codehub.core.interfaces.instance import InstanceController
 from codehub.core.interfaces.storage import StorageProvider
 from codehub.core.models import Workspace
+from codehub.core.logging_schema import ErrorClass as LogErrorClass, LogEvent
 from codehub.core.retryable import classify_error, with_retry
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ logger = logging.getLogger(__name__)
 # Module-level settings cache (consistent with base.py pattern)
 _settings = get_settings()
 _coordinator_config = _settings.coordinator
+_logging_config = _settings.logging
 
 
 class PlanAction(BaseModel):
@@ -127,14 +129,28 @@ class WorkspaceController(CoordinatorBase):
                     )
                 except asyncio.TimeoutError:
                     logger.error(
-                        "[%s] Operation %s timeout for ws=%s",
-                        self.name, action.operation, ws.id
+                        "[%s] Operation timeout",
+                        self.name,
+                        extra={
+                            "event": LogEvent.OPERATION_TIMEOUT,
+                            "ws_id": ws.id,
+                            "operation": action.operation.value,
+                            "error_class": LogErrorClass.TIMEOUT,
+                            "timeout_s": self.OPERATION_TIMEOUT,
+                        },
                     )
                 except Exception as exc:
                     error_class = classify_error(exc)
                     logger.exception(
-                        "Failed to execute %s (class=%s, cause: %s)",
-                        ws.id, error_class, exc.__cause__ or exc
+                        "[%s] Operation failed",
+                        self.name,
+                        extra={
+                            "event": LogEvent.OPERATION_FAILED,
+                            "ws_id": ws.id,
+                            "operation": action.operation.value,
+                            "error_class": error_class,
+                            "retryable": error_class == "transient",
+                        },
                     )
             return (ws, action)
 
@@ -152,18 +168,42 @@ class WorkspaceController(CoordinatorBase):
                     action_counts[action.operation.value] += 1
             except Exception as exc:
                 logger.exception(
-                    "Failed to persist %s (cause: %s)", ws.id, exc.__cause__ or exc
+                    "[%s] Failed to persist",
+                    self.name,
+                    extra={
+                        "event": LogEvent.OPERATION_FAILED,
+                        "ws_id": ws.id,
+                        "operation": action.operation.value,
+                        "error_class": LogErrorClass.TRANSIENT,
+                    },
                 )
 
-        # Log reconcile result
+        # Log reconcile result with structured fields
         duration_ms = (time.monotonic() - tick_start) * 1000
         logger.info(
-            "[%s] Reconcile completed: workspaces=%d, actions=%s, duration_ms=%.1f",
+            "[%s] Reconcile completed",
             self.name,
-            len(workspaces),
-            dict(action_counts) if action_counts else {},
-            duration_ms,
+            extra={
+                "event": LogEvent.RECONCILE_COMPLETE,
+                "processed": len(workspaces),
+                "changed": sum(action_counts.values()),
+                "actions": dict(action_counts) if action_counts else {},
+                "duration_ms": duration_ms,
+            },
         )
+
+        # Slow reconcile warning (SLO threat detection)
+        if duration_ms > _logging_config.slow_threshold_ms:
+            logger.warning(
+                "[%s] Slow reconcile detected",
+                self.name,
+                extra={
+                    "event": LogEvent.RECONCILE_SLOW,
+                    "duration_ms": duration_ms,
+                    "threshold_ms": _logging_config.slow_threshold_ms,
+                    "processed": len(workspaces),
+                },
+            )
 
     def _judge_and_plan(self, ws: Workspace) -> PlanAction:
         """Judge + Plan (순수 계산, DB 미사용)."""
@@ -455,16 +495,23 @@ class WorkspaceController(CoordinatorBase):
         await self._conn.commit()
 
         if not success:
-            logger.info("CAS failed for %s (expected_op=%s), will retry next tick", ws.id, ws_op)
+            logger.debug(
+                "[%s] CAS failed, will retry next tick",
+                self.name,
+                extra={"ws_id": ws.id, "expected_op": ws_op.value},
+            )
         elif action.phase != Phase(ws.phase) or action.operation != Operation.NONE:
             # Log state changes (phase change or operation in progress)
             logger.info(
-                "[%s] State changed: ws=%s, phase=%s→%s, operation=%s",
+                "[%s] State changed",
                 self.name,
-                ws.id,
-                ws.phase,
-                action.phase.value,
-                action.operation.value,
+                extra={
+                    "event": LogEvent.STATE_CHANGED,
+                    "ws_id": ws.id,
+                    "phase_from": ws.phase.value if isinstance(ws.phase, Phase) else ws.phase,
+                    "phase_to": action.phase.value,
+                    "operation": action.operation.value,
+                },
             )
 
     # =================================================================
