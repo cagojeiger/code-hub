@@ -30,10 +30,15 @@ from codehub.app.proxy.activity import get_activity_buffer
 from codehub.app.proxy.client import close_http_client
 from codehub.app.metrics import setup_metrics, get_metrics_response
 from codehub.app.metrics.collector import (
-    DB_UP,
-    DB_POOL_CHECKEDIN,
-    DB_POOL_CHECKEDOUT,
+    DB_CONNECTED_WORKERS,
+    DB_POOL_ACTIVE,
+    DB_POOL_IDLE,
     DB_POOL_OVERFLOW,
+    DB_POOL_TOTAL,
+    REDIS_CONNECTED_WORKERS,
+    REDIS_POOL_ACTIVE,
+    REDIS_POOL_IDLE,
+    REDIS_POOL_TOTAL,
 )
 from codehub.control.coordinator import (
     ArchiveGC,
@@ -299,12 +304,35 @@ def _update_db_pool_metrics() -> None:
     try:
         engine = get_engine()
         pool = engine.pool
-        DB_UP.set(1)
-        DB_POOL_CHECKEDIN.set(pool.checkedin())
-        DB_POOL_CHECKEDOUT.set(pool.checkedout())
-        DB_POOL_OVERFLOW.set(pool.overflow())
+        idle = pool.checkedin()
+        active = pool.checkedout()
+        overflow = pool.overflow()
+
+        DB_CONNECTED_WORKERS.set(1)
+        DB_POOL_IDLE.set(idle)
+        DB_POOL_ACTIVE.set(active)
+        DB_POOL_TOTAL.set(idle + active)
+        DB_POOL_OVERFLOW.set(overflow)
     except Exception:
-        DB_UP.set(0)
+        DB_CONNECTED_WORKERS.set(0)
+
+
+def _update_redis_pool_metrics() -> None:
+    """Update Redis pool metrics."""
+    try:
+        client = get_redis()
+        pool = client.connection_pool
+
+        # redis-py ConnectionPool internal attributes
+        idle = len(pool._available_connections)
+        active = len(pool._in_use_connections)
+
+        REDIS_CONNECTED_WORKERS.set(1)
+        REDIS_POOL_IDLE.set(idle)
+        REDIS_POOL_ACTIVE.set(active)
+        REDIS_POOL_TOTAL.set(idle + active)
+    except Exception:
+        REDIS_CONNECTED_WORKERS.set(0)
 
 
 async def _metrics_updater_loop() -> None:
@@ -316,6 +344,7 @@ async def _metrics_updater_loop() -> None:
     interval = get_settings().metrics.update_interval
     while True:
         _update_db_pool_metrics()
+        _update_redis_pool_metrics()
         await asyncio.sleep(interval)
 
 

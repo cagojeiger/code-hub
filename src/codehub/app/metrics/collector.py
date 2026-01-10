@@ -1,4 +1,4 @@
-"""Prometheus metrics definitions for SQLAlchemy connection pool."""
+"""Prometheus metrics definitions for connection pools."""
 
 import os
 from pathlib import Path
@@ -11,34 +11,73 @@ _multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus_met
 Path(_multiproc_dir).mkdir(parents=True, exist_ok=True)
 os.environ["PROMETHEUS_MULTIPROC_DIR"] = _multiproc_dir
 
-# PostgreSQL Pool metrics
-# These metrics are only measurable from the application (PG doesn't know about SQLAlchemy pool)
+# =============================================================================
+# PostgreSQL Pool Metrics
+# =============================================================================
+# These metrics are only measurable from the application
+# (PostgreSQL doesn't know about SQLAlchemy pool)
 
-DB_UP = Gauge(
-    "codehub_db_up",
-    "Database connection status (1=connected, 0=disconnected)",
+DB_CONNECTED_WORKERS = Gauge(
+    "codehub_db_connected_workers",
+    "Number of workers connected to database",
     multiprocess_mode="livesum",
 )
 
-DB_POOL_CHECKEDIN = Gauge(
-    "codehub_db_pool_checkedin",
+DB_POOL_IDLE = Gauge(
+    "codehub_db_pool_idle",
     "Database connections idle in pool",
     multiprocess_mode="livesum",
 )
 
-DB_POOL_CHECKEDOUT = Gauge(
-    "codehub_db_pool_checkedout",
+DB_POOL_ACTIVE = Gauge(
+    "codehub_db_pool_active",
     "Database connections in use",
+    multiprocess_mode="livesum",
+)
+
+DB_POOL_TOTAL = Gauge(
+    "codehub_db_pool_total",
+    "Total database connections (idle + active)",
     multiprocess_mode="livesum",
 )
 
 DB_POOL_OVERFLOW = Gauge(
     "codehub_db_pool_overflow",
-    "Database overflow connections",
+    "Database overflow connections (negative=headroom, positive=overflow)",
     multiprocess_mode="livesum",
 )
 
-# WebSocket metrics
+# =============================================================================
+# Redis Pool Metrics
+# =============================================================================
+
+REDIS_CONNECTED_WORKERS = Gauge(
+    "codehub_redis_connected_workers",
+    "Number of workers connected to Redis",
+    multiprocess_mode="livesum",
+)
+
+REDIS_POOL_IDLE = Gauge(
+    "codehub_redis_pool_idle",
+    "Redis connections idle in pool",
+    multiprocess_mode="livesum",
+)
+
+REDIS_POOL_ACTIVE = Gauge(
+    "codehub_redis_pool_active",
+    "Redis connections in use",
+    multiprocess_mode="livesum",
+)
+
+REDIS_POOL_TOTAL = Gauge(
+    "codehub_redis_pool_total",
+    "Total Redis connections (idle + active)",
+    multiprocess_mode="livesum",
+)
+
+# =============================================================================
+# WebSocket Metrics
+# =============================================================================
 # These metrics track WebSocket proxy performance and connection health
 
 WS_ACTIVE_CONNECTIONS = Gauge(
