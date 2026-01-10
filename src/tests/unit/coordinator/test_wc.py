@@ -611,3 +611,138 @@ class TestCasUpdate:
 
         # Verify execute was called (CAS pattern in use)
         mock_conn.execute.assert_called_once()
+
+
+class TestTickLogging:
+    """tick() 로깅 동작 테스트 - 상태 변화 감지 패턴."""
+
+    @pytest.fixture
+    def wc(
+        self,
+        mock_conn: AsyncMock,
+        mock_leader: AsyncMock,
+        mock_subscriber: AsyncMock,
+        mock_ic: AsyncMock,
+        mock_sp: AsyncMock,
+    ) -> WorkspaceController:
+        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
+
+    async def test_no_log_when_state_unchanged(
+        self,
+        wc: WorkspaceController,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """상태 변화 없으면 두 번째 tick부터 INFO 로그 없음."""
+        import logging
+
+        # RUNNING 워크스페이스 (이미 수렴됨)
+        ws = make_workspace(
+            phase=Phase.RUNNING,
+            desired_state=DesiredState.RUNNING,
+            conditions={
+                "container": {"running": True, "reason": "Running", "message": ""},
+                "volume": {"exists": True, "reason": "VolumeExists", "message": ""},
+            },
+        )
+
+        wc._load_for_reconcile = AsyncMock(return_value=[ws])
+        wc._persist = AsyncMock()
+
+        # 첫 번째 tick - 상태 초기화, 로그 발생
+        with caplog.at_level(logging.INFO, logger="codehub.control.coordinator.wc"):
+            await wc.tick()
+
+        first_tick_logs = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert len(first_tick_logs) == 1  # 첫 tick은 로그 발생
+        caplog.clear()
+
+        # 두 번째 tick - 상태 동일, 로그 없음
+        with caplog.at_level(logging.INFO, logger="codehub.control.coordinator.wc"):
+            await wc.tick()
+
+        second_tick_logs = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert len(second_tick_logs) == 0  # 상태 변화 없으면 로그 없음
+
+    async def test_log_when_changed_increases(
+        self,
+        wc: WorkspaceController,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """changed > 0 (상태 변화 발생) 이면 로그 발생."""
+        import logging
+
+        # 첫 번째 tick: 0 changed
+        ws1 = make_workspace(
+            phase=Phase.RUNNING,
+            desired_state=DesiredState.RUNNING,
+            conditions={
+                "container": {"running": True, "reason": "Running", "message": ""},
+                "volume": {"exists": True, "reason": "VolumeExists", "message": ""},
+            },
+        )
+        wc._load_for_reconcile = AsyncMock(return_value=[ws1])
+        wc._persist = AsyncMock()
+
+        with caplog.at_level(logging.INFO, logger="codehub.control.coordinator.wc"):
+            await wc.tick()
+        caplog.clear()
+
+        # 두 번째 tick: changed 발생 (새 ws 추가됨 = processed 변화)
+        ws2 = make_workspace(
+            id="ws-2",
+            phase=Phase.RUNNING,
+            desired_state=DesiredState.RUNNING,
+            conditions={
+                "container": {"running": True, "reason": "Running", "message": ""},
+                "volume": {"exists": True, "reason": "VolumeExists", "message": ""},
+            },
+        )
+        wc._load_for_reconcile = AsyncMock(return_value=[ws1, ws2])
+
+        with caplog.at_level(logging.INFO, logger="codehub.control.coordinator.wc"):
+            await wc.tick()
+
+        # processed가 1 -> 2로 변경되었으므로 로그 발생
+        tick_logs = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert len(tick_logs) == 1
+        assert "Reconcile completed" in tick_logs[0].message
+
+    async def test_heartbeat_after_one_hour(
+        self,
+        wc: WorkspaceController,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """1시간 후 heartbeat 로그 발생."""
+        import logging
+        import time
+
+        ws = make_workspace(
+            phase=Phase.RUNNING,
+            desired_state=DesiredState.RUNNING,
+            conditions={
+                "container": {"running": True, "reason": "Running", "message": ""},
+                "volume": {"exists": True, "reason": "VolumeExists", "message": ""},
+            },
+        )
+        wc._load_for_reconcile = AsyncMock(return_value=[ws])
+        wc._persist = AsyncMock()
+
+        # 첫 번째 tick (시간 0)
+        mock_time = 1000.0
+        monkeypatch.setattr(time, "monotonic", lambda: mock_time)
+
+        with caplog.at_level(logging.INFO, logger="codehub.control.coordinator.wc"):
+            await wc.tick()
+        caplog.clear()
+
+        # 두 번째 tick (1시간 후)
+        mock_time = 1000.0 + 3601  # 1시간 + 1초 후
+        monkeypatch.setattr(time, "monotonic", lambda: mock_time)
+
+        with caplog.at_level(logging.INFO, logger="codehub.control.coordinator.wc"):
+            await wc.tick()
+
+        heartbeat_logs = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert len(heartbeat_logs) == 1
+        assert "Heartbeat" in heartbeat_logs[0].message

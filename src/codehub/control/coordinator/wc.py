@@ -81,6 +81,9 @@ class WorkspaceController(CoordinatorBase):
         super().__init__(conn, leader, subscriber)
         self._ic = ic
         self._sp = sp
+        # Track previous state to log only on changes (reduces noise)
+        self._prev_state: tuple[int, int] | None = None
+        self._last_heartbeat: float = 0.0
 
     async def tick(self) -> None:
         """Reconcile loop: Load → Judge → Plan → Execute → Persist.
@@ -182,23 +185,32 @@ class WorkspaceController(CoordinatorBase):
                     )
             persist_ms = (time.monotonic() - persist_start) * 1000
 
-            # Log reconcile result with structured fields and stage durations
+            # Log reconcile result only when state changes OR hourly heartbeat
             duration_ms = (time.monotonic() - tick_start) * 1000
-            logger.info(
-                "Reconcile completed",
-                extra={
-                    "event": LogEvent.RECONCILE_COMPLETE,
-                    "tick_id": tick_id,
-                    "processed": len(workspaces),
-                    "changed": sum(action_counts.values()),
-                    "actions": dict(action_counts) if action_counts else {},
-                    "duration_ms": duration_ms,
-                    "load_ms": load_ms,
-                    "plan_ms": plan_ms,
-                    "exec_ms": exec_ms,
-                    "persist_ms": persist_ms,
-                },
-            )
+            current_state = (len(workspaces), sum(action_counts.values()))
+            now = time.monotonic()
+
+            log_extra = {
+                "event": LogEvent.RECONCILE_COMPLETE,
+                "tick_id": tick_id,
+                "processed": len(workspaces),
+                "changed": sum(action_counts.values()),
+                "actions": dict(action_counts) if action_counts else {},
+                "duration_ms": duration_ms,
+                "load_ms": load_ms,
+                "plan_ms": plan_ms,
+                "exec_ms": exec_ms,
+                "persist_ms": persist_ms,
+            }
+
+            # 1시간마다 heartbeat (변화 없어도 "살아있음" 확인)
+            if now - self._last_heartbeat >= 3600:
+                logger.info("Heartbeat", extra=log_extra)
+                self._last_heartbeat = now
+                self._prev_state = current_state
+            elif current_state != self._prev_state:
+                logger.info("Reconcile completed", extra=log_extra)
+                self._prev_state = current_state
 
             # Slow reconcile warning (SLO threat detection)
             if duration_ms > _logging_config.slow_threshold_ms:
