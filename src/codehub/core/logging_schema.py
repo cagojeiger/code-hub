@@ -73,22 +73,3 @@ class LogEvent(StrEnum):
     REDIS_CONNECTION_ERROR = "redis_connection_error"
 
 
-class ErrorClass(StrEnum):
-    """Error classification. See docs/LOGGING.md for usage."""
-
-    TRANSIENT = "transient"  # Retryable (network timeout, temp failure)
-    PERMANENT = "permanent"  # Not retryable (invalid input, not found)
-    TIMEOUT = "timeout"  # Timeout error
-    RATE_LIMITED = "rate_limited"  # Rate limit exceeded
-
-
-class Component(StrEnum):
-    """Component identifiers for log filtering."""
-
-    WC = "wc"  # WorkspaceController
-    OB = "ob"  # Observer
-    TTL = "ttl"  # TTL Coordinator
-    GC = "gc"  # Garbage Collector
-    API = "api"  # REST API
-    SSE = "sse"  # Server-Sent Events
-    CDC = "cdc"  # Change Data Capture (EventListener)

@@ -40,7 +40,7 @@ from codehub.core.domain.workspace import (
 from codehub.core.interfaces.instance import InstanceController
 from codehub.core.interfaces.storage import StorageProvider
 from codehub.core.models import Workspace
-from codehub.core.logging_schema import ErrorClass as LogErrorClass, LogEvent
+from codehub.core.logging_schema import LogEvent
 from codehub.core.retryable import classify_error, with_retry
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,7 @@ class WorkspaceController(CoordinatorBase):
                                 "event": LogEvent.OPERATION_TIMEOUT,
                                 "ws_id": ws.id,
                                 "operation": action.operation.value,
-                                "error_class": LogErrorClass.TIMEOUT,
+                                "error_class": "timeout",
                                 "timeout_s": self.OPERATION_TIMEOUT,
                             },
                         )
@@ -187,7 +187,7 @@ class WorkspaceController(CoordinatorBase):
                             "event": LogEvent.OPERATION_FAILED,
                             "ws_id": ws.id,
                             "operation": action.operation.value,
-                            "error_class": LogErrorClass.TRANSIENT,
+                            "error_class": "transient",
                         },
                     )
             persist_ms = (time.monotonic() - persist_start) * 1000
