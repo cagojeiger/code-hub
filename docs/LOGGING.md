@@ -34,7 +34,6 @@
 - `reconcile_slow`: Slow reconcile 경고
 - `observation_complete`: 리소스 관측 완료
 - `state_changed`: 상태 변경
-- `operation_started`: Operation 시작
 - `operation_failed`: Operation 실패
 - `operation_timeout`: Operation 타임아웃
 - `operation_success`: Operation 성공
