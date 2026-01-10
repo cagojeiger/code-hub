@@ -60,10 +60,23 @@
 - `restore_success`: 복원 성공
 - `restore_failed`: 복원 실패
 
+### Lifecycle 이벤트
+- `app_started`: 애플리케이션 시작됨
+- `app_stopped`: 애플리케이션 종료됨
+
 ### API 이벤트
 - `request_complete`: 요청 완료
 - `request_failed`: 요청 실패
 - `request_slow`: 느린 요청 (threshold 초과)
+
+### SSE 이벤트
+- `sse_connected`: SSE 클라이언트 연결됨
+- `sse_disconnected`: SSE 클라이언트 연결 해제
+- `sse_received`: SSE 이벤트 수신
+
+### WebSocket/Proxy 이벤트
+- `ws_error`: WebSocket 오류
+- `upstream_error`: Upstream 연결 오류
 
 ### Infrastructure 이벤트
 - `db_connected`: PostgreSQL 연결 성공
@@ -89,6 +102,20 @@
 | `permanent` | 영구적 오류 (잘못된 입력, 권한 없음) | 실패 처리 |
 | `timeout` | 타임아웃 | 재시도 또는 알림 |
 | `rate_limited` | Rate limit 초과 | 대기 후 재시도 |
+
+## 컴포넌트 식별자 (component 필드)
+
+`extra={"component": Component.XXX}` 형태로 사용:
+
+| 식별자 | 설명 |
+|-------|------|
+| `wc` | WorkspaceController |
+| `ob` | Observer |
+| `ttl` | TTL Coordinator |
+| `gc` | Garbage Collector |
+| `api` | REST API |
+| `sse` | Server-Sent Events |
+| `cdc` | Change Data Capture (EventListener) |
 
 ## 고카디널리티 규칙
 
