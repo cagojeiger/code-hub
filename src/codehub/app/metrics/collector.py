@@ -17,33 +17,46 @@ os.environ["PROMETHEUS_MULTIPROC_DIR"] = _multiproc_dir
 # These metrics are only measurable from the application
 # (PostgreSQL doesn't know about SQLAlchemy pool)
 
-DB_CONNECTED_WORKERS = Gauge(
-    "codehub_db_connected_workers",
-    "Number of workers connected to database",
+POSTGRESQL_CONNECTED_WORKERS = Gauge(
+    "codehub_postgresql_connected_workers",
+    "Number of workers connected to PostgreSQL",
     multiprocess_mode="livesum",
 )
 
-DB_POOL_IDLE = Gauge(
-    "codehub_db_pool_idle",
-    "Database connections idle in pool",
+POSTGRESQL_POOL_IDLE = Gauge(
+    "codehub_postgresql_pool_idle",
+    "PostgreSQL connections idle in pool",
     multiprocess_mode="livesum",
 )
 
-DB_POOL_ACTIVE = Gauge(
-    "codehub_db_pool_active",
-    "Database connections in use",
+POSTGRESQL_POOL_ACTIVE = Gauge(
+    "codehub_postgresql_pool_active",
+    "PostgreSQL connections in use",
     multiprocess_mode="livesum",
 )
 
-DB_POOL_TOTAL = Gauge(
-    "codehub_db_pool_total",
-    "Total database connections (idle + active)",
+POSTGRESQL_POOL_TOTAL = Gauge(
+    "codehub_postgresql_pool_total",
+    "Total PostgreSQL connections (idle + active)",
     multiprocess_mode="livesum",
 )
 
-DB_POOL_OVERFLOW = Gauge(
-    "codehub_db_pool_overflow",
-    "Database overflow connections (negative=headroom, positive=overflow)",
+POSTGRESQL_POOL_OVERFLOW = Gauge(
+    "codehub_postgresql_pool_overflow",
+    "PostgreSQL overflow connections (negative=headroom, positive=overflow)",
+    multiprocess_mode="livesum",
+)
+
+# PostgreSQL Configuration (set once at startup)
+POSTGRESQL_POOL_SIZE = Gauge(
+    "codehub_postgresql_pool_size",
+    "PostgreSQL connection pool size setting",
+    multiprocess_mode="livesum",
+)
+
+POSTGRESQL_MAX_OVERFLOW = Gauge(
+    "codehub_postgresql_max_overflow",
+    "PostgreSQL max overflow setting",
     multiprocess_mode="livesum",
 )
 
@@ -73,6 +86,23 @@ REDIS_POOL_TOTAL = Gauge(
     "codehub_redis_pool_total",
     "Total Redis connections (idle + active)",
     multiprocess_mode="livesum",
+)
+
+# Redis Configuration (set once at startup)
+REDIS_MAX_CONNECTIONS = Gauge(
+    "codehub_redis_max_connections",
+    "Redis max connections setting",
+    multiprocess_mode="livesum",
+)
+
+# =============================================================================
+# Worker Metrics
+# =============================================================================
+
+WORKERS_TOTAL = Gauge(
+    "codehub_workers_total",
+    "Total number of workers",
+    multiprocess_mode="max",
 )
 
 # =============================================================================

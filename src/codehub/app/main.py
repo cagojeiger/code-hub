@@ -30,15 +30,19 @@ from codehub.app.proxy.activity import get_activity_buffer
 from codehub.app.proxy.client import close_http_client
 from codehub.app.metrics import setup_metrics, get_metrics_response
 from codehub.app.metrics.collector import (
-    DB_CONNECTED_WORKERS,
-    DB_POOL_ACTIVE,
-    DB_POOL_IDLE,
-    DB_POOL_OVERFLOW,
-    DB_POOL_TOTAL,
+    POSTGRESQL_CONNECTED_WORKERS,
+    POSTGRESQL_MAX_OVERFLOW,
+    POSTGRESQL_POOL_ACTIVE,
+    POSTGRESQL_POOL_IDLE,
+    POSTGRESQL_POOL_OVERFLOW,
+    POSTGRESQL_POOL_SIZE,
+    POSTGRESQL_POOL_TOTAL,
     REDIS_CONNECTED_WORKERS,
+    REDIS_MAX_CONNECTIONS,
     REDIS_POOL_ACTIVE,
     REDIS_POOL_IDLE,
     REDIS_POOL_TOTAL,
+    WORKERS_TOTAL,
 )
 from codehub.control.coordinator import (
     ArchiveGC,
@@ -111,6 +115,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     if settings.metrics.enabled:
         setup_metrics(settings.metrics.multiproc_dir)
+        _init_config_metrics()
 
     await init_db()
     await init_redis()
@@ -299,8 +304,18 @@ async def health():
     }
 
 
-def _update_db_pool_metrics() -> None:
-    """Update database pool metrics."""
+def _init_config_metrics() -> None:
+    """Initialize configuration metrics (called once at startup)."""
+    settings = get_settings()
+    POSTGRESQL_POOL_SIZE.set(settings.database.pool_size)
+    POSTGRESQL_MAX_OVERFLOW.set(settings.database.max_overflow)
+    REDIS_MAX_CONNECTIONS.set(settings.redis.max_connections)
+    workers = int(os.getenv("WORKERS", "1"))
+    WORKERS_TOTAL.set(workers)
+
+
+def _update_postgresql_pool_metrics() -> None:
+    """Update PostgreSQL pool metrics."""
     try:
         engine = get_engine()
         pool = engine.pool
@@ -308,13 +323,13 @@ def _update_db_pool_metrics() -> None:
         active = pool.checkedout()
         overflow = pool.overflow()
 
-        DB_CONNECTED_WORKERS.set(1)
-        DB_POOL_IDLE.set(idle)
-        DB_POOL_ACTIVE.set(active)
-        DB_POOL_TOTAL.set(idle + active)
-        DB_POOL_OVERFLOW.set(overflow)
+        POSTGRESQL_CONNECTED_WORKERS.set(1)
+        POSTGRESQL_POOL_IDLE.set(idle)
+        POSTGRESQL_POOL_ACTIVE.set(active)
+        POSTGRESQL_POOL_TOTAL.set(idle + active)
+        POSTGRESQL_POOL_OVERFLOW.set(overflow)
     except Exception:
-        DB_CONNECTED_WORKERS.set(0)
+        POSTGRESQL_CONNECTED_WORKERS.set(0)
 
 
 def _update_redis_pool_metrics() -> None:
@@ -343,7 +358,7 @@ async def _metrics_updater_loop() -> None:
     """
     interval = get_settings().metrics.update_interval
     while True:
-        _update_db_pool_metrics()
+        _update_postgresql_pool_metrics()
         _update_redis_pool_metrics()
         await asyncio.sleep(interval)
 

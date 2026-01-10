@@ -4,14 +4,14 @@
   },
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
+  "graphTooltip": 1,
   "id": null,
   "links": [],
   "panels": [
     {
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
       "id": 100,
-      "title": "Connection Status",
+      "title": "Worker Status",
       "type": "row"
     },
     {
@@ -34,7 +34,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 1 },
       "id": 1,
       "options": {
         "colorMode": "value",
@@ -52,12 +52,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_db_connected_workers",
+          "expr": "codehub_postgresql_connected_workers",
           "legendFormat": "",
           "refId": "A"
         }
       ],
-      "title": "DB Connected Workers",
+      "title": "PostgreSQL Workers",
       "type": "stat"
     },
     {
@@ -80,7 +80,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 1 },
       "id": 2,
       "options": {
         "colorMode": "value",
@@ -103,7 +103,7 @@
           "refId": "A"
         }
       ],
-      "title": "Redis Connected Workers",
+      "title": "Redis Workers",
       "type": "stat"
     },
     {
@@ -115,20 +115,18 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 50 },
-              { "color": "red", "value": 60 }
+              { "color": "green", "value": null }
             ]
           },
           "unit": "none"
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 1 },
       "id": 3,
       "options": {
         "colorMode": "value",
-        "graphMode": "area",
+        "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
@@ -142,56 +140,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_db_pool_total",
+          "expr": "codehub_workers_total",
           "legendFormat": "",
           "refId": "A"
         }
       ],
-      "title": "DB Total Connections",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 100 },
-              { "color": "red", "value": 130 }
-            ]
-          },
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
-      "id": 4,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto"
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_redis_pool_total",
-          "legendFormat": "",
-          "refId": "A"
-        }
-      ],
-      "title": "Redis Total Connections",
+      "title": "Total Workers",
       "type": "stat"
     },
     {
@@ -202,6 +156,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "description": "Pool Size: ${__field.labels.pool_size}, Max Overflow: ${__field.labels.max_overflow}",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -245,6 +200,14 @@
           {
             "matcher": { "id": "byName", "options": "total" },
             "properties": [{ "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "limit (pool_size + max_overflow)" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } },
+              { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } },
+              { "id": "custom.fillOpacity", "value": 0 }
+            ]
           }
         ]
       },
@@ -258,28 +221,35 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_db_pool_idle",
+          "expr": "codehub_postgresql_pool_idle",
           "legendFormat": "idle",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_db_pool_active",
+          "expr": "codehub_postgresql_pool_active",
           "legendFormat": "active",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_db_pool_total",
+          "expr": "codehub_postgresql_pool_total",
           "legendFormat": "total",
           "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "codehub_postgresql_pool_size + codehub_postgresql_max_overflow",
+          "legendFormat": "limit (pool_size + max_overflow)",
+          "refId": "D"
         }
       ],
-      "title": "DB Pool Connections",
+      "title": "PostgreSQL Pool Connections",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "description": "Negative = headroom (connections available before reaching pool_size)\nPositive = overflow connections in use",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -302,12 +272,16 @@
             "showPoints": "never",
             "spanNulls": false,
             "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "off" }
+            "thresholdsStyle": { "mode": "line+area" }
           },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
-            "steps": [{ "color": "green", "value": null }]
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0 },
+              { "color": "red", "value": 40 }
+            ]
           },
           "unit": "none"
         },
@@ -328,12 +302,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_db_pool_overflow",
+          "expr": "codehub_postgresql_pool_overflow",
           "legendFormat": "overflow",
           "refId": "A"
         }
       ],
-      "title": "DB Pool Overflow (negative = headroom)",
+      "title": "PostgreSQL Pool Overflow",
       "type": "timeseries"
     },
     {
@@ -387,6 +361,14 @@
           {
             "matcher": { "id": "byName", "options": "total" },
             "properties": [{ "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "limit (max_connections)" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } },
+              { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } },
+              { "id": "custom.fillOpacity", "value": 0 }
+            ]
           }
         ]
       },
@@ -415,6 +397,12 @@
           "expr": "codehub_redis_pool_total",
           "legendFormat": "total",
           "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "codehub_redis_max_connections",
+          "legendFormat": "limit (max_connections)",
+          "refId": "D"
         }
       ],
       "title": "Redis Pool Connections",
@@ -453,7 +441,16 @@
           },
           "unit": "none"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "PostgreSQL" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Redis" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }]
+          }
+        ]
       },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
       "id": 8,
@@ -465,14 +462,14 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_db_connected_workers",
-          "legendFormat": "DB workers",
+          "expr": "codehub_postgresql_connected_workers",
+          "legendFormat": "PostgreSQL",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
           "expr": "codehub_redis_connected_workers",
-          "legendFormat": "Redis workers",
+          "legendFormat": "Redis",
           "refId": "B"
         }
       ],
