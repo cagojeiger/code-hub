@@ -13,6 +13,7 @@ import httpx
 from pydantic import BaseModel
 
 from codehub.app.config import get_settings
+from codehub.core.logging_schema import LogEvent
 from codehub.core.retryable import VolumeInUseError  # noqa: F401 - re-exported
 
 logger = logging.getLogger(__name__)
@@ -242,7 +243,11 @@ class ContainerAPI:
         resp = await client.post(f"/containers/{name}/start")
         if resp.status_code not in (204, 304):  # 304 = already started
             resp.raise_for_status()
-        logger.debug("Started container: %s", name)
+        logger.info(
+            "Started container: %s",
+            name,
+            extra={"event": LogEvent.CONTAINER_STARTED, "container": name},
+        )
 
     async def stop(self, name: str, timeout: int = 10) -> None:
         """Stop a container.
@@ -255,7 +260,11 @@ class ContainerAPI:
         resp = await client.post(f"/containers/{name}/stop", params={"t": str(timeout)})
         if resp.status_code not in (204, 304, 404):  # 404 = not found, ok
             resp.raise_for_status()
-        logger.debug("Stopped container: %s", name)
+        logger.info(
+            "Stopped container: %s",
+            name,
+            extra={"event": LogEvent.CONTAINER_STOPPED, "container": name},
+        )
 
     async def remove(self, name: str, force: bool = True) -> None:
         """Remove a container.
@@ -295,7 +304,17 @@ class ContainerAPI:
         resp.raise_for_status()
         data = resp.json()
         exit_code = data.get("StatusCode", -1)
-        logger.debug("Container %s exited with code %d", name, exit_code)
+        log_extra = {
+            "event": LogEvent.CONTAINER_EXITED,
+            "container": name,
+            "exit_code": exit_code,
+        }
+        if exit_code == 0:
+            logger.info("Container %s exited successfully", name, extra=log_extra)
+        else:
+            logger.warning(
+                "Container %s exited with code %d", name, exit_code, extra=log_extra
+            )
         return exit_code
 
     async def logs(

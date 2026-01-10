@@ -41,10 +41,20 @@
 ### Leadership 이벤트
 - `leadership_acquired`: 리더십 획득
 - `leadership_lost`: 리더십 상실
-- `leadership_waiting`: 리더십 대기 중
 
 ### Resource 이벤트
 - `container_disappeared`: 컨테이너 사라짐 (OOM/crash 감지용)
+
+### Container 이벤트
+- `container_started`: 컨테이너 시작됨
+- `container_stopped`: 컨테이너 정지됨
+- `container_exited`: 컨테이너 종료 (exit_code 포함)
+
+### Archive/Restore 이벤트
+- `archive_success`: 아카이브 성공
+- `archive_failed`: 아카이브 실패
+- `restore_success`: 복원 성공
+- `restore_failed`: 복원 실패
 
 ### API 이벤트
 - `request_complete`: 요청 완료

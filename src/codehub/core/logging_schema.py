@@ -36,10 +36,20 @@ class LogEvent(StrEnum):
     # Leadership events
     LEADERSHIP_ACQUIRED = "leadership_acquired"
     LEADERSHIP_LOST = "leadership_lost"
-    LEADERSHIP_WAITING = "leadership_waiting"
 
     # Resource events
     CONTAINER_DISAPPEARED = "container_disappeared"
+
+    # Container lifecycle events
+    CONTAINER_STARTED = "container_started"
+    CONTAINER_STOPPED = "container_stopped"
+    CONTAINER_EXITED = "container_exited"
+
+    # Archive/Restore events
+    ARCHIVE_SUCCESS = "archive_success"
+    ARCHIVE_FAILED = "archive_failed"
+    RESTORE_SUCCESS = "restore_success"
+    RESTORE_FAILED = "restore_failed"
 
     # Lifecycle events
     APP_STARTED = "app_started"

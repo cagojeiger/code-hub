@@ -71,9 +71,6 @@ class CoordinatorBase(ABC):
     COORDINATOR_TYPE: CoordinatorType
     WAKE_TARGET: str | None = None  # e.g., "ob", "wc", "gc" - receives wake from this target
 
-    # Leadership waiting log interval (seconds)
-    LEADERSHIP_WAITING_LOG_INTERVAL: float = 30.0
-
     def __init__(
         self,
         conn: SAConnection,
@@ -88,9 +85,8 @@ class CoordinatorBase(ABC):
         self._active_until = time.time() + self.ACTIVE_DURATION
         self._last_verify = 0.0
         self._last_tick = 0.0
-        # Leadership waiting state tracking
+        # Leadership waiting state tracking (for LEADERSHIP_ACQUIRED log)
         self._waiting_since: float | None = None
-        self._last_waiting_log: float = 0.0
 
     @property
     def name(self) -> str:
@@ -167,21 +163,9 @@ class CoordinatorBase(ABC):
 
         if not acquired:
             await self._release_subscription()
-            # Track and log leadership waiting state
+            # Track waiting state for LEADERSHIP_ACQUIRED log
             if self._waiting_since is None:
                 self._waiting_since = now
-            wait_seconds = now - self._waiting_since
-            # Log every LEADERSHIP_WAITING_LOG_INTERVAL seconds
-            if now - self._last_waiting_log >= self.LEADERSHIP_WAITING_LOG_INTERVAL:
-                logger.info(
-                    "[%s] Waiting for leadership",
-                    self.name,
-                    extra={
-                        "event": LogEvent.LEADERSHIP_WAITING,
-                        "wait_seconds": round(wait_seconds, 1),
-                    },
-                )
-                self._last_waiting_log = now
             await asyncio.sleep(self.LEADER_RETRY_INTERVAL)
             return False
 
