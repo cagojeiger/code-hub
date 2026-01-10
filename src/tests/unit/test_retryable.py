@@ -15,7 +15,6 @@ from codehub.core.circuit_breaker import (
 from codehub.core.retryable import (
     classify_error,
     is_httpx_retryable,
-    is_retryable,
     is_s3_retryable,
     with_retry,
 )
@@ -28,13 +27,11 @@ class TestHttpxRetryable:
         """ConnectError should be retryable."""
         exc = httpx.ConnectError("connection failed")
         assert is_httpx_retryable(exc) is True
-        assert is_retryable(exc) is True
 
     def test_connect_timeout_is_retryable(self) -> None:
         """ConnectTimeout should be retryable."""
         exc = httpx.ConnectTimeout("timeout")
         assert is_httpx_retryable(exc) is True
-        assert is_retryable(exc) is True
 
     def test_read_timeout_is_retryable(self) -> None:
         """ReadTimeout should be retryable."""
@@ -67,7 +64,7 @@ class TestHttpxRetryable:
     def test_invalid_url_not_retryable(self) -> None:
         """InvalidURL should not be retryable."""
         exc = httpx.InvalidURL("invalid url")
-        assert is_retryable(exc) is False
+        assert classify_error(exc) == "permanent"
 
 
 class TestS3Retryable:
@@ -84,7 +81,6 @@ class TestS3Retryable:
         """Throttling error should be retryable."""
         exc = self._make_client_error("Throttling")
         assert is_s3_retryable(exc) is True
-        assert is_retryable(exc) is True
 
     def test_service_unavailable_is_retryable(self) -> None:
         """ServiceUnavailable should be retryable."""
@@ -100,7 +96,6 @@ class TestS3Retryable:
         """AccessDenied should not be retryable."""
         exc = self._make_client_error("AccessDenied")
         assert is_s3_retryable(exc) is False
-        assert is_retryable(exc) is False
 
     def test_no_such_bucket_not_retryable(self) -> None:
         """NoSuchBucket should not be retryable."""
@@ -121,7 +116,7 @@ class TestVolumeInUseError:
         from codehub.infra.docker import VolumeInUseError
 
         exc = VolumeInUseError("Volume test-vol is in use by a container")
-        assert is_retryable(exc) is True
+        assert classify_error(exc) == "retryable"
 
     def test_volume_in_use_classified_as_retryable(self) -> None:
         """VolumeInUseError should be classified as retryable."""
@@ -138,7 +133,6 @@ class TestClassifyError:
         """asyncio.TimeoutError should be classified as retryable."""
         exc = asyncio.TimeoutError()
         assert classify_error(exc) == "retryable"
-        assert is_retryable(exc) is True
 
     def test_connect_error_is_retryable(self) -> None:
         """httpx.ConnectError should be classified as retryable."""

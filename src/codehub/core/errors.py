@@ -11,13 +11,13 @@ Error Response Format:
 }
 
 Usage:
-    from codehub.core.errors import WorkspaceNotFoundError, InvalidStateError
+    from codehub.core.errors import WorkspaceNotFoundError, ForbiddenError
 
     # Raise with default message
     raise WorkspaceNotFoundError()
 
     # Raise with custom message
-    raise InvalidStateError("Cannot start workspace in RUNNING state")
+    raise ForbiddenError("Cannot access this workspace")
 """
 
 from enum import Enum
@@ -28,15 +28,12 @@ from pydantic import BaseModel
 class ErrorCode(str, Enum):
     """Error codes."""
 
-    INVALID_REQUEST = "INVALID_REQUEST"
     UNAUTHORIZED = "UNAUTHORIZED"
     FORBIDDEN = "FORBIDDEN"
     WORKSPACE_NOT_FOUND = "WORKSPACE_NOT_FOUND"
-    INVALID_STATE = "INVALID_STATE"
     TOO_MANY_REQUESTS = "TOO_MANY_REQUESTS"
     RUNNING_LIMIT_EXCEEDED = "RUNNING_LIMIT_EXCEEDED"
     UPSTREAM_UNAVAILABLE = "UPSTREAM_UNAVAILABLE"
-    INTERNAL_ERROR = "INTERNAL_ERROR"
 
 
 class ErrorDetail(BaseModel):
@@ -77,13 +74,6 @@ class CodeHubError(Exception):
         )
 
 
-class InvalidRequestError(CodeHubError):
-    """400 Bad Request - Invalid request parameters."""
-
-    def __init__(self, message: str = "Invalid request") -> None:
-        super().__init__(ErrorCode.INVALID_REQUEST, message, 400)
-
-
 class UnauthorizedError(CodeHubError):
     """401 Unauthorized - Authentication required."""
 
@@ -103,13 +93,6 @@ class WorkspaceNotFoundError(CodeHubError):
 
     def __init__(self, message: str = "Workspace not found") -> None:
         super().__init__(ErrorCode.WORKSPACE_NOT_FOUND, message, 404)
-
-
-class InvalidStateError(CodeHubError):
-    """409 Conflict - Invalid state for the requested operation."""
-
-    def __init__(self, message: str = "Invalid state for this operation") -> None:
-        super().__init__(ErrorCode.INVALID_STATE, message, 409)
 
 
 class TooManyRequestsError(CodeHubError):
@@ -134,10 +117,3 @@ class UpstreamUnavailableError(CodeHubError):
 
     def __init__(self, message: str = "Upstream service unavailable") -> None:
         super().__init__(ErrorCode.UPSTREAM_UNAVAILABLE, message, 502)
-
-
-class InternalError(CodeHubError):
-    """500 Internal Server Error - Unexpected error."""
-
-    def __init__(self, message: str = "Internal server error") -> None:
-        super().__init__(ErrorCode.INTERNAL_ERROR, message, 500)
