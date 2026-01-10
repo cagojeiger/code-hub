@@ -17,7 +17,6 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel
 from sqlalchemy import case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -29,10 +28,13 @@ from codehub.control.coordinator.base import (
     CoordinatorType,
     LeaderElection,
 )
-from codehub.control.coordinator.judge import JudgeInput, JudgeOutput, judge
-from codehub.core.domain.conditions import ConditionInput
+from codehub.control.coordinator.wc_planner import (
+    PlanAction,
+    PlanInput,
+    needs_execute,
+    plan,
+)
 from codehub.core.domain.workspace import (
-    DesiredState,
     ErrorReason,
     Operation,
     Phase,
@@ -49,18 +51,6 @@ logger = logging.getLogger(__name__)
 _settings = get_settings()
 _coordinator_config = _settings.coordinator
 _logging_config = _settings.logging
-
-
-class PlanAction(BaseModel):
-    """Plan 단계 결과."""
-
-    operation: Operation
-    phase: Phase
-    error_reason: ErrorReason | None = None
-    archive_key: str | None = None
-    op_id: str | None = None
-    complete: bool = False  # operation 완료 여부
-    restore_marker: str | None = None  # restore 완료 확인용 marker
 
 
 class WorkspaceController(CoordinatorBase):
@@ -230,199 +220,19 @@ class WorkspaceController(CoordinatorBase):
             clear_trace_context()
 
     def _judge_and_plan(self, ws: Workspace) -> PlanAction:
-        """Judge + Plan (순수 계산, DB 미사용)."""
-        cond_input = ConditionInput.from_conditions(ws.conditions or {})
-        judge_input = JudgeInput(
-            conditions=cond_input,
-            deleted_at=ws.deleted_at is not None,
-        )
-        judge_output = judge(judge_input)
-        return self._plan(ws, judge_output)
+        """Judge + Plan (순수 계산, DB 미사용).
+
+        wc_planner.plan()에 위임합니다.
+        """
+        plan_input = PlanInput.from_workspace(ws)
+        return plan(plan_input, timeout_seconds=self.OPERATION_TIMEOUT)
 
     def _needs_execute(self, action: PlanAction, ws: Workspace) -> bool:
-        """Execute 필요 여부 판단."""
-        if action.operation == Operation.NONE or action.complete:
-            return False
-        # 새 operation 시작 또는 재시도
-        return ws.operation == Operation.NONE or ws.operation == action.operation
+        """Execute 필요 여부 판단.
 
-    def _plan(self, ws: Workspace, judge_output: JudgeOutput) -> PlanAction:
-        """operation 결정 로직.
-
-        Cases:
-        1. operation != NONE → 완료 조건 체크
-        2. phase == ERROR → 대기 (또는 DELETING)
-        3. phase == desired → no-op
-        4. phase != desired → operation 선택
+        wc_planner.needs_execute()에 위임합니다.
         """
-        ws_op = ws.operation
-        ws_desired = ws.desired_state
-
-        # Case 1: 진행 중인 operation
-        if ws_op != Operation.NONE:
-            return self._handle_in_progress(ws, judge_output)
-
-        # Case 2: ERROR 처리
-        if judge_output.phase == Phase.ERROR:
-            if ws_desired == DesiredState.DELETED:
-                return PlanAction(
-                    operation=Operation.DELETING,
-                    phase=Phase.DELETING,
-                    op_id=str(uuid4()),
-                )
-            # ERROR 상태 유지 (수동 복구 필요)
-            return PlanAction(
-                operation=Operation.NONE,
-                phase=Phase.ERROR,
-                error_reason=judge_output.error_reason,
-            )
-
-        # Case 3: 이미 수렴됨
-        target_phase = self._phase_from_desired(ws_desired)
-        if judge_output.phase == target_phase:
-            return PlanAction(
-                operation=Operation.NONE,
-                phase=judge_output.phase,
-            )
-
-        # Case 4: operation 선택
-        operation = self._select_operation(judge_output.phase, ws_desired)
-        if operation == Operation.NONE:
-            return PlanAction(
-                operation=Operation.NONE,
-                phase=judge_output.phase,
-            )
-
-        return PlanAction(
-            operation=operation,
-            phase=judge_output.phase,
-            op_id=str(uuid4()),
-        )
-
-    def _handle_in_progress(self, ws: Workspace, judge_output: JudgeOutput) -> PlanAction:
-        """진행 중인 operation 처리.
-
-        완료 조건:
-        - PROVISIONING: volume_ready
-        - RESTORING: volume_ready
-        - STARTING: container_ready
-        - STOPPING: !container_ready
-        - ARCHIVING: !volume_ready ∧ archive_ready
-        - CREATE_EMPTY_ARCHIVE: archive_ready
-        - DELETING: !container_ready ∧ !volume_ready
-        """
-        ws_op = ws.operation
-
-        # 완료 조건 체크
-        complete = self._check_completion(ws_op, ws)
-
-        if complete:
-            # 완료 → phase 재계산, operation = NONE
-            return PlanAction(
-                operation=Operation.NONE,
-                phase=judge_output.phase,
-                complete=True,
-            )
-
-        # Timeout 체크
-        if ws.op_started_at and self._is_timeout(ws.op_started_at):
-            return PlanAction(
-                operation=Operation.NONE,
-                phase=Phase.ERROR,
-                error_reason=ErrorReason.TIMEOUT,
-            )
-
-        # 진행 중 → 재시도 (멱등)
-        return PlanAction(
-            operation=ws_op,
-            phase=ws.phase,
-            op_id=ws.op_id,
-        )
-
-    def _check_completion(self, operation: Operation, ws: Workspace) -> bool:
-        """operation 완료 조건 체크."""
-        cond = ConditionInput.from_conditions(ws.conditions or {})
-
-        match operation:
-            case Operation.PROVISIONING:
-                return cond.volume_ready
-            case Operation.RESTORING:
-                # Backward compatible: marker 있으면 추가 검증
-                if ws.home_ctx and ws.home_ctx.get("restore_marker"):
-                    return cond.volume_ready and ws.home_ctx["restore_marker"] == ws.archive_key
-                return cond.volume_ready
-            case Operation.STARTING:
-                return cond.container_ready
-            case Operation.STOPPING:
-                return not cond.container_ready
-            case Operation.ARCHIVING:
-                return not cond.volume_ready and cond.archive_ready
-            case Operation.CREATE_EMPTY_ARCHIVE:
-                return cond.archive_ready
-            case Operation.DELETING:
-                return not cond.container_ready and not cond.volume_ready
-            case _:
-                return False
-
-    def _is_timeout(self, op_started_at: datetime) -> bool:
-        """operation timeout 체크."""
-        elapsed = (datetime.now(UTC) - op_started_at).total_seconds()
-        return elapsed > self.OPERATION_TIMEOUT
-
-    def _phase_from_desired(self, desired: DesiredState) -> Phase:
-        """DesiredState → 목표 Phase 변환."""
-        match desired:
-            case DesiredState.RUNNING:
-                return Phase.RUNNING
-            case DesiredState.STANDBY:
-                return Phase.STANDBY
-            case DesiredState.ARCHIVED:
-                return Phase.ARCHIVED
-            case DesiredState.DELETED:
-                return Phase.DELETED
-            case _:
-                return Phase.PENDING
-
-    def _select_operation(self, current_phase: Phase, desired: DesiredState) -> Operation:
-        """현재 phase에서 desired로 가기 위한 operation 선택.
-
-        Operation 선택 테이블 (wc.md):
-        | Phase | desired | Operation |
-        |-------|---------|-----------|
-        | PENDING | ARCHIVED | CREATE_EMPTY_ARCHIVE |
-        | PENDING | STANDBY/RUNNING | PROVISIONING |
-        | ARCHIVED | STANDBY/RUNNING | RESTORING |
-        | STANDBY | RUNNING | STARTING |
-        | RUNNING | STANDBY/ARCHIVED | STOPPING |
-        | STANDBY | ARCHIVED | ARCHIVING |
-        | * | DELETED | DELETING |
-        """
-        # DELETED는 어디서든 DELETING
-        if desired == DesiredState.DELETED:
-            return Operation.DELETING
-
-        match current_phase:
-            case Phase.PENDING:
-                if desired == DesiredState.ARCHIVED:
-                    return Operation.CREATE_EMPTY_ARCHIVE
-                if desired in (DesiredState.STANDBY, DesiredState.RUNNING):
-                    return Operation.PROVISIONING
-
-            case Phase.ARCHIVED:
-                if desired in (DesiredState.STANDBY, DesiredState.RUNNING):
-                    return Operation.RESTORING
-
-            case Phase.STANDBY:
-                if desired == DesiredState.RUNNING:
-                    return Operation.STARTING
-                if desired == DesiredState.ARCHIVED:
-                    return Operation.ARCHIVING
-
-            case Phase.RUNNING:
-                if desired in (DesiredState.STANDBY, DesiredState.ARCHIVED):
-                    return Operation.STOPPING
-
-        return Operation.NONE
+        return needs_execute(action, Operation(ws.operation))
 
     async def _execute(self, ws: Workspace, action: PlanAction) -> None:
         """Actuator 호출.

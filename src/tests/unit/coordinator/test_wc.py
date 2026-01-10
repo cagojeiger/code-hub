@@ -8,7 +8,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from codehub.control.coordinator.wc import PlanAction, WorkspaceController
+from codehub.control.coordinator.wc import WorkspaceController
+from codehub.control.coordinator.wc_planner import (
+    PlanAction,
+    PlanInput,
+    _check_completion,
+    _phase_from_desired,
+    _select_operation,
+    plan,
+)
 from codehub.core.domain.workspace import (
     DesiredState,
     ErrorReason,
@@ -113,98 +121,78 @@ def make_workspace(
 
 
 class TestSelectOperation:
-    """_select_operation() 테스트."""
+    """_select_operation() 테스트 - wc_planner 순수 함수."""
 
-    @pytest.fixture
-    def wc(
-        self,
-        mock_conn: AsyncMock,
-        mock_leader: AsyncMock,
-        mock_subscriber: AsyncMock,
-        mock_ic: AsyncMock,
-        mock_sp: AsyncMock,
-    ) -> WorkspaceController:
-        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
-
-    def test_pending_to_running(self, wc: WorkspaceController):
+    def test_pending_to_running(self):
         """PENDING → RUNNING: PROVISIONING."""
-        op = wc._select_operation(Phase.PENDING, DesiredState.RUNNING)
+        op = _select_operation(Phase.PENDING, DesiredState.RUNNING)
         assert op == Operation.PROVISIONING
 
-    def test_pending_to_standby(self, wc: WorkspaceController):
+    def test_pending_to_standby(self):
         """PENDING → STANDBY: PROVISIONING."""
-        op = wc._select_operation(Phase.PENDING, DesiredState.STANDBY)
+        op = _select_operation(Phase.PENDING, DesiredState.STANDBY)
         assert op == Operation.PROVISIONING
 
-    def test_pending_to_archived(self, wc: WorkspaceController):
+    def test_pending_to_archived(self):
         """PENDING → ARCHIVED: CREATE_EMPTY_ARCHIVE."""
-        op = wc._select_operation(Phase.PENDING, DesiredState.ARCHIVED)
+        op = _select_operation(Phase.PENDING, DesiredState.ARCHIVED)
         assert op == Operation.CREATE_EMPTY_ARCHIVE
 
-    def test_archived_to_running(self, wc: WorkspaceController):
+    def test_archived_to_running(self):
         """ARCHIVED → RUNNING: RESTORING."""
-        op = wc._select_operation(Phase.ARCHIVED, DesiredState.RUNNING)
+        op = _select_operation(Phase.ARCHIVED, DesiredState.RUNNING)
         assert op == Operation.RESTORING
 
-    def test_archived_to_standby(self, wc: WorkspaceController):
+    def test_archived_to_standby(self):
         """ARCHIVED → STANDBY: RESTORING."""
-        op = wc._select_operation(Phase.ARCHIVED, DesiredState.STANDBY)
+        op = _select_operation(Phase.ARCHIVED, DesiredState.STANDBY)
         assert op == Operation.RESTORING
 
-    def test_standby_to_running(self, wc: WorkspaceController):
+    def test_standby_to_running(self):
         """STANDBY → RUNNING: STARTING."""
-        op = wc._select_operation(Phase.STANDBY, DesiredState.RUNNING)
+        op = _select_operation(Phase.STANDBY, DesiredState.RUNNING)
         assert op == Operation.STARTING
 
-    def test_standby_to_archived(self, wc: WorkspaceController):
+    def test_standby_to_archived(self):
         """STANDBY → ARCHIVED: ARCHIVING."""
-        op = wc._select_operation(Phase.STANDBY, DesiredState.ARCHIVED)
+        op = _select_operation(Phase.STANDBY, DesiredState.ARCHIVED)
         assert op == Operation.ARCHIVING
 
-    def test_running_to_standby(self, wc: WorkspaceController):
+    def test_running_to_standby(self):
         """RUNNING → STANDBY: STOPPING."""
-        op = wc._select_operation(Phase.RUNNING, DesiredState.STANDBY)
+        op = _select_operation(Phase.RUNNING, DesiredState.STANDBY)
         assert op == Operation.STOPPING
 
-    def test_running_to_archived(self, wc: WorkspaceController):
+    def test_running_to_archived(self):
         """RUNNING → ARCHIVED: STOPPING (step by step)."""
-        op = wc._select_operation(Phase.RUNNING, DesiredState.ARCHIVED)
+        op = _select_operation(Phase.RUNNING, DesiredState.ARCHIVED)
         assert op == Operation.STOPPING
 
-    def test_any_to_deleted(self, wc: WorkspaceController):
+    def test_any_to_deleted(self):
         """Any phase → DELETED: DELETING."""
         for phase in [Phase.PENDING, Phase.ARCHIVED, Phase.STANDBY, Phase.RUNNING]:
-            op = wc._select_operation(phase, DesiredState.DELETED)
+            op = _select_operation(phase, DesiredState.DELETED)
             assert op == Operation.DELETING
 
 
 class TestCheckCompletion:
-    """_check_completion() 테스트."""
+    """_check_completion() 테스트 - wc_planner 순수 함수."""
 
-    @pytest.fixture
-    def wc(
-        self,
-        mock_conn: AsyncMock,
-        mock_leader: AsyncMock,
-        mock_subscriber: AsyncMock,
-        mock_ic: AsyncMock,
-        mock_sp: AsyncMock,
-    ) -> WorkspaceController:
-        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
-
-    def test_provisioning_complete(self, wc: WorkspaceController):
+    def test_provisioning_complete(self):
         """PROVISIONING 완료: volume_ready=True."""
         ws = make_workspace(
             conditions={"volume": {"exists": True, "reason": "VolumeExists", "message": ""}}
         )
-        assert wc._check_completion(Operation.PROVISIONING, ws) is True
+        plan_input = PlanInput.from_workspace(ws)
+        assert _check_completion(Operation.PROVISIONING, plan_input) is True
 
-    def test_provisioning_incomplete(self, wc: WorkspaceController):
+    def test_provisioning_incomplete(self):
         """PROVISIONING 미완료: volume_ready=False."""
         ws = make_workspace(conditions={})
-        assert wc._check_completion(Operation.PROVISIONING, ws) is False
+        plan_input = PlanInput.from_workspace(ws)
+        assert _check_completion(Operation.PROVISIONING, plan_input) is False
 
-    def test_starting_complete(self, wc: WorkspaceController):
+    def test_starting_complete(self):
         """STARTING 완료: container_ready=True."""
         ws = make_workspace(
             conditions={
@@ -212,16 +200,18 @@ class TestCheckCompletion:
                 "volume": {"exists": True, "reason": "VolumeExists", "message": ""},
             }
         )
-        assert wc._check_completion(Operation.STARTING, ws) is True
+        plan_input = PlanInput.from_workspace(ws)
+        assert _check_completion(Operation.STARTING, plan_input) is True
 
-    def test_stopping_complete(self, wc: WorkspaceController):
+    def test_stopping_complete(self):
         """STOPPING 완료: container_ready=False."""
         ws = make_workspace(
             conditions={"volume": {"exists": True, "reason": "VolumeExists", "message": ""}}
         )
-        assert wc._check_completion(Operation.STOPPING, ws) is True
+        plan_input = PlanInput.from_workspace(ws)
+        assert _check_completion(Operation.STOPPING, plan_input) is True
 
-    def test_archiving_complete(self, wc: WorkspaceController):
+    def test_archiving_complete(self):
         """ARCHIVING 완료: !volume_ready ∧ archive_ready."""
         ws = make_workspace(
             conditions={
@@ -233,29 +223,20 @@ class TestCheckCompletion:
                 }
             }
         )
-        assert wc._check_completion(Operation.ARCHIVING, ws) is True
+        plan_input = PlanInput.from_workspace(ws)
+        assert _check_completion(Operation.ARCHIVING, plan_input) is True
 
-    def test_deleting_complete(self, wc: WorkspaceController):
+    def test_deleting_complete(self):
         """DELETING 완료: !container_ready ∧ !volume_ready."""
         ws = make_workspace(conditions={})
-        assert wc._check_completion(Operation.DELETING, ws) is True
+        plan_input = PlanInput.from_workspace(ws)
+        assert _check_completion(Operation.DELETING, plan_input) is True
 
 
 class TestPlan:
-    """_plan() 테스트."""
+    """plan() 테스트 - wc_planner 순수 함수."""
 
-    @pytest.fixture
-    def wc(
-        self,
-        mock_conn: AsyncMock,
-        mock_leader: AsyncMock,
-        mock_subscriber: AsyncMock,
-        mock_ic: AsyncMock,
-        mock_sp: AsyncMock,
-    ) -> WorkspaceController:
-        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
-
-    def test_already_converged(self, wc: WorkspaceController):
+    def test_already_converged(self):
         """이미 수렴됨 → no-op."""
         ws = make_workspace(
             phase=Phase.RUNNING,
@@ -265,36 +246,26 @@ class TestPlan:
                 "volume": {"exists": True, "reason": "VolumeExists", "message": ""},
             },
         )
-        from codehub.control.coordinator.judge import JudgeInput, JudgeOutput, judge
-        from codehub.core.domain.conditions import ConditionInput
-
-        cond = ConditionInput.from_conditions(ws.conditions)
-        judge_output = judge(JudgeInput(conditions=cond, deleted_at=False))
-
-        action = wc._plan(ws, judge_output)
+        plan_input = PlanInput.from_workspace(ws)
+        action = plan(plan_input)
 
         assert action.operation == Operation.NONE
         assert action.phase == Phase.RUNNING
 
-    def test_need_convergence(self, wc: WorkspaceController):
+    def test_need_convergence(self):
         """수렴 필요 → operation 선택."""
         ws = make_workspace(
             phase=Phase.PENDING,
             desired_state=DesiredState.RUNNING,
             conditions={},
         )
-        from codehub.control.coordinator.judge import JudgeInput, JudgeOutput, judge
-        from codehub.core.domain.conditions import ConditionInput
-
-        cond = ConditionInput.from_conditions(ws.conditions)
-        judge_output = judge(JudgeInput(conditions=cond, deleted_at=False))
-
-        action = wc._plan(ws, judge_output)
+        plan_input = PlanInput.from_workspace(ws)
+        action = plan(plan_input)
 
         assert action.operation == Operation.PROVISIONING
         assert action.op_id is not None
 
-    def test_operation_in_progress_complete(self, wc: WorkspaceController):
+    def test_operation_in_progress_complete(self):
         """진행 중 operation 완료."""
         ws = make_workspace(
             phase=Phase.PENDING,
@@ -304,18 +275,13 @@ class TestPlan:
             op_started_at=datetime.now(UTC),
             op_id="op-1",
         )
-        from codehub.control.coordinator.judge import JudgeInput, judge
-        from codehub.core.domain.conditions import ConditionInput
-
-        cond = ConditionInput.from_conditions(ws.conditions)
-        judge_output = judge(JudgeInput(conditions=cond, deleted_at=False))
-
-        action = wc._plan(ws, judge_output)
+        plan_input = PlanInput.from_workspace(ws)
+        action = plan(plan_input)
 
         assert action.operation == Operation.NONE
         assert action.complete is True
 
-    def test_operation_timeout(self, wc: WorkspaceController):
+    def test_operation_timeout(self):
         """operation timeout → ERROR."""
         ws = make_workspace(
             phase=Phase.PENDING,
@@ -325,19 +291,14 @@ class TestPlan:
             op_started_at=datetime.now(UTC) - timedelta(seconds=400),
             op_id="op-1",
         )
-        from codehub.control.coordinator.judge import JudgeInput, judge
-        from codehub.core.domain.conditions import ConditionInput
-
-        cond = ConditionInput.from_conditions(ws.conditions)
-        judge_output = judge(JudgeInput(conditions=cond, deleted_at=False))
-
-        action = wc._plan(ws, judge_output)
+        plan_input = PlanInput.from_workspace(ws)
+        action = plan(plan_input, timeout_seconds=300)
 
         assert action.operation == Operation.NONE
         assert action.phase == Phase.ERROR
         assert action.error_reason == ErrorReason.TIMEOUT
 
-    def test_error_phase_deleted_desired(self, wc: WorkspaceController):
+    def test_error_phase_deleted_desired(self):
         """ERROR phase + desired=DELETED → DELETING."""
         ws = make_workspace(
             phase=Phase.ERROR,
@@ -347,13 +308,8 @@ class TestPlan:
                 # volume_ready=False → invariant violation
             },
         )
-        from codehub.control.coordinator.judge import JudgeInput, judge
-        from codehub.core.domain.conditions import ConditionInput
-
-        cond = ConditionInput.from_conditions(ws.conditions)
-        judge_output = judge(JudgeInput(conditions=cond, deleted_at=False))
-
-        action = wc._plan(ws, judge_output)
+        plan_input = PlanInput.from_workspace(ws)
+        action = plan(plan_input)
 
         assert action.operation == Operation.DELETING
         assert action.phase == Phase.DELETING
@@ -474,30 +430,19 @@ class TestExecute:
 
 
 class TestPhaseFromDesired:
-    """_phase_from_desired() 테스트."""
+    """_phase_from_desired() 테스트 - wc_planner 순수 함수."""
 
-    @pytest.fixture
-    def wc(
-        self,
-        mock_conn: AsyncMock,
-        mock_leader: AsyncMock,
-        mock_subscriber: AsyncMock,
-        mock_ic: AsyncMock,
-        mock_sp: AsyncMock,
-    ) -> WorkspaceController:
-        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
+    def test_running(self):
+        assert _phase_from_desired(DesiredState.RUNNING) == Phase.RUNNING
 
-    def test_running(self, wc: WorkspaceController):
-        assert wc._phase_from_desired(DesiredState.RUNNING) == Phase.RUNNING
+    def test_standby(self):
+        assert _phase_from_desired(DesiredState.STANDBY) == Phase.STANDBY
 
-    def test_standby(self, wc: WorkspaceController):
-        assert wc._phase_from_desired(DesiredState.STANDBY) == Phase.STANDBY
+    def test_archived(self):
+        assert _phase_from_desired(DesiredState.ARCHIVED) == Phase.ARCHIVED
 
-    def test_archived(self, wc: WorkspaceController):
-        assert wc._phase_from_desired(DesiredState.ARCHIVED) == Phase.ARCHIVED
-
-    def test_deleted(self, wc: WorkspaceController):
-        assert wc._phase_from_desired(DesiredState.DELETED) == Phase.DELETED
+    def test_deleted(self):
+        assert _phase_from_desired(DesiredState.DELETED) == Phase.DELETED
 
 
 class TestTickParallel:
