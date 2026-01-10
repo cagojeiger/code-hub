@@ -83,8 +83,7 @@ class TTLManager(CoordinatorBase):
             wc_channel = f"{_channel_config.wake_prefix}:wc"
             await self._publisher.publish(wc_channel)
             logger.info(
-                "[%s] TTL expired",
-                self.name,
+                "TTL expired",
                 extra={
                     "event": LogEvent.STATE_CHANGED,
                     "standby_expired": standby_expired,
@@ -131,7 +130,7 @@ class TTLManager(CoordinatorBase):
         if updated_ids:
             await self._activity.delete(updated_ids)
 
-        logger.debug("[%s] Synced %d workspace activities to DB", self.name, len(updated_ids))
+        logger.debug("Synced %d workspace activities to DB", len(updated_ids))
         return len(updated_ids)
 
     async def _check_standby_ttl(self) -> int:
@@ -168,8 +167,7 @@ class TTLManager(CoordinatorBase):
 
         if updated_ids:
             logger.info(
-                "[%s] standby_ttl expired",
-                self.name,
+                "standby_ttl expired",
                 extra={
                     "event": LogEvent.STATE_CHANGED,
                     "ttl_type": "standby",
@@ -212,8 +210,7 @@ class TTLManager(CoordinatorBase):
 
         if updated_ids:
             logger.info(
-                "[%s] archive_ttl expired",
-                self.name,
+                "archive_ttl expired",
                 extra={
                     "event": LogEvent.STATE_CHANGED,
                     "ttl_type": "archive",

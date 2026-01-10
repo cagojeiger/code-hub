@@ -143,8 +143,7 @@ class WorkspaceController(CoordinatorBase):
                         )
                     except asyncio.TimeoutError:
                         logger.error(
-                            "[%s] Operation timeout",
-                            self.name,
+                            "Operation timeout",
                             extra={
                                 "event": LogEvent.OPERATION_TIMEOUT,
                                 "ws_id": ws.id,
@@ -156,8 +155,7 @@ class WorkspaceController(CoordinatorBase):
                     except Exception as exc:
                         error_class = classify_error(exc)
                         logger.exception(
-                            "[%s] Operation failed",
-                            self.name,
+                            "Operation failed",
                             extra={
                                 "event": LogEvent.OPERATION_FAILED,
                                 "ws_id": ws.id,
@@ -184,8 +182,7 @@ class WorkspaceController(CoordinatorBase):
                         action_counts[action.operation.value] += 1
                 except Exception as exc:
                     logger.exception(
-                        "[%s] Failed to persist",
-                        self.name,
+                        "Failed to persist",
                         extra={
                             "event": LogEvent.OPERATION_FAILED,
                             "ws_id": ws.id,
@@ -198,8 +195,7 @@ class WorkspaceController(CoordinatorBase):
             # Log reconcile result with structured fields and stage durations
             duration_ms = (time.monotonic() - tick_start) * 1000
             logger.info(
-                "[%s] Reconcile completed",
-                self.name,
+                "Reconcile completed",
                 extra={
                     "event": LogEvent.RECONCILE_COMPLETE,
                     "tick_id": tick_id,
@@ -217,8 +213,7 @@ class WorkspaceController(CoordinatorBase):
             # Slow reconcile warning (SLO threat detection)
             if duration_ms > _logging_config.slow_threshold_ms:
                 logger.warning(
-                    "[%s] Slow reconcile detected",
-                    self.name,
+                    "Slow reconcile detected",
                     extra={
                         "event": LogEvent.RECONCILE_SLOW,
                         "tick_id": tick_id,
@@ -525,15 +520,13 @@ class WorkspaceController(CoordinatorBase):
 
         if not success:
             logger.debug(
-                "[%s] CAS failed, will retry next tick",
-                self.name,
+                "CAS failed, will retry next tick",
                 extra={"ws_id": ws.id, "expected_op": ws_op.value},
             )
         elif action.phase != Phase(ws.phase) or action.operation != Operation.NONE:
             # Log state changes (phase change or operation in progress)
             logger.info(
-                "[%s] State changed",
-                self.name,
+                "State changed",
                 extra={
                     "event": LogEvent.STATE_CHANGED,
                     "ws_id": ws.id,

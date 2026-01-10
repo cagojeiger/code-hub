@@ -98,7 +98,7 @@ class CoordinatorBase(ABC):
 
     def accelerate(self) -> None:
         self._active_until = time.time() + self.ACTIVE_DURATION
-        logger.info("[%s] Accelerating for %.0fs", self.name, self.ACTIVE_DURATION)
+        logger.info("Accelerating for %.0fs", self.ACTIVE_DURATION)
 
     def _get_interval(self) -> float:
         return self.ACTIVE_INTERVAL if self.is_active else self.IDLE_INTERVAL
@@ -117,7 +117,7 @@ class CoordinatorBase(ABC):
         try:
             await self._conn.rollback()
         except Exception as e:
-            logger.warning("[%s] Rollback failed: %s", self.name, e)
+            logger.warning("Rollback failed: %s", e)
 
     @abstractmethod
     async def tick(self) -> None:
@@ -127,11 +127,7 @@ class CoordinatorBase(ABC):
     async def run(self) -> None:
         """Main coordinator loop."""
         self._running = True
-        logger.info(
-            "[%s] Starting coordinator",
-            self.name,
-            extra={"event": LogEvent.APP_STARTED},
-        )
+        logger.info("Starting coordinator", extra={"event": LogEvent.APP_STARTED})
 
         try:
             while self._running:
@@ -157,7 +153,7 @@ class CoordinatorBase(ABC):
         try:
             acquired = await self._leader.try_acquire()
         except Exception as e:
-            logger.warning("[%s] Error acquiring leadership: %s", self.name, e)
+            logger.warning("Error acquiring leadership: %s", e)
             await self._safe_rollback()
             acquired = False
 
@@ -173,8 +169,7 @@ class CoordinatorBase(ABC):
         if self._waiting_since is not None:
             wait_seconds = now - self._waiting_since
             logger.info(
-                "[%s] Leadership acquired after waiting",
-                self.name,
+                "Leadership acquired after waiting",
                 extra={
                     "event": LogEvent.LEADERSHIP_ACQUIRED,
                     "wait_seconds": round(wait_seconds, 1),
@@ -201,7 +196,7 @@ class CoordinatorBase(ABC):
         """Execute tick. Returns False if cancelled or leadership lost."""
         # P6: Verify leadership before tick to detect Split Brain early
         if not await self._leader.verify_holding():
-            logger.warning("[%s] Leadership lost before tick - skipping", self.name)
+            logger.warning("Leadership lost before tick - skipping")
             await self._release_subscription()
             return True  # Continue loop to re-acquire leadership
 
@@ -212,7 +207,7 @@ class CoordinatorBase(ABC):
         except asyncio.CancelledError:
             return False
         except Exception as e:
-            logger.exception("[%s] Error in tick: %s", self.name, e)
+            logger.exception("Error in tick: %s", e)
             await self._safe_rollback()
             self._last_tick = time.time()
             return True
@@ -230,7 +225,7 @@ class CoordinatorBase(ABC):
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            logger.warning("[%s] Error checking notify: %s", self.name, e)
+            logger.warning("Error checking notify: %s", e)
             await asyncio.sleep(interval)
 
     async def _release_subscription(self) -> None:
@@ -239,18 +234,14 @@ class CoordinatorBase(ABC):
             try:
                 await self._subscriber.unsubscribe()
             except Exception as e:
-                logger.warning("[%s] Error unsubscribing: %s", self.name, e)
+                logger.warning("Error unsubscribing: %s", e)
             self._subscribed = False
 
     async def _cleanup(self) -> None:
         """Cleanup on shutdown."""
-        logger.info(
-            "[%s] Cleaning up",
-            self.name,
-            extra={"event": LogEvent.APP_STOPPED},
-        )
+        logger.info("Cleaning up", extra={"event": LogEvent.APP_STOPPED})
         await self._release_subscription()
         try:
             await self._leader.release()
         except Exception as e:
-            logger.warning("[%s] Error releasing leadership: %s", self.name, e)
+            logger.warning("Error releasing leadership: %s", e)

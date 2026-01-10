@@ -107,14 +107,14 @@ class EventListener:
             self._database_url,
             autocommit=True,
         )
-        logger.info("[%s] Connected to PostgreSQL (psycopg3 for LISTEN)", self._log_prefix)
+        logger.info("Connected to PostgreSQL (psycopg3 for LISTEN)")
 
         # 2. SQLAlchemy connection (Advisory Lock + SELECT)
         # Convert postgresql:// to postgresql+asyncpg:// for SQLAlchemy async
         sa_url = self._database_url.replace("postgresql://", "postgresql+asyncpg://")
         self._engine = create_async_engine(sa_url)
         self._sa_conn = await self._engine.connect()
-        logger.info("[%s] Connected to PostgreSQL (SQLAlchemy for queries)", self._log_prefix)
+        logger.info("Connected to PostgreSQL (SQLAlchemy for queries)")
 
         # 3. Use SQLAlchemyLeaderElection (same as other Coordinators)
         leader = SQLAlchemyLeaderElection(self._sa_conn, self.LOCK_KEY)
@@ -127,17 +127,12 @@ class EventListener:
             if not self._running:
                 return
 
-            logger.info("[%s] Acquired leadership", self._log_prefix)
+            logger.info("Acquired leadership")
 
             # Register LISTEN channels (psycopg3 only!)
             await self._notify_conn.execute(f"LISTEN {self.CHANNEL_SSE}")
             await self._notify_conn.execute(f"LISTEN {self.CHANNEL_WAKE}")
-            logger.info(
-                "[%s] Listening to %s, %s",
-                self._log_prefix,
-                self.CHANNEL_SSE,
-                self.CHANNEL_WAKE,
-            )
+            logger.info("Listening to %s, %s", self.CHANNEL_SSE, self.CHANNEL_WAKE)
 
             # Start worker task
             worker_task = asyncio.create_task(self._worker_loop())
@@ -148,8 +143,7 @@ class EventListener:
                     if not self._running:
                         break
                     logger.info(
-                        "[%s] NOTIFY received",
-                        self._log_prefix,
+                        "NOTIFY received",
                         extra={
                             "event": LogEvent.NOTIFY_RECEIVED,
                             "channel": notify.channel,
@@ -164,9 +158,9 @@ class EventListener:
                     pass
 
         except asyncio.CancelledError:
-            logger.info("[%s] Cancelled, cleaning up", self._log_prefix)
+            logger.info("Cancelled, cleaning up")
         except Exception as e:
-            logger.exception("[%s] Error: %s", self._log_prefix, e)
+            logger.exception("Error: %s", e)
         finally:
             await self._close_connections()
 
@@ -180,7 +174,7 @@ class EventListener:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.exception("[%s] Worker error: %s", self._log_prefix, e)
+                logger.exception("Worker error: %s", e)
 
     async def _close_connections(self) -> None:
         """Close all connections."""
@@ -193,7 +187,7 @@ class EventListener:
         if self._engine:
             await self._engine.dispose()
             self._engine = None
-        logger.info("[%s] Stopped", self._log_prefix)
+        logger.info("Stopped")
 
     async def _dispatch(self, channel: str, payload: str) -> None:
         """Dispatch event to appropriate handler."""
@@ -203,7 +197,7 @@ class EventListener:
             elif channel == self.CHANNEL_WAKE:
                 await self._handle_wake()
         except Exception as e:
-            logger.exception("[%s] Error handling %s: %s", self._log_prefix, channel, e)
+            logger.exception("Error handling %s: %s", channel, e)
 
     def stop(self) -> None:
         """Stop the event listener."""
@@ -221,30 +215,21 @@ class EventListener:
             workspace_id = data.get("id")
             user_id = data.get("owner_user_id")
             if not workspace_id or not user_id:
-                logger.warning(
-                    "[%s] SSE payload missing id or owner_user_id: %s",
-                    self._log_prefix,
-                    payload,
-                )
+                logger.warning("SSE payload missing id or owner_user_id: %s", payload)
                 return
 
             # Query DB for full workspace data (using SQLAlchemy connection)
             workspace_data = await self._fetch_workspace(workspace_id)
             if workspace_data is None:
                 # Hard deleted - skip (no notification needed)
-                logger.debug(
-                    "[%s] SSE workspace not found (hard deleted): %s",
-                    self._log_prefix,
-                    workspace_id,
-                )
+                logger.debug("SSE workspace not found (hard deleted): %s", workspace_id)
                 return
 
             # Publish full workspace data (including deleted_at for soft deletes)
             channel = f"{_channel_config.sse_prefix}:{user_id}"
             await self._publisher.publish(channel, json.dumps(workspace_data))
             logger.info(
-                "[%s] SSE published",
-                self._log_prefix,
+                "SSE published",
                 extra={
                     "event": LogEvent.SSE_PUBLISHED,
                     "user_id": user_id,
@@ -253,11 +238,9 @@ class EventListener:
                 },
             )
         except json.JSONDecodeError as e:
-            logger.warning(
-                "[%s] Invalid SSE payload: %s (%s)", self._log_prefix, payload, e
-            )
+            logger.warning("Invalid SSE payload: %s (%s)", payload, e)
         except Exception as e:
-            logger.exception("[%s] SSE error: %s", self._log_prefix, e)
+            logger.exception("SSE error: %s", e)
 
     async def _fetch_workspace(self, workspace_id: str) -> dict | None:
         """Fetch workspace data from DB using SQLAlchemy connection.
@@ -266,7 +249,7 @@ class EventListener:
             Workspace data as dict, or None if not found.
         """
         if self._sa_conn is None:
-            logger.error("[%s] DB connection not available", self._log_prefix)
+            logger.error("DB connection not available")
             return None
 
         result = await self._sa_conn.execute(
@@ -308,8 +291,7 @@ class EventListener:
                 self._publisher.publish(wc_channel),
             )
             logger.info(
-                "[%s] Wake published",
-                self._log_prefix,
+                "Wake published",
                 extra={
                     "event": LogEvent.WAKE_PUBLISHED,
                     "ob_count": ob_count,
@@ -317,4 +299,4 @@ class EventListener:
                 },
             )
         except Exception as e:
-            logger.exception("[%s] Wake error: %s", self._log_prefix, e)
+            logger.exception("Wake error: %s", e)

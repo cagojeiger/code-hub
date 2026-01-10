@@ -49,14 +49,14 @@ class BulkObserver:
             return await asyncio.wait_for(coro, timeout=self._timeout_s)
         except asyncio.TimeoutError:
             logger.warning(
-                "[BulkObserver] %s timeout (%.1fs)",
+                "%s timeout (%.1fs)",
                 name, self._timeout_s,
                 extra={"operation": name, "error_type": "timeout", "timeout_s": self._timeout_s},
             )
             return None
         except Exception as exc:
             logger.exception(
-                "[BulkObserver] %s failed: %s",
+                "%s failed: %s",
                 name, exc,
                 extra={"operation": name, "error_type": type(exc).__name__},
             )
@@ -113,13 +113,13 @@ class ObserverCoordinator(CoordinatorBase):
 
         # 하나라도 실패 → skip (상태 일관성 보장, 다음 tick에서 재시도)
         if any(x is None for x in [containers, volumes, archives]):
-            logger.warning("[%s] Observation failed, skipping tick", self.name)
+            logger.warning("Observation failed, skipping tick")
             return
 
         # Orphan 경고 (DB에 없는데 리소스 있음 → GC 대상)
         observed_ws_ids = set(containers) | set(volumes) | set(archives)
         for ws_id in observed_ws_ids - ws_ids:
-            logger.warning("[%s] Orphan ws_id=%s", self.name, ws_id)
+            logger.warning("Orphan ws_id=%s", ws_id)
 
         # Detect disappeared containers (critical for OOM/crash diagnosis)
         current_container_ids = set(containers.keys())
@@ -129,8 +129,7 @@ class ObserverCoordinator(CoordinatorBase):
                 # Only warn if the workspace still exists (not deleted)
                 if ws_id in ws_ids:
                     logger.warning(
-                        "[%s] Container disappeared",
-                        self.name,
+                        "Container disappeared",
                         extra={
                             "event": LogEvent.CONTAINER_DISAPPEARED,
                             "ws_id": ws_id,
@@ -150,8 +149,7 @@ class ObserverCoordinator(CoordinatorBase):
         # 1시간마다 heartbeat (변화 없어도 "살아있음" 확인)
         if now - self._last_heartbeat >= 3600:
             logger.info(
-                "[%s] Heartbeat",
-                self.name,
+                "Heartbeat",
                 extra={
                     "event": LogEvent.OBSERVATION_COMPLETE,
                     "workspaces": count,
@@ -165,8 +163,7 @@ class ObserverCoordinator(CoordinatorBase):
             self._prev_state = current_state
         elif current_state != self._prev_state:
             logger.info(
-                "[%s] Observation completed",
-                self.name,
+                "Observation completed",
                 extra={
                     "event": LogEvent.OBSERVATION_COMPLETE,
                     "workspaces": count,
@@ -181,8 +178,7 @@ class ObserverCoordinator(CoordinatorBase):
         # Slow observation warning (SLO threat detection)
         if duration_ms > _logging_config.slow_threshold_ms:
             logger.warning(
-                "[%s] Slow observation detected",
-                self.name,
+                "Slow observation detected",
                 extra={
                     "event": LogEvent.RECONCILE_SLOW,
                     "duration_ms": duration_ms,
