@@ -373,6 +373,321 @@ class TestErrorClassifier:
         assert cb1 is cb2
         assert cb1._error_classifier is first_classifier
 
+    @pytest.mark.asyncio
+    async def test_permanent_after_transient_burst(self) -> None:
+        """Scenario 2.2: Permanent errors followed by transient burst should open circuit."""
+
+        def classifier(exc: Exception) -> str:
+            if isinstance(exc, ValueError):
+                return "permanent"
+            return "retryable"
+
+        cb = CircuitBreaker(
+            name="test_perm_then_trans",
+            failure_threshold=5,
+            error_classifier=classifier,
+        )
+
+        async def raise_permanent() -> str:
+            raise ValueError("permanent - 404")
+
+        async def raise_transient() -> str:
+            raise RuntimeError("transient - 503")
+
+        # 2 permanent errors (should not count)
+        for _ in range(2):
+            with pytest.raises(ValueError):
+                await cb.call(raise_permanent)
+
+        assert cb._failure_count == 0
+        assert cb.state == CircuitState.CLOSED
+
+        # 5 transient errors (should open circuit)
+        for _ in range(5):
+            with pytest.raises(RuntimeError):
+                await cb.call(raise_transient)
+
+        assert cb._failure_count == 5
+        assert cb.state == CircuitState.OPEN
+
+    @pytest.mark.asyncio
+    async def test_permanent_in_middle_of_transients(self) -> None:
+        """Scenario 2.3: Permanent error in middle should not reset failure count."""
+
+        def classifier(exc: Exception) -> str:
+            if isinstance(exc, ValueError):
+                return "permanent"
+            return "retryable"
+
+        cb = CircuitBreaker(
+            name="test_perm_middle",
+            failure_threshold=5,
+            error_classifier=classifier,
+        )
+
+        async def raise_permanent() -> str:
+            raise ValueError("permanent")
+
+        async def raise_transient() -> str:
+            raise RuntimeError("transient")
+
+        # 2 transient errors
+        for _ in range(2):
+            with pytest.raises(RuntimeError):
+                await cb.call(raise_transient)
+        assert cb._failure_count == 2
+
+        # 1 permanent error (should not affect failure_count)
+        with pytest.raises(ValueError):
+            await cb.call(raise_permanent)
+        assert cb._failure_count == 2  # Still 2, not reset, not incremented
+
+        # 3 more transient errors (total 5)
+        for _ in range(3):
+            with pytest.raises(RuntimeError):
+                await cb.call(raise_transient)
+
+        assert cb._failure_count == 5
+        assert cb.state == CircuitState.OPEN
+
+    @pytest.mark.asyncio
+    async def test_permanent_in_half_open_state(self) -> None:
+        """Scenario 3.1: Permanent error in HALF_OPEN should not reopen circuit."""
+
+        def classifier(exc: Exception) -> str:
+            if isinstance(exc, ValueError):
+                return "permanent"
+            return "retryable"
+
+        cb = CircuitBreaker(
+            name="test_perm_half_open",
+            failure_threshold=2,
+            success_threshold=2,
+            timeout=0.1,
+            error_classifier=classifier,
+        )
+
+        async def raise_transient() -> str:
+            raise RuntimeError("transient")
+
+        async def raise_permanent() -> str:
+            raise ValueError("permanent")
+
+        # Trip the circuit with transient errors
+        for _ in range(2):
+            with pytest.raises(RuntimeError):
+                await cb.call(raise_transient)
+        assert cb.state == CircuitState.OPEN
+
+        # Wait for timeout → HALF_OPEN
+        await asyncio.sleep(0.15)
+
+        # Permanent error in HALF_OPEN should NOT reopen circuit
+        with pytest.raises(ValueError):
+            await cb.call(raise_permanent)
+
+        # Should still be HALF_OPEN (not OPEN)
+        assert cb.state == CircuitState.HALF_OPEN
+
+    @pytest.mark.asyncio
+    async def test_half_open_success_then_permanent(self) -> None:
+        """Scenario 3.2: Permanent after success in HALF_OPEN should not reset success_count."""
+
+        def classifier(exc: Exception) -> str:
+            if isinstance(exc, ValueError):
+                return "permanent"
+            return "retryable"
+
+        cb = CircuitBreaker(
+            name="test_half_open_success_perm",
+            failure_threshold=2,
+            success_threshold=2,
+            timeout=0.1,
+            error_classifier=classifier,
+        )
+
+        async def raise_transient() -> str:
+            raise RuntimeError("transient")
+
+        async def raise_permanent() -> str:
+            raise ValueError("permanent")
+
+        async def success() -> str:
+            return "ok"
+
+        # Trip the circuit
+        for _ in range(2):
+            with pytest.raises(RuntimeError):
+                await cb.call(raise_transient)
+        assert cb.state == CircuitState.OPEN
+
+        # Wait for HALF_OPEN
+        await asyncio.sleep(0.15)
+
+        # 1 success
+        await cb.call(success)
+        assert cb._success_count == 1
+        assert cb.state == CircuitState.HALF_OPEN
+
+        # Permanent error should not affect success_count
+        with pytest.raises(ValueError):
+            await cb.call(raise_permanent)
+        assert cb._success_count == 1  # Still 1
+        assert cb.state == CircuitState.HALF_OPEN
+
+        # 1 more success should close circuit
+        await cb.call(success)
+        assert cb.state == CircuitState.CLOSED
+
+    @pytest.mark.asyncio
+    async def test_success_resets_then_permanent_then_transient(self) -> None:
+        """Scenario 4.1: Success resets count, permanent doesn't affect, transient counts."""
+
+        def classifier(exc: Exception) -> str:
+            if isinstance(exc, ValueError):
+                return "permanent"
+            return "retryable"
+
+        cb = CircuitBreaker(
+            name="test_success_perm_trans",
+            failure_threshold=5,
+            error_classifier=classifier,
+        )
+
+        async def raise_transient() -> str:
+            raise RuntimeError("transient")
+
+        async def raise_permanent() -> str:
+            raise ValueError("permanent")
+
+        async def success() -> str:
+            return "ok"
+
+        # 2 transient errors
+        for _ in range(2):
+            with pytest.raises(RuntimeError):
+                await cb.call(raise_transient)
+        assert cb._failure_count == 2
+
+        # Success resets failure count
+        await cb.call(success)
+        assert cb._failure_count == 0
+
+        # Permanent error doesn't affect
+        with pytest.raises(ValueError):
+            await cb.call(raise_permanent)
+        assert cb._failure_count == 0
+
+        # 5 transient errors should open circuit
+        for _ in range(5):
+            with pytest.raises(RuntimeError):
+                await cb.call(raise_transient)
+
+        assert cb._failure_count == 5
+        assert cb.state == CircuitState.OPEN
+
+    @pytest.mark.asyncio
+    async def test_permanent_just_before_threshold(self) -> None:
+        """Scenario 6.1: Permanent at threshold-1 should not prevent next transient from opening."""
+
+        def classifier(exc: Exception) -> str:
+            if isinstance(exc, ValueError):
+                return "permanent"
+            return "retryable"
+
+        cb = CircuitBreaker(
+            name="test_perm_before_threshold",
+            failure_threshold=5,
+            error_classifier=classifier,
+        )
+
+        async def raise_transient() -> str:
+            raise RuntimeError("transient")
+
+        async def raise_permanent() -> str:
+            raise ValueError("permanent")
+
+        # 4 transient errors (one before threshold)
+        for _ in range(4):
+            with pytest.raises(RuntimeError):
+                await cb.call(raise_transient)
+        assert cb._failure_count == 4
+        assert cb.state == CircuitState.CLOSED
+
+        # Permanent error at position 5 (should not count)
+        with pytest.raises(ValueError):
+            await cb.call(raise_permanent)
+        assert cb._failure_count == 4  # Still 4
+        assert cb.state == CircuitState.CLOSED
+
+        # Next transient should open circuit (5th failure)
+        with pytest.raises(RuntimeError):
+            await cb.call(raise_transient)
+        assert cb._failure_count == 5
+        assert cb.state == CircuitState.OPEN
+
+    @pytest.mark.asyncio
+    async def test_unknown_error_counts_as_failure(self) -> None:
+        """Scenario 6.2: Unknown errors should count as failures (safe default)."""
+
+        def classifier(exc: Exception) -> str:
+            if isinstance(exc, ValueError):
+                return "permanent"
+            if isinstance(exc, RuntimeError):
+                return "retryable"
+            return "unknown"  # KeyError, etc.
+
+        cb = CircuitBreaker(
+            name="test_unknown",
+            failure_threshold=3,
+            error_classifier=classifier,
+        )
+
+        async def raise_unknown() -> str:
+            raise KeyError("unknown error type")
+
+        # 3 unknown errors should open circuit
+        for _ in range(3):
+            with pytest.raises(KeyError):
+                await cb.call(raise_unknown)
+
+        assert cb._failure_count == 3
+        assert cb.state == CircuitState.OPEN
+
+    @pytest.mark.asyncio
+    async def test_transient_in_half_open_reopens_circuit(self) -> None:
+        """Verify transient error in HALF_OPEN still reopens circuit (regression check)."""
+
+        def classifier(exc: Exception) -> str:
+            if isinstance(exc, ValueError):
+                return "permanent"
+            return "retryable"
+
+        cb = CircuitBreaker(
+            name="test_trans_half_open",
+            failure_threshold=2,
+            timeout=0.1,
+            error_classifier=classifier,
+        )
+
+        async def raise_transient() -> str:
+            raise RuntimeError("transient")
+
+        # Trip the circuit
+        for _ in range(2):
+            with pytest.raises(RuntimeError):
+                await cb.call(raise_transient)
+        assert cb.state == CircuitState.OPEN
+
+        # Wait for HALF_OPEN
+        await asyncio.sleep(0.15)
+
+        # Transient error in HALF_OPEN should reopen circuit
+        with pytest.raises(RuntimeError):
+            await cb.call(raise_transient)
+
+        assert cb.state == CircuitState.OPEN
+
 
 class TestJitter:
     """Tests for jitter in retry delay calculation."""

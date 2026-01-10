@@ -418,3 +418,194 @@ class TestWithRetryCircuitBreaker:
         # Circuit should be open
         cb = get_circuit_breaker("test_connect")
         assert cb.state == CircuitState.OPEN
+
+    @pytest.mark.asyncio
+    async def test_real_scenario_deleted_workspace_does_not_block_others(self) -> None:
+        """Scenario 5.1: Deleted workspace (404) should not block other workspaces."""
+        call_log: list[str] = []
+
+        async def start_deleted_workspace() -> str:
+            call_log.append("deleted")
+            request = httpx.Request("POST", "http://docker/containers/deleted/start")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("not found", request=request, response=response)
+
+        async def start_normal_workspace() -> str:
+            call_log.append("normal")
+            return "started"
+
+        # Simulate: deleted workspace start attempts interleaved with normal ones
+        # t1: start(deleted) → 404
+        with pytest.raises(httpx.HTTPStatusError):
+            await with_retry(start_deleted_workspace, max_retries=0, circuit_breaker="scenario_5_1")
+
+        # t2: start(normal) → should succeed (circuit not affected by 404)
+        result = await with_retry(start_normal_workspace, max_retries=0, circuit_breaker="scenario_5_1")
+        assert result == "started"
+
+        # t3-t6: more deleted workspace attempts
+        for _ in range(4):
+            with pytest.raises(httpx.HTTPStatusError):
+                await with_retry(start_deleted_workspace, max_retries=0, circuit_breaker="scenario_5_1")
+
+        # t7: normal workspace should STILL work (5x 404 didn't open circuit)
+        result = await with_retry(start_normal_workspace, max_retries=0, circuit_breaker="scenario_5_1")
+        assert result == "started"
+
+        cb = get_circuit_breaker("scenario_5_1")
+        assert cb.state == CircuitState.CLOSED
+        assert cb._failure_count == 0
+        assert call_log == ["deleted", "normal", "deleted", "deleted", "deleted", "deleted", "normal"]
+
+    @pytest.mark.asyncio
+    async def test_real_scenario_docker_outage_opens_circuit(self) -> None:
+        """Scenario 5.2: Docker server outage (503) should open circuit."""
+        call_count = 0
+
+        async def start_workspace_during_outage() -> str:
+            nonlocal call_count
+            call_count += 1
+            request = httpx.Request("POST", "http://docker/containers/ws/start")
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError("service unavailable", request=request, response=response)
+
+        # 5 failures should open circuit
+        for _ in range(5):
+            with pytest.raises(httpx.HTTPStatusError):
+                await with_retry(start_workspace_during_outage, max_retries=0, circuit_breaker="scenario_5_2")
+
+        cb = get_circuit_breaker("scenario_5_2")
+        assert cb.state == CircuitState.OPEN
+        assert call_count == 5
+
+        # 6th call should be rejected by circuit breaker (not reach Docker)
+        from codehub.core.circuit_breaker import CircuitOpenError
+        with pytest.raises(CircuitOpenError):
+            await with_retry(start_workspace_during_outage, max_retries=0, circuit_breaker="scenario_5_2")
+
+        # Call count should still be 5 (circuit rejected before calling)
+        assert call_count == 5
+
+    @pytest.mark.asyncio
+    async def test_real_scenario_mixed_deleted_and_outage(self) -> None:
+        """Scenario 5.3: Mixed 404 (deleted) and 503 (outage) - only 503 affects circuit."""
+
+        async def raise_404() -> str:
+            request = httpx.Request("POST", "http://docker/containers/deleted/start")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("not found", request=request, response=response)
+
+        async def raise_503() -> str:
+            request = httpx.Request("POST", "http://docker/containers/normal/start")
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError("service unavailable", request=request, response=response)
+
+        # t1: deleted workspace → 404 (no effect)
+        with pytest.raises(httpx.HTTPStatusError):
+            await with_retry(raise_404, max_retries=0, circuit_breaker="scenario_5_3")
+
+        # t2-t3: Docker outage starts → 503
+        for _ in range(2):
+            with pytest.raises(httpx.HTTPStatusError):
+                await with_retry(raise_503, max_retries=0, circuit_breaker="scenario_5_3")
+
+        cb = get_circuit_breaker("scenario_5_3")
+        assert cb._failure_count == 2  # Only 503s counted
+
+        # t4: deleted workspace again → 404 (still no effect)
+        with pytest.raises(httpx.HTTPStatusError):
+            await with_retry(raise_404, max_retries=0, circuit_breaker="scenario_5_3")
+        assert cb._failure_count == 2
+
+        # t5-t7: more 503s
+        for _ in range(3):
+            with pytest.raises(httpx.HTTPStatusError):
+                await with_retry(raise_503, max_retries=0, circuit_breaker="scenario_5_3")
+
+        assert cb._failure_count == 5
+        assert cb.state == CircuitState.OPEN
+
+    @pytest.mark.asyncio
+    async def test_real_scenario_recovery_after_outage(self) -> None:
+        """Full recovery scenario: CLOSED → OPEN → HALF_OPEN → CLOSED."""
+        success_count = 0
+
+        async def raise_503() -> str:
+            request = httpx.Request("POST", "http://docker/containers/ws/start")
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError("service unavailable", request=request, response=response)
+
+        async def success() -> str:
+            nonlocal success_count
+            success_count += 1
+            return "started"
+
+        # Use short timeout for test
+        reset_all_circuit_breakers()
+        cb = get_circuit_breaker("scenario_recovery", error_classifier=classify_error)
+        cb.timeout = 0.1
+        cb.success_threshold = 2
+
+        # Phase 1: Outage → Circuit opens
+        for _ in range(5):
+            with pytest.raises(httpx.HTTPStatusError):
+                await with_retry(raise_503, max_retries=0, circuit_breaker="scenario_recovery")
+        assert cb.state == CircuitState.OPEN
+
+        # Phase 2: Wait for HALF_OPEN
+        await asyncio.sleep(0.15)
+
+        # Phase 3: Recovery - 2 successes close circuit
+        await with_retry(success, max_retries=0, circuit_breaker="scenario_recovery")
+        assert cb.state == CircuitState.HALF_OPEN  # Need 2 successes
+
+        await with_retry(success, max_retries=0, circuit_breaker="scenario_recovery")
+        assert cb.state == CircuitState.CLOSED
+        assert success_count == 2
+
+    @pytest.mark.asyncio
+    async def test_real_scenario_404_during_recovery(self) -> None:
+        """404 during HALF_OPEN recovery should not reset progress."""
+
+        async def raise_503() -> str:
+            request = httpx.Request("POST", "http://docker/containers/ws/start")
+            response = httpx.Response(503, request=request)
+            raise httpx.HTTPStatusError("service unavailable", request=request, response=response)
+
+        async def raise_404() -> str:
+            request = httpx.Request("POST", "http://docker/containers/deleted/start")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("not found", request=request, response=response)
+
+        async def success() -> str:
+            return "started"
+
+        reset_all_circuit_breakers()
+        cb = get_circuit_breaker("scenario_404_recovery", error_classifier=classify_error)
+        cb.timeout = 0.1
+        cb.failure_threshold = 2
+        cb.success_threshold = 2
+
+        # Trip the circuit
+        for _ in range(2):
+            with pytest.raises(httpx.HTTPStatusError):
+                await with_retry(raise_503, max_retries=0, circuit_breaker="scenario_404_recovery")
+        assert cb.state == CircuitState.OPEN
+
+        # Wait for HALF_OPEN
+        await asyncio.sleep(0.15)
+
+        # 1 success
+        await with_retry(success, max_retries=0, circuit_breaker="scenario_404_recovery")
+        assert cb._success_count == 1
+        assert cb.state == CircuitState.HALF_OPEN
+
+        # 404 during recovery (should not affect progress)
+        with pytest.raises(httpx.HTTPStatusError):
+            await with_retry(raise_404, max_retries=0, circuit_breaker="scenario_404_recovery")
+        assert cb._success_count == 1  # Still 1
+        assert cb.state == CircuitState.HALF_OPEN  # Still HALF_OPEN
+
+        # 1 more success closes circuit
+        await with_retry(success, max_retries=0, circuit_breaker="scenario_404_recovery")
+        assert cb.state == CircuitState.CLOSED
