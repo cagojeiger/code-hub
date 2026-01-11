@@ -475,12 +475,12 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le, coordinator) (rate(codehub_coordinator_reconcile_duration_seconds_bucket[1h])))",
+          "expr": "histogram_quantile(0.99, sum by (le, coordinator) (rate(codehub_coordinator_reconcile_duration_seconds_bucket[$__range])))",
           "legendFormat": "{{ coordinator }}",
           "refId": "A"
         }
       ],
-      "title": "Reconcile p99 [1h]",
+      "title": "Reconcile p99",
       "type": "bargauge"
     },
     {
@@ -703,7 +703,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[1h])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[$__range])))",
           "legendFormat": "load (DB)",
           "refId": "A"
         },
@@ -712,7 +712,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_observe_duration_seconds_bucket[1h])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_observe_duration_seconds_bucket[$__range])))",
           "legendFormat": "observe (API)",
           "refId": "B"
         },
@@ -721,12 +721,12 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_update_duration_seconds_bucket[1h])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_update_duration_seconds_bucket[$__range])))",
           "legendFormat": "update (DB)",
           "refId": "C"
         }
       ],
-      "title": "Observer Stage p99 [1h]",
+      "title": "Observer Stage p99",
       "type": "bargauge"
     },
     {
@@ -825,7 +825,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_load_duration_seconds_bucket[1h])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_load_duration_seconds_bucket[$__range])))",
           "legendFormat": "load (DB)",
           "refId": "A"
         },
@@ -834,7 +834,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_plan_duration_seconds_bucket[1h])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_plan_duration_seconds_bucket[$__range])))",
           "legendFormat": "plan (CPU)",
           "refId": "B"
         },
@@ -843,7 +843,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[1h])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[$__range])))",
           "legendFormat": "execute (API)",
           "refId": "C"
         },
@@ -852,12 +852,12 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_persist_duration_seconds_bucket[1h])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_persist_duration_seconds_bucket[$__range])))",
           "legendFormat": "persist (DB)",
           "refId": "D"
         }
       ],
-      "title": "WC Stage p99 [1h]",
+      "title": "WC Stage p99",
       "type": "bargauge"
     },
     {
@@ -984,12 +984,12 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le, operation) (rate(codehub_wc_operation_duration_seconds_bucket[1h])))",
+          "expr": "histogram_quantile(0.99, sum by (le, operation) (rate(codehub_wc_operation_duration_seconds_bucket[$__range])))",
           "legendFormat": "{{ operation }}",
           "refId": "A"
         }
       ],
-      "title": "WC Operation p99 [1h]",
+      "title": "WC Operation p99",
       "type": "bargauge"
     },
     {
@@ -1781,7 +1781,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[$__range])))",
               "legendFormat": "p50",
               "refId": "A"
             },
@@ -1790,7 +1790,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[$__range])))",
               "legendFormat": "p95",
               "refId": "B"
             },
@@ -1799,12 +1799,12 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[$__range])))",
               "legendFormat": "p99",
               "refId": "C"
             }
           ],
-          "title": "Observer Stage [1h]",
+          "title": "Observer Stage Stats",
           "type": "stat"
         },
         {
@@ -1939,7 +1939,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_observer_api_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_observer_api_duration_seconds_bucket[$__range])))",
               "legendFormat": "p50",
               "refId": "A"
             },
@@ -1948,7 +1948,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_observer_api_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_observer_api_duration_seconds_bucket[$__range])))",
               "legendFormat": "p95",
               "refId": "B"
             },
@@ -1957,12 +1957,12 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_api_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_api_duration_seconds_bucket[$__range])))",
               "legendFormat": "p99",
               "refId": "C"
             }
           ],
-          "title": "Observer API [1h]",
+          "title": "Observer API Stats",
           "type": "stat"
         }
       ],
@@ -2111,7 +2111,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[$__range])))",
               "legendFormat": "p50",
               "refId": "A"
             },
@@ -2120,7 +2120,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[$__range])))",
               "legendFormat": "p95",
               "refId": "B"
             },
@@ -2129,12 +2129,12 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[$__range])))",
               "legendFormat": "p99",
               "refId": "C"
             }
           ],
-          "title": "WC Stage [1h]",
+          "title": "WC Stage Stats",
           "type": "stat"
         },
         {
@@ -2269,7 +2269,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_wc_operation_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_wc_operation_duration_seconds_bucket[$__range])))",
               "legendFormat": "p50",
               "refId": "A"
             },
@@ -2278,7 +2278,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_wc_operation_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_wc_operation_duration_seconds_bucket[$__range])))",
               "legendFormat": "p95",
               "refId": "B"
             },
@@ -2287,12 +2287,12 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_operation_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_operation_duration_seconds_bucket[$__range])))",
               "legendFormat": "p99",
               "refId": "C"
             }
           ],
-          "title": "WC Operation [1h]",
+          "title": "WC Operation Stats",
           "type": "stat"
         }
       ],
@@ -2532,7 +2532,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_ttl_sync_redis_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_ttl_sync_redis_duration_seconds_bucket[$__range])))",
               "legendFormat": "p50",
               "refId": "A"
             },
@@ -2541,7 +2541,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_ttl_sync_redis_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_ttl_sync_redis_duration_seconds_bucket[$__range])))",
               "legendFormat": "p95",
               "refId": "B"
             },
@@ -2550,12 +2550,12 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_ttl_sync_redis_duration_seconds_bucket[1h])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_ttl_sync_redis_duration_seconds_bucket[$__range])))",
               "legendFormat": "p99",
               "refId": "C"
             }
           ],
-          "title": "TTL Sync [1h]",
+          "title": "TTL Sync Stats",
           "type": "stat"
         },
         {

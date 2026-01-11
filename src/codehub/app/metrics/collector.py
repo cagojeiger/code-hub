@@ -94,7 +94,10 @@ WS_MESSAGE_LATENCY = Histogram(
     "codehub_ws_message_latency_seconds",
     "WebSocket message relay latency",
     ["direction"],
-    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0),
+    buckets=(
+        0.0005, 0.001, 0.002, 0.005, 0.008, 0.015, 0.03, 0.05,
+        0.08, 0.15, 0.3, 0.5, 0.8, 1.5, 3.0, 6.0, 10.0,
+    ),
 )
 
 WS_ERRORS = Counter(
@@ -119,7 +122,10 @@ COORDINATOR_RECONCILE_DURATION = Histogram(
     "codehub_coordinator_reconcile_duration_seconds",
     "Duration of coordinator reconcile cycle execution",
     ["coordinator"],
-    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0),
+    buckets=(
+        0.008, 0.015, 0.03, 0.05, 0.08, 0.15, 0.3, 0.5,
+        0.8, 1.5, 3.0, 5.0, 8.0, 15.0, 30.0, 45.0, 60.0,
+    ),
 )
 
 COORDINATOR_IS_LEADER = Gauge(
@@ -162,26 +168,38 @@ OBSERVER_ARCHIVES = Gauge(
 OBSERVER_LOAD_DURATION = Histogram(
     "codehub_observer_load_duration_seconds",
     "Duration to load workspace IDs from DB",
-    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0),
+    buckets=(
+        0.002, 0.004, 0.006, 0.01, 0.015, 0.025, 0.04, 0.06,
+        0.1, 0.15, 0.25, 0.4, 0.6, 1.0, 1.5, 2.5, 4.0,
+    ),
 )
 
 OBSERVER_OBSERVE_DURATION = Histogram(
     "codehub_observer_observe_duration_seconds",
     "Duration of parallel API observation (containers, volumes, archives)",
-    buckets=(0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0),
+    buckets=(
+        0.015, 0.03, 0.05, 0.08, 0.12, 0.2, 0.35, 0.6,
+        1.0, 1.5, 2.5, 4.0, 6.0, 10.0, 18.0, 30.0, 45.0,
+    ),
 )
 
 OBSERVER_UPDATE_DURATION = Histogram(
     "codehub_observer_update_duration_seconds",
     "Duration of bulk workspace conditions update",
-    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0),
+    buckets=(
+        0.002, 0.004, 0.006, 0.01, 0.015, 0.025, 0.04, 0.06,
+        0.1, 0.15, 0.25, 0.4, 0.6, 1.0, 1.5, 2.5, 4.0,
+    ),
 )
 
 OBSERVER_API_DURATION = Histogram(
     "codehub_observer_api_duration_seconds",
     "Duration of individual observation API calls",
     ["api"],  # containers, volumes, archives
-    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0),
+    buckets=(
+        0.015, 0.03, 0.05, 0.08, 0.12, 0.2, 0.35, 0.6,
+        1.0, 1.5, 2.5, 4.0, 6.0, 10.0, 18.0, 30.0, 45.0,
+    ),
 )
 
 # =============================================================================
@@ -191,20 +209,28 @@ OBSERVER_API_DURATION = Histogram(
 WC_LOAD_DURATION = Histogram(
     "codehub_wc_load_duration_seconds",
     "Duration to load workspaces from DB",
-    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0),
+    buckets=(
+        0.002, 0.004, 0.006, 0.01, 0.015, 0.025, 0.04, 0.06,
+        0.1, 0.15, 0.25, 0.4, 0.6, 1.0, 1.5, 2.5, 4.0,
+    ),
 )
 
 WC_PLAN_DURATION = Histogram(
     "codehub_wc_plan_duration_seconds",
     "Duration of judge + plan computation",
-    # Buckets start at 1ms - microsecond precision is unreliable due to OS jitter
-    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0),
+    buckets=(
+        0.00005, 0.0001, 0.0002, 0.0004, 0.0007, 0.001, 0.0015, 0.0025,
+        0.004, 0.006, 0.01, 0.015, 0.025, 0.04, 0.06, 0.1, 0.15,
+    ),
 )
 
 WC_EXECUTE_DURATION = Histogram(
     "codehub_wc_execute_duration_seconds",
     "Duration of parallel execution (Docker/S3)",
-    buckets=(0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0),
+    buckets=(
+        0.015, 0.03, 0.05, 0.08, 0.12, 0.2, 0.35, 0.6,
+        1.0, 1.5, 2.5, 4.0, 6.0, 10.0, 18.0, 30.0, 45.0,
+    ),
 )
 
 # Operation-level metrics for detailed latency analysis
@@ -212,13 +238,19 @@ WC_OPERATION_DURATION = Histogram(
     "codehub_wc_operation_duration_seconds",
     "Duration of WC operations",
     ["operation"],  # STARTING, STOPPING, PROVISIONING, DELETING, CREATE_EMPTY_ARCHIVE, ARCHIVING, RESTORING
-    buckets=(0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0),
+    buckets=(
+        0.015, 0.03, 0.06, 0.1, 0.18, 0.3, 0.5, 0.8,
+        1.5, 3.0, 6.0, 12.0, 25.0, 45.0, 80.0, 120.0, 180.0,
+    ),
 )
 
 WC_PERSIST_DURATION = Histogram(
     "codehub_wc_persist_duration_seconds",
     "Duration of CAS persist to DB",
-    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0),
+    buckets=(
+        0.002, 0.004, 0.006, 0.01, 0.015, 0.025, 0.04, 0.06,
+        0.1, 0.15, 0.25, 0.4, 0.6, 1.0, 1.5, 2.5, 4.0,
+    ),
 )
 
 WC_CAS_FAILURES_TOTAL = Counter(
@@ -241,13 +273,19 @@ TTL_EXPIRATIONS_TOTAL = Counter(
 TTL_SYNC_REDIS_DURATION = Histogram(
     "codehub_ttl_sync_redis_duration_seconds",
     "Duration to scan activities from Redis",
-    buckets=(0.005, 0.01, 0.05, 0.1, 0.5, 1.0),
+    buckets=(
+        0.0005, 0.001, 0.002, 0.003, 0.005, 0.008, 0.012, 0.02,
+        0.03, 0.05, 0.08, 0.12, 0.2, 0.35, 0.6, 1.0, 2.0,
+    ),
 )
 
 TTL_SYNC_DB_DURATION = Histogram(
     "codehub_ttl_sync_db_duration_seconds",
     "Duration to bulk update activities to DB",
-    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0),
+    buckets=(
+        0.001, 0.002, 0.004, 0.006, 0.01, 0.015, 0.025, 0.04,
+        0.06, 0.1, 0.15, 0.25, 0.4, 0.6, 1.0, 1.5, 2.5,
+    ),
 )
 
 # =============================================================================
