@@ -329,8 +329,8 @@ CIRCUIT_BREAKER_REJECTIONS_TOTAL = Counter(
     ["circuit"],
 )
 
-EXTERNAL_CALL_ERRORS_TOTAL = Counter(
-    "codehub_external_call_errors_total",
+CIRCUIT_BREAKER_ERRORS_TOTAL = Counter(
+    "codehub_circuit_breaker_errors_total",
     "Total external call errors by type",
     ["error_type"],  # retryable, permanent, unknown, circuit_open
 )
@@ -355,10 +355,10 @@ def _init_metrics() -> None:
     CIRCUIT_BREAKER_REJECTIONS_TOTAL.labels(circuit="external")
 
     # External Call Errors
-    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="retryable")
-    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="permanent")
-    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="unknown")
-    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="circuit_open")
+    CIRCUIT_BREAKER_ERRORS_TOTAL.labels(error_type="retryable")
+    CIRCUIT_BREAKER_ERRORS_TOTAL.labels(error_type="permanent")
+    CIRCUIT_BREAKER_ERRORS_TOTAL.labels(error_type="unknown")
+    CIRCUIT_BREAKER_ERRORS_TOTAL.labels(error_type="circuit_open")
 
     # TTL Expirations (may never happen if workspaces are active)
     TTL_EXPIRATIONS_TOTAL.labels(transition="running_to_standby")
