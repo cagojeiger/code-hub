@@ -23,9 +23,14 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from codehub.app.config import get_settings
 from codehub.app.logging import clear_trace_context, set_trace_id
 from codehub.app.metrics.collector import (
+    WC_CAS_FAILURES_TOTAL,
     WC_ERRORS_TOTAL,
+    WC_EXECUTE_DURATION,
+    WC_LOAD_DURATION,
     WC_OPERATION_DURATION,
     WC_OPERATIONS_TOTAL,
+    WC_PERSIST_DURATION,
+    WC_PLAN_DURATION,
 )
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
@@ -107,7 +112,9 @@ class WorkspaceController(CoordinatorBase):
             # Stage 1: Load (DB)
             load_start = time.monotonic()
             workspaces = await self._load_for_reconcile()
-            load_ms = (time.monotonic() - load_start) * 1000
+            load_duration = time.monotonic() - load_start
+            load_ms = load_duration * 1000
+            WC_LOAD_DURATION.observe(load_duration)
 
             if not workspaces:
                 return  # No reconciliation needed - skip logging for idle state
@@ -118,7 +125,9 @@ class WorkspaceController(CoordinatorBase):
             for ws in workspaces:
                 action = self._judge_and_plan(ws)
                 plans.append((ws, action))
-            plan_ms = (time.monotonic() - plan_start) * 1000
+            plan_duration = time.monotonic() - plan_start
+            plan_ms = plan_duration * 1000
+            WC_PLAN_DURATION.observe(plan_duration)
 
             # Stage 3: Execute 병렬 (Docker/S3 - DB 미사용!)
             exec_start = time.monotonic()
@@ -175,7 +184,9 @@ class WorkspaceController(CoordinatorBase):
                 *[execute_one(ws, action) for ws, action in plans],
                 return_exceptions=False,  # 개별 예외 처리됨
             )
-            exec_ms = (time.monotonic() - exec_start) * 1000
+            exec_duration = time.monotonic() - exec_start
+            exec_ms = exec_duration * 1000
+            WC_EXECUTE_DURATION.observe(exec_duration)
 
             # Stage 4: Persist 순차 (DB - ADR-012 준수)
             persist_start = time.monotonic()
@@ -195,7 +206,9 @@ class WorkspaceController(CoordinatorBase):
                             "error_class": "transient",
                         },
                     )
-            persist_ms = (time.monotonic() - persist_start) * 1000
+            persist_duration = time.monotonic() - persist_start
+            persist_ms = persist_duration * 1000
+            WC_PERSIST_DURATION.observe(persist_duration)
 
             # Log reconcile result only when state changes OR hourly heartbeat
             duration_ms = (time.monotonic() - tick_start) * 1000
@@ -353,6 +366,7 @@ class WorkspaceController(CoordinatorBase):
         await self._conn.commit()
 
         if not success:
+            WC_CAS_FAILURES_TOTAL.inc()
             logger.debug(
                 "CAS failed, will retry next tick",
                 extra={"ws_id": ws.id, "expected_op": ws_op.value},

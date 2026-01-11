@@ -143,7 +143,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_coordinator_tick_total[5m]) * 60",
+          "expr": "rate(codehub_coordinator_tick_total[1m]) * 60",
           "legendFormat": "{{ coordinator }}",
           "refId": "A"
         }
@@ -192,7 +192,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_coordinator_tick_duration_seconds_sum[5m]) / rate(codehub_coordinator_tick_duration_seconds_count[5m])",
+          "expr": "rate(codehub_coordinator_tick_duration_seconds_sum[1m]) / rate(codehub_coordinator_tick_duration_seconds_count[1m])",
           "legendFormat": "{{ coordinator }}",
           "refId": "A"
         }
@@ -247,7 +247,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_event_notify_received_total[5m]) * 60",
+          "expr": "rate(codehub_event_notify_received_total[1m]) * 60",
           "legendFormat": "{{ channel }}",
           "refId": "A"
         }
@@ -296,13 +296,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_event_sse_published_total[5m]) * 60",
+          "expr": "rate(codehub_event_sse_published_total[1m]) * 60",
           "legendFormat": "SSE",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_event_wake_published_total[5m]) * 60",
+          "expr": "rate(codehub_event_wake_published_total[1m]) * 60",
           "legendFormat": "Wake ({{ target }})",
           "refId": "B"
         }
@@ -351,7 +351,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_coordinator_wake_received_total[5m]) * 60",
+          "expr": "rate(codehub_coordinator_wake_received_total[1m]) * 60",
           "legendFormat": "{{ coordinator }}",
           "refId": "A"
         }
@@ -443,7 +443,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_event_errors_total[5m]) * 60",
+          "expr": "rate(codehub_event_errors_total[1m]) * 60",
           "legendFormat": "{{ operation }}",
           "refId": "A"
         }
@@ -642,19 +642,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_observer_load_duration_seconds_sum[5m]) / rate(codehub_observer_load_duration_seconds_count[5m])",
+          "expr": "rate(codehub_observer_load_duration_seconds_sum[1m]) / rate(codehub_observer_load_duration_seconds_count[1m])",
           "legendFormat": "load (DB)",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_observer_observe_duration_seconds_sum[5m]) / rate(codehub_observer_observe_duration_seconds_count[5m])",
+          "expr": "rate(codehub_observer_observe_duration_seconds_sum[1m]) / rate(codehub_observer_observe_duration_seconds_count[1m])",
           "legendFormat": "observe (API)",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_observer_update_duration_seconds_sum[5m]) / rate(codehub_observer_update_duration_seconds_count[5m])",
+          "expr": "rate(codehub_observer_update_duration_seconds_sum[1m]) / rate(codehub_observer_update_duration_seconds_count[1m])",
           "legendFormat": "update (DB)",
           "refId": "C"
         }
@@ -703,19 +703,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_observer_api_duration_seconds_sum{api=\"containers\"}[5m]) / rate(codehub_observer_api_duration_seconds_count{api=\"containers\"}[5m])",
+          "expr": "rate(codehub_observer_api_duration_seconds_sum{api=\"containers\"}[1m]) / rate(codehub_observer_api_duration_seconds_count{api=\"containers\"}[1m])",
           "legendFormat": "containers",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_observer_api_duration_seconds_sum{api=\"volumes\"}[5m]) / rate(codehub_observer_api_duration_seconds_count{api=\"volumes\"}[5m])",
+          "expr": "rate(codehub_observer_api_duration_seconds_sum{api=\"volumes\"}[1m]) / rate(codehub_observer_api_duration_seconds_count{api=\"volumes\"}[1m])",
           "legendFormat": "volumes",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_observer_api_duration_seconds_sum{api=\"archives\"}[5m]) / rate(codehub_observer_api_duration_seconds_count{api=\"archives\"}[5m])",
+          "expr": "rate(codehub_observer_api_duration_seconds_sum{api=\"archives\"}[1m]) / rate(codehub_observer_api_duration_seconds_count{api=\"archives\"}[1m])",
           "legendFormat": "archives",
           "refId": "C"
         }
@@ -770,7 +770,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_wc_operations_total[5m]) * 60",
+          "expr": "(rate(codehub_wc_operations_total[1m]) * 60) or vector(0)",
           "legendFormat": "{{ operation }}",
           "refId": "A"
         }
@@ -819,7 +819,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_wc_errors_total[5m]) * 60",
+          "expr": "rate(codehub_wc_errors_total[1m]) * 60",
           "legendFormat": "{{ error_class }}",
           "refId": "A"
         }
@@ -868,7 +868,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_wc_operation_duration_seconds_sum[5m]) / rate(codehub_wc_operation_duration_seconds_count[5m])",
+          "expr": "(rate(codehub_wc_operation_duration_seconds_sum[1m]) / rate(codehub_wc_operation_duration_seconds_count[1m])) or vector(0)",
           "legendFormat": "{{ operation }}",
           "refId": "A"
         }
@@ -877,7 +877,74 @@
       "type": "timeseries"
     },
     {
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 },
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "description": "WC 각 단계별 소요 시간 (load, plan, execute, persist)",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 49 },
+      "id": 23,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "rate(codehub_wc_load_duration_seconds_sum[1m]) / rate(codehub_wc_load_duration_seconds_count[1m])",
+          "legendFormat": "load (DB)",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "rate(codehub_wc_plan_duration_seconds_sum[1m]) / rate(codehub_wc_plan_duration_seconds_count[1m])",
+          "legendFormat": "plan (CPU)",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "rate(codehub_wc_execute_duration_seconds_sum[1m]) / rate(codehub_wc_execute_duration_seconds_count[1m])",
+          "legendFormat": "execute (API)",
+          "refId": "C"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "rate(codehub_wc_persist_duration_seconds_sum[1m]) / rate(codehub_wc_persist_duration_seconds_count[1m])",
+          "legendFormat": "persist (DB)",
+          "refId": "D"
+        }
+      ],
+      "title": "WC Stage Duration",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 54 },
       "id": 400,
       "title": "TTL Manager",
       "type": "row"
@@ -913,7 +980,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 40 },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 55 },
       "id": 30,
       "options": {
         "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true },
@@ -923,7 +990,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "increase(codehub_ttl_expirations_total[5m])",
+          "expr": "increase(codehub_ttl_expirations_total[1m])",
           "legendFormat": "{{ transition }}",
           "refId": "A"
         }
@@ -962,7 +1029,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 40 },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 55 },
       "id": 31,
       "options": {
         "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true },
@@ -972,7 +1039,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_ttl_activity_synced_total[5m]) * 60",
+          "expr": "rate(codehub_ttl_activity_synced_total[1m]) * 60",
           "legendFormat": "synced/min",
           "refId": "A"
         }

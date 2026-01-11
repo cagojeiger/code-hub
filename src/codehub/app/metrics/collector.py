@@ -208,6 +208,36 @@ WC_ERRORS_TOTAL = Counter(
     ["error_class"],
 )
 
+# WC stage durations (like Observer)
+WC_LOAD_DURATION = Histogram(
+    "codehub_wc_load_duration_seconds",
+    "Duration to load workspaces from DB",
+    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0),
+)
+
+WC_PLAN_DURATION = Histogram(
+    "codehub_wc_plan_duration_seconds",
+    "Duration of judge + plan computation",
+    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0),
+)
+
+WC_EXECUTE_DURATION = Histogram(
+    "codehub_wc_execute_duration_seconds",
+    "Duration of parallel execution (Docker/S3)",
+    buckets=(0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 120.0),
+)
+
+WC_PERSIST_DURATION = Histogram(
+    "codehub_wc_persist_duration_seconds",
+    "Duration of CAS persist to DB",
+    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0),
+)
+
+WC_CAS_FAILURES_TOTAL = Counter(
+    "codehub_wc_cas_failures_total",
+    "Total CAS update failures",
+)
+
 # =============================================================================
 # TTL Manager Metrics
 # =============================================================================
