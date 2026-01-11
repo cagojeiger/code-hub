@@ -30,10 +30,15 @@ from codehub.app.proxy.activity import get_activity_buffer
 from codehub.app.proxy.client import close_http_client
 from codehub.app.metrics import setup_metrics, get_metrics_response
 from codehub.app.metrics.collector import (
-    DB_UP,
-    DB_POOL_CHECKEDIN,
-    DB_POOL_CHECKEDOUT,
-    DB_POOL_OVERFLOW,
+    POSTGRESQL_CONNECTED_WORKERS,
+    POSTGRESQL_POOL_ACTIVE,
+    POSTGRESQL_POOL_IDLE,
+    POSTGRESQL_POOL_OVERFLOW,
+    POSTGRESQL_POOL_TOTAL,
+    REDIS_CONNECTED_WORKERS,
+    REDIS_POOL_ACTIVE,
+    REDIS_POOL_IDLE,
+    REDIS_POOL_TOTAL,
 )
 from codehub.control.coordinator import (
     ArchiveGC,
@@ -294,17 +299,49 @@ async def health():
     }
 
 
-def _update_db_pool_metrics() -> None:
-    """Update database pool metrics."""
+def _update_postgresql_pool_metrics() -> None:
+    """Update PostgreSQL pool metrics.
+
+    prometheus_client automatically adds pid label with multiprocess_mode="all".
+    Prometheus adds instance label when scraping.
+    Combined: instance + pid uniquely identifies each worker.
+    """
     try:
         engine = get_engine()
         pool = engine.pool
-        DB_UP.set(1)
-        DB_POOL_CHECKEDIN.set(pool.checkedin())
-        DB_POOL_CHECKEDOUT.set(pool.checkedout())
-        DB_POOL_OVERFLOW.set(pool.overflow())
+        idle = pool.checkedin()
+        active = pool.checkedout()
+        overflow = pool.overflow()
+
+        POSTGRESQL_CONNECTED_WORKERS.set(1)
+        POSTGRESQL_POOL_IDLE.set(idle)
+        POSTGRESQL_POOL_ACTIVE.set(active)
+        POSTGRESQL_POOL_TOTAL.set(idle + active)
+        POSTGRESQL_POOL_OVERFLOW.set(overflow)
     except Exception:
-        DB_UP.set(0)
+        POSTGRESQL_CONNECTED_WORKERS.set(0)
+
+
+def _update_redis_pool_metrics() -> None:
+    """Update Redis pool metrics.
+
+    prometheus_client automatically adds pid label with multiprocess_mode="all".
+    Prometheus adds instance label when scraping.
+    """
+    try:
+        client = get_redis()
+        pool = client.connection_pool
+
+        # redis-py ConnectionPool internal attributes
+        idle = len(pool._available_connections)
+        active = len(pool._in_use_connections)
+
+        REDIS_CONNECTED_WORKERS.set(1)
+        REDIS_POOL_IDLE.set(idle)
+        REDIS_POOL_ACTIVE.set(active)
+        REDIS_POOL_TOTAL.set(idle + active)
+    except Exception:
+        REDIS_CONNECTED_WORKERS.set(0)
 
 
 async def _metrics_updater_loop() -> None:
@@ -315,7 +352,8 @@ async def _metrics_updater_loop() -> None:
     """
     interval = get_settings().metrics.update_interval
     while True:
-        _update_db_pool_metrics()
+        _update_postgresql_pool_metrics()
+        _update_redis_pool_metrics()
         await asyncio.sleep(interval)
 
 
