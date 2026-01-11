@@ -102,3 +102,98 @@ WS_ERRORS = Counter(
     "WebSocket connection errors",
     ["error_type"],
 )
+
+# =============================================================================
+# Coordinator Metrics (Control Plane)
+# =============================================================================
+# These metrics track coordinator health and performance
+# Only the leader coordinator updates these metrics
+
+COORDINATOR_TICK_TOTAL = Counter(
+    "codehub_coordinator_tick_total",
+    "Total number of coordinator ticks executed",
+    ["coordinator"],
+)
+
+COORDINATOR_TICK_DURATION = Histogram(
+    "codehub_coordinator_tick_duration_seconds",
+    "Duration of coordinator tick execution",
+    ["coordinator"],
+    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0),
+)
+
+COORDINATOR_IS_LEADER = Gauge(
+    "codehub_coordinator_is_leader",
+    "Whether this instance is the leader (1) or not (0)",
+    ["coordinator"],
+    multiprocess_mode="livesum",
+)
+
+# =============================================================================
+# Observer Metrics
+# =============================================================================
+# Resource counts from ObserverCoordinator observations
+
+OBSERVER_WORKSPACES = Gauge(
+    "codehub_observer_workspaces_total",
+    "Number of workspaces observed",
+    multiprocess_mode="livesum",
+)
+
+OBSERVER_CONTAINERS = Gauge(
+    "codehub_observer_containers_total",
+    "Number of containers observed",
+    multiprocess_mode="livesum",
+)
+
+OBSERVER_VOLUMES = Gauge(
+    "codehub_observer_volumes_total",
+    "Number of volumes observed",
+    multiprocess_mode="livesum",
+)
+
+OBSERVER_ARCHIVES = Gauge(
+    "codehub_observer_archives_total",
+    "Number of archives observed",
+    multiprocess_mode="livesum",
+)
+
+# =============================================================================
+# WorkspaceController Metrics
+# =============================================================================
+# Operation execution tracking
+
+WC_OPERATIONS_TOTAL = Counter(
+    "codehub_wc_operations_total",
+    "Total workspace operations executed",
+    ["operation"],
+)
+
+WC_OPERATION_DURATION = Histogram(
+    "codehub_wc_operation_duration_seconds",
+    "Duration of workspace operations",
+    ["operation"],
+    buckets=(0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 120.0),
+)
+
+WC_ERRORS_TOTAL = Counter(
+    "codehub_wc_errors_total",
+    "Total workspace operation errors",
+    ["error_class"],
+)
+
+# =============================================================================
+# TTL Manager Metrics
+# =============================================================================
+# TTL expiration and activity sync tracking
+
+TTL_EXPIRATIONS_TOTAL = Counter(
+    "codehub_ttl_expirations_total",
+    "Total TTL expirations (phase transitions)",
+    ["transition"],
+)
+
+TTL_ACTIVITY_SYNCED_TOTAL = Counter(
+    "codehub_ttl_activity_synced_total",
+    "Total activities synced from Redis to DB",
+)

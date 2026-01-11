@@ -13,6 +13,11 @@ from enum import StrEnum
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 
 from codehub.app.config import get_settings
+from codehub.app.metrics.collector import (
+    COORDINATOR_IS_LEADER,
+    COORDINATOR_TICK_DURATION,
+    COORDINATOR_TICK_TOTAL,
+)
 from codehub.core.interfaces.leader import LeaderElection
 from codehub.core.logging_schema import LogEvent
 from codehub.infra.redis_pubsub import ChannelSubscriber
@@ -167,6 +172,7 @@ class CoordinatorBase(ABC):
             acquired = False
 
         if not acquired:
+            COORDINATOR_IS_LEADER.labels(coordinator=self.COORDINATOR_TYPE).set(0)
             await self._release_subscription()
             # Track waiting state for LEADERSHIP_ACQUIRED log
             if self._waiting_since is None:
@@ -174,7 +180,8 @@ class CoordinatorBase(ABC):
             await asyncio.sleep(self.LEADER_RETRY_INTERVAL)
             return False
 
-        # Leadership acquired - reset waiting state and log
+        # Leadership acquired - update metric, reset waiting state and log
+        COORDINATOR_IS_LEADER.labels(coordinator=self.COORDINATOR_TYPE).set(1)
         if self._waiting_since is not None:
             wait_seconds = now - self._waiting_since
             logger.info(
@@ -212,9 +219,14 @@ class CoordinatorBase(ABC):
             await self._release_subscription()
             return True  # Continue loop to re-acquire leadership
 
+        start_time = time.time()
         try:
             await self.tick()
             self._last_tick = time.time()
+            # Record metrics on successful tick
+            duration = self._last_tick - start_time
+            COORDINATOR_TICK_TOTAL.labels(coordinator=self.COORDINATOR_TYPE).inc()
+            COORDINATOR_TICK_DURATION.labels(coordinator=self.COORDINATOR_TYPE).observe(duration)
             return True
         except asyncio.CancelledError:
             return False

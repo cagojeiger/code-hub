@@ -18,6 +18,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
+from codehub.app.metrics.collector import (
+    TTL_ACTIVITY_SYNCED_TOTAL,
+    TTL_EXPIRATIONS_TOTAL,
+)
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
     CoordinatorBase,
@@ -70,13 +74,19 @@ class TTLManager(CoordinatorBase):
     async def tick(self) -> None:
         """TTL check loop - all bulk operations."""
         # 1. Redis → DB 동기화
-        await self._sync_to_db()
+        synced = await self._sync_to_db()
+        if synced > 0:
+            TTL_ACTIVITY_SYNCED_TOTAL.inc(synced)
 
         # 2. standby_ttl 체크 (RUNNING → STANDBY)
         standby_expired = await self._check_standby_ttl()
+        if standby_expired > 0:
+            TTL_EXPIRATIONS_TOTAL.labels(transition="standby").inc(standby_expired)
 
         # 3. archive_ttl 체크 (STANDBY → ARCHIVED)
         archive_expired = await self._check_archive_ttl()
+        if archive_expired > 0:
+            TTL_EXPIRATIONS_TOTAL.labels(transition="archive").inc(archive_expired)
 
         # WC 깨우기 (expired 있으면)
         if standby_expired or archive_expired:

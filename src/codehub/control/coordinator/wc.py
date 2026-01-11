@@ -22,6 +22,11 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
 from codehub.app.logging import clear_trace_context, set_trace_id
+from codehub.app.metrics.collector import (
+    WC_ERRORS_TOTAL,
+    WC_OPERATION_DURATION,
+    WC_OPERATIONS_TOTAL,
+)
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
     CoordinatorBase,
@@ -122,6 +127,7 @@ class WorkspaceController(CoordinatorBase):
                 ws: Workspace, action: PlanAction
             ) -> tuple[Workspace, PlanAction]:
                 if self._needs_execute(action, ws):
+                    op_start = time.monotonic()
                     try:
                         # with_retry handles transient errors with exponential backoff
                         await asyncio.wait_for(
@@ -134,7 +140,12 @@ class WorkspaceController(CoordinatorBase):
                             ),
                             timeout=self.OPERATION_TIMEOUT,
                         )
+                        # Record successful operation metrics
+                        op_duration = time.monotonic() - op_start
+                        WC_OPERATIONS_TOTAL.labels(operation=action.operation.value).inc()
+                        WC_OPERATION_DURATION.labels(operation=action.operation.value).observe(op_duration)
                     except asyncio.TimeoutError:
+                        WC_ERRORS_TOTAL.labels(error_class="timeout").inc()
                         logger.error(
                             "Operation timeout",
                             extra={
@@ -147,6 +158,7 @@ class WorkspaceController(CoordinatorBase):
                         )
                     except Exception as exc:
                         error_class = classify_error(exc)
+                        WC_ERRORS_TOTAL.labels(error_class=error_class).inc()
                         logger.exception(
                             "Operation failed",
                             extra={

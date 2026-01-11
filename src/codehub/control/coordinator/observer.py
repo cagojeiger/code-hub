@@ -19,6 +19,12 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
+from codehub.app.metrics.collector import (
+    OBSERVER_ARCHIVES,
+    OBSERVER_CONTAINERS,
+    OBSERVER_VOLUMES,
+    OBSERVER_WORKSPACES,
+)
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
     CoordinatorBase,
@@ -152,6 +158,12 @@ class ObserverCoordinator(CoordinatorBase):
 
         count = await self._bulk_update_conditions(ws_ids, containers, volumes, archives)
         await self._conn.commit()
+
+        # Update metrics
+        OBSERVER_WORKSPACES.set(count)
+        OBSERVER_CONTAINERS.set(len(containers))
+        OBSERVER_VOLUMES.set(len(volumes))
+        OBSERVER_ARCHIVES.set(len(archives))
 
         duration_ms = (time.monotonic() - tick_start) * 1000
 
