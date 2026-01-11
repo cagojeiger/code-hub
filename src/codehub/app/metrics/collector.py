@@ -158,6 +158,32 @@ OBSERVER_ARCHIVES = Gauge(
     multiprocess_mode="livesum",
 )
 
+# Observer operation durations
+OBSERVER_LOAD_DURATION = Histogram(
+    "codehub_observer_load_duration_seconds",
+    "Duration to load workspace IDs from DB",
+    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0),
+)
+
+OBSERVER_OBSERVE_DURATION = Histogram(
+    "codehub_observer_observe_duration_seconds",
+    "Duration of parallel API observation (containers, volumes, archives)",
+    buckets=(0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0),
+)
+
+OBSERVER_UPDATE_DURATION = Histogram(
+    "codehub_observer_update_duration_seconds",
+    "Duration of bulk workspace conditions update",
+    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0),
+)
+
+OBSERVER_API_DURATION = Histogram(
+    "codehub_observer_api_duration_seconds",
+    "Duration of individual observation API calls",
+    ["api"],  # containers, volumes, archives
+    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0),
+)
+
 # =============================================================================
 # WorkspaceController Metrics
 # =============================================================================

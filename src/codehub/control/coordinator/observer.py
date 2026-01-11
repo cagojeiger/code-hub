@@ -20,8 +20,12 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
 from codehub.app.metrics.collector import (
+    OBSERVER_API_DURATION,
     OBSERVER_ARCHIVES,
     OBSERVER_CONTAINERS,
+    OBSERVER_LOAD_DURATION,
+    OBSERVER_OBSERVE_DURATION,
+    OBSERVER_UPDATE_DURATION,
     OBSERVER_VOLUMES,
     OBSERVER_WORKSPACES,
 )
@@ -51,9 +55,13 @@ class BulkObserver:
         self._timeout_s = _settings.observer.timeout_s
 
     async def _safe[T](self, coro: Coroutine[None, None, list[T]], name: str) -> list[T] | None:
+        start = time.monotonic()
         try:
-            return await asyncio.wait_for(coro, timeout=self._timeout_s)
+            result = await asyncio.wait_for(coro, timeout=self._timeout_s)
+            OBSERVER_API_DURATION.labels(api=name).observe(time.monotonic() - start)
+            return result
         except asyncio.TimeoutError:
+            OBSERVER_API_DURATION.labels(api=name).observe(time.monotonic() - start)
             logger.warning(
                 "Operation timeout",
                 extra={
@@ -64,6 +72,7 @@ class BulkObserver:
             )
             return None
         except Exception as exc:
+            OBSERVER_API_DURATION.labels(api=name).observe(time.monotonic() - start)
             logger.exception(
                 "Operation failed",
                 extra={
@@ -118,11 +127,18 @@ class ObserverCoordinator(CoordinatorBase):
 
     async def tick(self) -> None:
         tick_start = time.monotonic()
+
+        # Stage 1: Load workspace IDs from DB
+        load_start = time.monotonic()
         ws_ids = await self._load_workspace_ids()
+        OBSERVER_LOAD_DURATION.observe(time.monotonic() - load_start)
         if not ws_ids:
             return
 
+        # Stage 2: Observe resources (parallel API calls)
+        observe_start = time.monotonic()
         containers, volumes, archives = await self._observer.observe_all()
+        OBSERVER_OBSERVE_DURATION.observe(time.monotonic() - observe_start)
 
         # 하나라도 실패 → skip (상태 일관성 보장, 다음 tick에서 재시도)
         if any(x is None for x in [containers, volumes, archives]):
@@ -156,8 +172,11 @@ class ObserverCoordinator(CoordinatorBase):
                     )
         self._prev_container_ids = current_container_ids
 
+        # Stage 3: Bulk update conditions in DB
+        update_start = time.monotonic()
         count = await self._bulk_update_conditions(ws_ids, containers, volumes, archives)
         await self._conn.commit()
+        OBSERVER_UPDATE_DURATION.observe(time.monotonic() - update_start)
 
         # Update metrics
         OBSERVER_WORKSPACES.set(count)
