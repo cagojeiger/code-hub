@@ -26,8 +26,7 @@ from codehub.app.metrics.collector import (
     WC_CAS_FAILURES_TOTAL,
     WC_EXECUTE_DURATION,
     WC_LOAD_DURATION,
-    WC_OPERATION_FAST_DURATION,
-    WC_OPERATION_S3_DURATION,
+    WC_OPERATION_DURATION,
     WC_PERSIST_DURATION,
     WC_PLAN_DURATION,
 )
@@ -279,9 +278,6 @@ class WorkspaceController(CoordinatorBase):
         """
         return needs_execute(action, Operation(ws.operation))
 
-    # S3 operations (long-running, separate histogram buckets)
-    _S3_OPERATIONS = {Operation.ARCHIVING, Operation.RESTORING}
-
     async def _execute(self, ws: Workspace, action: PlanAction) -> None:
         """Actuator 호출.
 
@@ -326,11 +322,7 @@ class WorkspaceController(CoordinatorBase):
                     await self._sp.delete_volume(ws.id)
         finally:
             duration = time.perf_counter() - start
-            op_name = action.operation.name
-            if action.operation in self._S3_OPERATIONS:
-                WC_OPERATION_S3_DURATION.labels(operation=op_name).observe(duration)
-            else:
-                WC_OPERATION_FAST_DURATION.labels(operation=op_name).observe(duration)
+            WC_OPERATION_DURATION.labels(operation=action.operation.name).observe(duration)
 
     async def _persist(self, ws: Workspace, action: PlanAction) -> None:
         """CAS 패턴으로 DB 저장.
