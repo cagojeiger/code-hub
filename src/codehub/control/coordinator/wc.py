@@ -92,7 +92,7 @@ class WorkspaceController(CoordinatorBase):
         self._prev_state: tuple[int, int] | None = None
         self._last_heartbeat: float = 0.0
 
-    async def tick(self) -> None:
+    async def reconcile(self) -> None:
         """Reconcile loop: Load → Judge → Plan → Execute → Persist.
 
         Hybrid execution strategy (ADR-012):
@@ -103,12 +103,12 @@ class WorkspaceController(CoordinatorBase):
         - Always record metrics (even when idle) for continuous graphs
         - Record operation duration on both success and failure
         """
-        # Generate tick-scoped trace_id for log correlation
-        tick_id = str(uuid4())[:8]
-        set_trace_id(tick_id)
+        # Generate reconcile-scoped trace_id for log correlation
+        reconcile_id = str(uuid4())[:8]
+        set_trace_id(reconcile_id)
 
         try:
-            tick_start = time.monotonic()
+            reconcile_start = time.monotonic()
 
             # Stage 1: Load (DB) - always measured
             load_start = time.monotonic()
@@ -212,18 +212,18 @@ class WorkspaceController(CoordinatorBase):
             WC_EXECUTE_DURATION.observe(exec_duration)
             WC_PERSIST_DURATION.observe(persist_duration)
 
-            # Tick summary for logging (metrics removed - logs are sufficient)
+            # Reconcile summary for logging (metrics removed - logs are sufficient)
             processed_count = len(workspaces)
             changed_count = sum(action_counts.values())
 
             # Log reconcile result only when state changes OR hourly heartbeat
-            duration_ms = (time.monotonic() - tick_start) * 1000
+            duration_ms = (time.monotonic() - reconcile_start) * 1000
             current_state = (processed_count, changed_count)
             now = time.monotonic()
 
             log_extra = {
                 "event": LogEvent.RECONCILE_COMPLETE,
-                "tick_id": tick_id,
+                "reconcile_id": reconcile_id,
                 "processed": processed_count,
                 "changed": changed_count,
                 "actions": dict(action_counts) if action_counts else {},
@@ -249,7 +249,7 @@ class WorkspaceController(CoordinatorBase):
                     "Slow reconcile detected",
                     extra={
                         "event": LogEvent.RECONCILE_SLOW,
-                        "tick_id": tick_id,
+                        "reconcile_id": reconcile_id,
                         "duration_ms": duration_ms,
                         "threshold_ms": _logging_config.slow_threshold_ms,
                         "processed": processed_count,

@@ -323,7 +323,7 @@ class TestJitteredVerifyInterval:
             COORDINATOR_TYPE = CoordinatorType.WC
             WAKE_TARGET = "wc"
 
-            async def tick(self) -> None:
+            async def reconcile(self) -> None:
                 pass
 
         coord = TestCoordinator(mock_conn, mock_leader, mock_subscriber)

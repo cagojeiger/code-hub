@@ -16,8 +16,8 @@ from codehub.core.interfaces.storage import VolumeInfo
 from codehub.core.interfaces.instance import ContainerInfo
 
 
-class TestObserverTick:
-    """ObserverCoordinator.tick() integration test with real DB."""
+class TestObserverReconcile:
+    """ObserverCoordinator.reconcile() integration test with real DB."""
 
     @pytest.fixture
     async def test_user(self, test_db_engine: AsyncEngine) -> User:
@@ -93,7 +93,7 @@ class TestObserverTick:
                 mock_ic,
                 mock_sp,
             )
-            await observer.tick()
+            await observer.reconcile()
 
         # Assert: Verify DB was updated
         async with AsyncSession(test_db_engine) as session:
@@ -149,7 +149,7 @@ class TestObserverTick:
                 mock_ic,
                 mock_sp,
             )
-            await observer.tick()
+            await observer.reconcile()
 
         async with AsyncSession(test_db_engine) as session:
             result = await session.execute(
@@ -190,7 +190,7 @@ class TestObserverTick:
                 mock_ic,
                 mock_sp,
             )
-            await observer.tick()
+            await observer.reconcile()
 
         # DB에 orphan workspace가 생성되지 않아야 함
         async with AsyncSession(test_db_engine) as session:
@@ -248,7 +248,7 @@ class TestObserverTick:
                 mock_ic,
                 mock_sp,
             )
-            await observer.tick()
+            await observer.reconcile()
 
         # deleted workspace의 conditions는 업데이트되지 않아야 함
         async with AsyncSession(test_db_engine) as session:
@@ -288,7 +288,7 @@ class TestObserverTick:
                 mock_ic,
                 mock_sp,
             )
-            await observer.tick()
+            await observer.reconcile()
 
         # Assert: 리소스 없는 워크스페이스도 conditions가 업데이트됨
         async with AsyncSession(test_db_engine) as session:
@@ -335,7 +335,7 @@ class TestObserverTick:
                 mock_ic,
                 mock_sp,
             )
-            await observer.tick()
+            await observer.reconcile()
 
         # DB에 conditions가 저장되었는지 확인
         async with AsyncSession(test_db_engine) as session:
@@ -473,7 +473,7 @@ class TestConcurrentCoordinators:
                     mock_ic_obs,
                     mock_sp_obs,
                 )
-                await observer.tick()
+                await observer.reconcile()
                 observer_done = True
 
         async def run_wc():
@@ -486,7 +486,7 @@ class TestConcurrentCoordinators:
                     mock_ic_wc,
                     mock_sp_wc,
                 )
-                await wc.tick()
+                await wc.reconcile()
                 wc_done = True
 
         # Act: Run both concurrently with 5 second timeout
@@ -577,9 +577,9 @@ class TestConcurrentCoordinators:
 
             for i in range(3):
                 try:
-                    await asyncio.wait_for(observer.tick(), timeout=2.0)
+                    await asyncio.wait_for(observer.reconcile(), timeout=2.0)
                 except asyncio.TimeoutError:
-                    pytest.fail(f"tick() #{i+1} timed out - connection in bad state")
+                    pytest.fail(f"reconcile() #{i+1} timed out - connection in bad state")
 
         # Verify final state
         async with AsyncSession(test_db_engine) as session:

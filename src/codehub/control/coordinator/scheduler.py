@@ -32,7 +32,7 @@ _settings = get_settings()
 class Scheduler(CoordinatorBase):
     """TTL + GC 오케스트레이터.
 
-    tick()에서 시간 기반으로 각 작업 실행:
+    reconcile()에서 시간 기반으로 각 작업 실행:
     - TTL: 매 ttl_interval (60초)
     - GC: 매 gc_interval (4시간)
     """
@@ -66,7 +66,7 @@ class Scheduler(CoordinatorBase):
         self._last_ttl: float = 0.0
         self._last_gc: float = 0.0
 
-    async def tick(self) -> None:
+    async def reconcile(self) -> None:
         """Execute scheduled tasks based on elapsed time."""
         now = time.monotonic()
 

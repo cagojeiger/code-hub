@@ -15,8 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from codehub.app.config import get_settings
 from codehub.app.metrics.collector import (
     COORDINATOR_IS_LEADER,
-    COORDINATOR_TICK_DURATION,
-    COORDINATOR_TICK_TOTAL,
+    COORDINATOR_RECONCILE_DURATION,
+    COORDINATOR_RECONCILE_TOTAL,
     COORDINATOR_WAKE_RECEIVED_TOTAL,
 )
 from codehub.core.interfaces.leader import LeaderElection
@@ -46,9 +46,9 @@ class CoordinatorBase(ABC):
     Coordinator uses the same connection for both Advisory Lock and DB transactions.
     This ensures atomic failure: if connection drops, both lock and transaction fail together.
 
-    In tick(), use self._conn directly (NOT AsyncSession):
+    In reconcile(), use self._conn directly (NOT AsyncSession):
 
-        async def tick(self) -> None:
+        async def reconcile(self) -> None:
             # Use connection directly for queries
             result = await self._conn.execute(select(Workspace))
 
@@ -74,7 +74,7 @@ class CoordinatorBase(ABC):
     ACTIVE_DURATION: float = _coordinator_config.active_duration
 
     COORDINATOR_TYPE: CoordinatorType
-    WAKE_TARGET: str | None = None  # e.g., "ob", "wc", "gc" - receives wake from this target
+    WAKE_TARGET: str | None = None  # e.g., "observer", "wc", "gc" - receives wake from this target
 
     def __init__(
         self,
@@ -89,7 +89,7 @@ class CoordinatorBase(ABC):
         self._subscribed = False
         self._active_until = time.time() + self.ACTIVE_DURATION
         self._last_verify = 0.0
-        self._last_tick = 0.0
+        self._last_reconcile = 0.0
         # Leadership waiting state tracking (for LEADERSHIP_ACQUIRED log)
         self._waiting_since: float | None = None
 
@@ -131,7 +131,7 @@ class CoordinatorBase(ABC):
             )
 
     @abstractmethod
-    async def tick(self) -> None:
+    async def reconcile(self) -> None:
         """Execute one reconciliation cycle."""
         pass
 
@@ -146,7 +146,7 @@ class CoordinatorBase(ABC):
                     continue
                 await self._ensure_subscribed()
                 await self._throttle()
-                if not await self._execute_tick():
+                if not await self._execute_reconcile():
                     break
                 await self._wait_for_notify(self._get_interval())
         finally:
@@ -203,17 +203,17 @@ class CoordinatorBase(ABC):
             self._subscribed = True
 
     async def _throttle(self) -> None:
-        """Ensure minimum interval between ticks."""
-        elapsed = time.time() - self._last_tick
+        """Ensure minimum interval between reconcile cycles."""
+        elapsed = time.time() - self._last_reconcile
         if elapsed < self.MIN_INTERVAL:
             await asyncio.sleep(self.MIN_INTERVAL - elapsed)
 
-    async def _execute_tick(self) -> bool:
-        """Execute tick. Returns False if cancelled or leadership lost."""
-        # P6: Verify leadership before tick to detect Split Brain early
+    async def _execute_reconcile(self) -> bool:
+        """Execute reconcile. Returns False if cancelled or leadership lost."""
+        # P6: Verify leadership before reconcile to detect Split Brain early
         if not await self._leader.verify_holding():
             logger.warning(
-                "Leadership lost before tick - skipping",
+                "Leadership lost before reconcile - skipping",
                 extra={"event": LogEvent.LEADERSHIP_LOST},
             )
             await self._release_subscription()
@@ -221,19 +221,19 @@ class CoordinatorBase(ABC):
 
         start_time = time.time()
         try:
-            await self.tick()
-            self._last_tick = time.time()
-            # Record metrics on successful tick
-            duration = self._last_tick - start_time
-            COORDINATOR_TICK_TOTAL.labels(coordinator=self.COORDINATOR_TYPE).inc()
-            COORDINATOR_TICK_DURATION.labels(coordinator=self.COORDINATOR_TYPE).observe(duration)
+            await self.reconcile()
+            self._last_reconcile = time.time()
+            # Record metrics on successful reconcile
+            duration = self._last_reconcile - start_time
+            COORDINATOR_RECONCILE_TOTAL.labels(coordinator=self.COORDINATOR_TYPE).inc()
+            COORDINATOR_RECONCILE_DURATION.labels(coordinator=self.COORDINATOR_TYPE).observe(duration)
             return True
         except asyncio.CancelledError:
             return False
         except Exception as e:
-            logger.exception("Error in tick: %s", e)
+            logger.exception("Error in reconcile: %s", e)
             await self._safe_rollback()
-            self._last_tick = time.time()
+            self._last_reconcile = time.time()
             return True
 
     async def _wait_for_notify(self, interval: float) -> None:

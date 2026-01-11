@@ -117,7 +117,7 @@ class TestObserverTick:
 
         mock_ic.list_all = AsyncMock(side_effect=asyncio.TimeoutError())
 
-        await coordinator.tick()
+        await coordinator.reconcile()
 
         mock_conn.commit.assert_not_called()
 
@@ -135,7 +135,7 @@ class TestObserverTick:
             ContainerInfo(workspace_id="ws-1", running=True, reason="Running", message="")
         ]
 
-        await coordinator.tick()
+        await coordinator.reconcile()
 
         mock_conn.commit.assert_called_once()
 

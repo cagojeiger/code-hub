@@ -327,22 +327,22 @@ class EventListener:
     async def _handle_wake(self) -> None:
         """Handle wake event - PUBLISH to wake channels.
 
-        Publishes to both OB and WC channels in parallel (1 RTT).
+        Publishes to both Observer and WC channels in parallel (1 RTT).
         """
         try:
-            ob_channel = f"{_channel_config.wake_prefix}:ob"
+            observer_channel = f"{_channel_config.wake_prefix}:observer"
             wc_channel = f"{_channel_config.wake_prefix}:wc"
-            ob_count, wc_count = await asyncio.gather(
-                self._publisher.publish(ob_channel),
+            observer_count, wc_count = await asyncio.gather(
+                self._publisher.publish(observer_channel),
                 self._publisher.publish(wc_channel),
             )
-            EVENT_WAKE_PUBLISHED_TOTAL.labels(target="ob").inc()
+            EVENT_WAKE_PUBLISHED_TOTAL.labels(target="observer").inc()
             EVENT_WAKE_PUBLISHED_TOTAL.labels(target="wc").inc()
             logger.info(
                 "Wake published",
                 extra={
                     "event": LogEvent.WAKE_PUBLISHED,
-                    "ob_count": ob_count,
+                    "observer_count": observer_count,
                     "wc_count": wc_count,
                 },
             )

@@ -109,15 +109,15 @@ WS_ERRORS = Counter(
 # These metrics track coordinator health and performance
 # Only the leader coordinator updates these metrics
 
-COORDINATOR_TICK_TOTAL = Counter(
-    "codehub_coordinator_tick_total",
-    "Total number of coordinator ticks executed",
+COORDINATOR_RECONCILE_TOTAL = Counter(
+    "codehub_coordinator_reconcile_total",
+    "Total number of coordinator reconcile cycles executed",
     ["coordinator"],
 )
 
-COORDINATOR_TICK_DURATION = Histogram(
-    "codehub_coordinator_tick_duration_seconds",
-    "Duration of coordinator tick execution",
+COORDINATOR_RECONCILE_DURATION = Histogram(
+    "codehub_coordinator_reconcile_duration_seconds",
+    "Duration of coordinator reconcile cycle execution",
     ["coordinator"],
     buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0, 30.0),
 )
@@ -135,25 +135,25 @@ COORDINATOR_IS_LEADER = Gauge(
 # Resource counts from ObserverCoordinator observations
 
 OBSERVER_WORKSPACES = Gauge(
-    "codehub_observer_workspaces_total",
+    "codehub_observer_workspaces",
     "Number of workspaces observed",
     multiprocess_mode="livesum",
 )
 
 OBSERVER_CONTAINERS = Gauge(
-    "codehub_observer_containers_total",
+    "codehub_observer_containers",
     "Number of containers observed",
     multiprocess_mode="livesum",
 )
 
 OBSERVER_VOLUMES = Gauge(
-    "codehub_observer_volumes_total",
+    "codehub_observer_volumes",
     "Number of volumes observed",
     multiprocess_mode="livesum",
 )
 
 OBSERVER_ARCHIVES = Gauge(
-    "codehub_observer_archives_total",
+    "codehub_observer_archives",
     "Number of archives observed",
     multiprocess_mode="livesum",
 )
@@ -197,8 +197,8 @@ WC_LOAD_DURATION = Histogram(
 WC_PLAN_DURATION = Histogram(
     "codehub_wc_plan_duration_seconds",
     "Duration of judge + plan computation",
-    # Buckets start at 100µs for fast CPU-only operations
-    buckets=(0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1),
+    # Buckets start at 1ms - microsecond precision is unreliable due to OS jitter
+    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0),
 )
 
 WC_EXECUTE_DURATION = Histogram(
@@ -316,8 +316,8 @@ CIRCUIT_BREAKER_REJECTIONS_TOTAL = Counter(
 
 EXTERNAL_CALL_ERRORS_TOTAL = Counter(
     "codehub_external_call_errors_total",
-    "Total external call errors by class",
-    ["error_class"],  # timeout, transient, permanent, circuit_open
+    "Total external call errors by type",
+    ["error_type"],  # retryable, permanent, unknown, circuit_open
 )
 
 
@@ -340,10 +340,10 @@ def _init_metrics() -> None:
     CIRCUIT_BREAKER_REJECTIONS_TOTAL.labels(circuit="external")
 
     # External Call Errors
-    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_class="retryable")
-    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_class="permanent")
-    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_class="unknown")
-    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_class="circuit_open")
+    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="retryable")
+    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="permanent")
+    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="unknown")
+    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="circuit_open")
 
     # TTL Expirations (may never happen if workspaces are active)
     TTL_EXPIRATIONS_TOTAL.labels(transition="running_to_standby")

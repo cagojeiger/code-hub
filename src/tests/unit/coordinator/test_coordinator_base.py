@@ -32,10 +32,10 @@ class DummyCoordinator(CoordinatorBase):
         subscriber: ChannelSubscriber | AsyncMock,
     ) -> None:
         super().__init__(conn, leader, subscriber)
-        self.tick_count = 0
+        self.reconcile_count = 0
 
-    async def tick(self) -> None:
-        self.tick_count += 1
+    async def reconcile(self) -> None:
+        self.reconcile_count += 1
 
 
 class TestAccelerateAndIsActive:
@@ -155,8 +155,8 @@ class TestThrottle:
         """MIN_INTERVAL 미만이면 대기."""
         coord = DummyCoordinator(mock_conn, mock_leader, mock_subscriber)
 
-        # 방금 tick 실행한 것처럼 설정
-        coord._last_tick = time.time()
+        # 방금 reconcile 실행한 것처럼 설정
+        coord._last_reconcile = time.time()
 
         start = time.time()
         await coord._throttle()
@@ -172,8 +172,8 @@ class TestThrottle:
         """MIN_INTERVAL 이후면 대기 없음."""
         coord = DummyCoordinator(mock_conn, mock_leader, mock_subscriber)
 
-        # MIN_INTERVAL 이전에 tick 실행한 것처럼 설정
-        coord._last_tick = time.time() - coord.MIN_INTERVAL - 0.1
+        # MIN_INTERVAL 이전에 reconcile 실행한 것처럼 설정
+        coord._last_reconcile = time.time() - coord.MIN_INTERVAL - 0.1
 
         start = time.time()
         await coord._throttle()
