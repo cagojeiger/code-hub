@@ -233,7 +233,7 @@ TTL_EXPIRATIONS_TOTAL = Counter(
 TTL_SYNC_REDIS_DURATION = Histogram(
     "codehub_ttl_sync_redis_duration_seconds",
     "Duration to scan activities from Redis",
-    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0),
+    buckets=(0.005, 0.01, 0.05, 0.1, 0.5, 1.0),
 )
 
 TTL_SYNC_DB_DURATION = Histogram(
