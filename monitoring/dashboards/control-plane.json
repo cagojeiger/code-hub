@@ -110,7 +110,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "상태 점검(Reconcile) 소요 시간 95번째 백분위수",
+      "description": "상태 점검(Reconcile) 평균 소요 시간",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -149,12 +149,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "histogram_quantile(0.95, sum(rate(codehub_coordinator_tick_duration_seconds_bucket[5m])) by (le, coordinator))",
+          "expr": "rate(codehub_coordinator_tick_duration_seconds_sum[5m]) / rate(codehub_coordinator_tick_duration_seconds_count[5m])",
           "legendFormat": "{{ coordinator }}",
           "refId": "A"
         }
       ],
-      "title": "Reconcile Duration (p95)",
+      "title": "Reconcile Duration",
       "type": "timeseries"
     },
     {
