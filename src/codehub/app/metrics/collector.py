@@ -52,24 +52,6 @@ POSTGRESQL_POOL_OVERFLOW = Gauge(
 )
 
 # =============================================================================
-# PostgreSQL Configuration (Static - set once at startup)
-# =============================================================================
-# Use max mode so all workers report the same value and we get the config value
-# Limit calculation: (pool_size + max_overflow) * count(connected_workers)
-
-POSTGRESQL_POOL_SIZE = Gauge(
-    "codehub_postgresql_pool_size",
-    "PostgreSQL connection pool size setting (per worker)",
-    multiprocess_mode="max",
-)
-
-POSTGRESQL_MAX_OVERFLOW = Gauge(
-    "codehub_postgresql_max_overflow",
-    "PostgreSQL max overflow setting (per worker)",
-    multiprocess_mode="max",
-)
-
-# =============================================================================
 # Redis Pool Metrics (Dynamic - per worker)
 # =============================================================================
 
@@ -95,26 +77,6 @@ REDIS_POOL_TOTAL = Gauge(
     "codehub_redis_pool_total",
     "Total Redis connections (idle + active)",
     multiprocess_mode="all",
-)
-
-# =============================================================================
-# Redis Configuration (Static - set once at startup)
-# =============================================================================
-
-REDIS_MAX_CONNECTIONS = Gauge(
-    "codehub_redis_max_connections",
-    "Redis max connections setting (per worker)",
-    multiprocess_mode="max",
-)
-
-# =============================================================================
-# Worker Metrics
-# =============================================================================
-
-WORKERS_TOTAL = Gauge(
-    "codehub_workers_total",
-    "Total number of workers configured",
-    multiprocess_mode="max",
 )
 
 # =============================================================================

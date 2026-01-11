@@ -31,18 +31,14 @@ from codehub.app.proxy.client import close_http_client
 from codehub.app.metrics import setup_metrics, get_metrics_response
 from codehub.app.metrics.collector import (
     POSTGRESQL_CONNECTED_WORKERS,
-    POSTGRESQL_MAX_OVERFLOW,
     POSTGRESQL_POOL_ACTIVE,
     POSTGRESQL_POOL_IDLE,
     POSTGRESQL_POOL_OVERFLOW,
-    POSTGRESQL_POOL_SIZE,
     POSTGRESQL_POOL_TOTAL,
     REDIS_CONNECTED_WORKERS,
-    REDIS_MAX_CONNECTIONS,
     REDIS_POOL_ACTIVE,
     REDIS_POOL_IDLE,
     REDIS_POOL_TOTAL,
-    WORKERS_TOTAL,
 )
 from codehub.control.coordinator import (
     ArchiveGC,
@@ -115,7 +111,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     if settings.metrics.enabled:
         setup_metrics(settings.metrics.multiproc_dir)
-        _init_config_metrics()
 
     await init_db()
     await init_redis()
@@ -302,16 +297,6 @@ async def health():
         "version": __version__,
         "services": services,
     }
-
-
-def _init_config_metrics() -> None:
-    """Initialize configuration metrics (called once at startup)."""
-    settings = get_settings()
-    POSTGRESQL_POOL_SIZE.set(settings.database.pool_size)
-    POSTGRESQL_MAX_OVERFLOW.set(settings.database.max_overflow)
-    REDIS_MAX_CONNECTIONS.set(settings.redis.max_connections)
-    workers = int(os.getenv("WORKERS", "1"))
-    WORKERS_TOTAL.set(workers)
 
 
 def _update_postgresql_pool_metrics() -> None:
