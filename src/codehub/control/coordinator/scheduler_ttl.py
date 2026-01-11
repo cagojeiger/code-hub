@@ -5,6 +5,7 @@ STANDBY → ARCHIVED: archive_ttl 초과 시
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 
 from sqlalchemy import text
@@ -14,6 +15,7 @@ from codehub.app.config import get_settings
 from codehub.app.metrics.collector import (
     TTL_ACTIVITY_SYNCED_TOTAL,
     TTL_EXPIRATIONS_TOTAL,
+    TTL_SYNC_DURATION,
 )
 from codehub.core.domain.workspace import DesiredState, Operation, Phase
 from codehub.core.logging_schema import LogEvent
@@ -53,12 +55,16 @@ class TTLRunner:
             # 2. standby_ttl 체크 (RUNNING → STANDBY)
             standby_expired = await self._check_standby_ttl()
             if standby_expired > 0:
-                TTL_EXPIRATIONS_TOTAL.labels(transition="standby").inc(standby_expired)
+                TTL_EXPIRATIONS_TOTAL.labels(transition="running_to_standby").inc(
+                    standby_expired
+                )
 
             # 3. archive_ttl 체크 (STANDBY → ARCHIVED)
             archive_expired = await self._check_archive_ttl()
             if archive_expired > 0:
-                TTL_EXPIRATIONS_TOTAL.labels(transition="archive").inc(archive_expired)
+                TTL_EXPIRATIONS_TOTAL.labels(transition="standby_to_archived").inc(
+                    archive_expired
+                )
 
             # WC 깨우기 (expired 있으면)
             if standby_expired or archive_expired:
@@ -80,8 +86,11 @@ class TTLRunner:
 
     async def _sync_to_db(self) -> int:
         """Sync Redis last_access:* to DB last_access_at."""
+        start = time.monotonic()
+
         activities = await self._activity.scan_all()
         if not activities:
+            TTL_SYNC_DURATION.set(time.monotonic() - start)
             return 0
 
         ws_ids = list(activities.keys())
@@ -104,6 +113,7 @@ class TTLRunner:
         if updated_ids:
             await self._activity.delete(updated_ids)
 
+        TTL_SYNC_DURATION.set(time.monotonic() - start)
         logger.debug("Synced %d workspace activities to DB", len(updated_ids))
         return len(updated_ids)
 

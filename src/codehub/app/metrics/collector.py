@@ -187,27 +187,6 @@ OBSERVER_API_DURATION = Histogram(
 # =============================================================================
 # WorkspaceController Metrics
 # =============================================================================
-# Operation execution tracking
-
-WC_OPERATIONS_TOTAL = Counter(
-    "codehub_wc_operations_total",
-    "Total workspace operations executed",
-    ["operation"],
-)
-
-WC_OPERATION_DURATION = Histogram(
-    "codehub_wc_operation_duration_seconds",
-    "Duration of workspace operations",
-    ["operation"],
-    buckets=(0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 120.0),
-)
-
-WC_ERRORS_TOTAL = Counter(
-    "codehub_wc_errors_total",
-    "Total workspace operation errors",
-    ["error_class"],
-)
-
 # WC stage durations (like Observer)
 WC_LOAD_DURATION = Histogram(
     "codehub_wc_load_duration_seconds",
@@ -238,6 +217,7 @@ WC_CAS_FAILURES_TOTAL = Counter(
     "Total CAS update failures",
 )
 
+
 # =============================================================================
 # TTL Manager Metrics
 # =============================================================================
@@ -245,13 +225,19 @@ WC_CAS_FAILURES_TOTAL = Counter(
 
 TTL_EXPIRATIONS_TOTAL = Counter(
     "codehub_ttl_expirations_total",
-    "Total TTL expirations (phase transitions)",
-    ["transition"],
+    "Idle workspace auto-transitions (power saving)",
+    ["transition"],  # running_to_standby, standby_to_archived
 )
 
 TTL_ACTIVITY_SYNCED_TOTAL = Counter(
     "codehub_ttl_activity_synced_total",
     "Total activities synced from Redis to DB",
+)
+
+TTL_SYNC_DURATION = Gauge(
+    "codehub_ttl_sync_duration_seconds",
+    "Last duration of TTLRunner sync operation (Redis to DB)",
+    multiprocess_mode="livesum",
 )
 
 # =============================================================================
@@ -301,3 +287,76 @@ EVENT_LISTENER_IS_LEADER = Gauge(
     "Whether EventListener is the leader (1) or not (0)",
     multiprocess_mode="livesum",
 )
+
+# =============================================================================
+# Circuit Breaker Metrics
+# =============================================================================
+# Track circuit breaker state and external service health
+
+CIRCUIT_BREAKER_STATE = Gauge(
+    "codehub_circuit_breaker_state",
+    "Circuit breaker state (0=closed, 1=half_open, 2=open)",
+    ["circuit"],
+    multiprocess_mode="livesum",
+)
+
+CIRCUIT_BREAKER_CALLS_TOTAL = Counter(
+    "codehub_circuit_breaker_calls_total",
+    "Total circuit breaker calls",
+    ["circuit", "result"],  # result: success, failure
+)
+
+CIRCUIT_BREAKER_REJECTIONS_TOTAL = Counter(
+    "codehub_circuit_breaker_rejections_total",
+    "Total requests rejected due to open circuit",
+    ["circuit"],
+)
+
+EXTERNAL_CALL_ERRORS_TOTAL = Counter(
+    "codehub_external_call_errors_total",
+    "Total external call errors by class",
+    ["error_class"],  # timeout, transient, permanent, circuit_open
+)
+
+
+# =============================================================================
+# Metric Initialization (ensure labels appear before first use)
+# =============================================================================
+
+
+def _init_metrics() -> None:
+    """Initialize labeled metrics with zero values.
+
+    Prometheus metrics with labels don't appear in output until first use.
+    This causes "nodata" in Grafana. Initialize all labeled metrics here
+    so they show 0 instead of nodata.
+    """
+    # Circuit Breaker (critical - may never be called if no external ops)
+    CIRCUIT_BREAKER_STATE.labels(circuit="external").set(0)  # 0 = closed
+    CIRCUIT_BREAKER_CALLS_TOTAL.labels(circuit="external", result="success")
+    CIRCUIT_BREAKER_CALLS_TOTAL.labels(circuit="external", result="failure")
+    CIRCUIT_BREAKER_REJECTIONS_TOTAL.labels(circuit="external")
+
+    # External Call Errors
+    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_class="retryable")
+    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_class="permanent")
+    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_class="unknown")
+    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_class="circuit_open")
+
+    # TTL Expirations (may never happen if workspaces are active)
+    TTL_EXPIRATIONS_TOTAL.labels(transition="running_to_standby")
+    TTL_EXPIRATIONS_TOTAL.labels(transition="standby_to_archived")
+
+    # Event Errors (hopefully never called, but show 0 not nodata)
+    EVENT_ERRORS_TOTAL.labels(operation="sse")
+    EVENT_ERRORS_TOTAL.labels(operation="wake")
+
+    # WebSocket Errors
+    WS_ERRORS.labels(error_type="invalid_uri")
+    WS_ERRORS.labels(error_type="handshake_failed")
+    WS_ERRORS.labels(error_type="connection_failed")
+    WS_ERRORS.labels(error_type="connection_closed")
+    WS_ERRORS.labels(error_type="relay_error")
+
+
+_init_metrics()

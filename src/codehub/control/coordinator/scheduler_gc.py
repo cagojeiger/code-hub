@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from codehub.app.config import get_settings
 from codehub.core.interfaces import InstanceController, StorageProvider
 from codehub.core.logging_schema import LogEvent
+from codehub.core.retryable import with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,10 @@ class GCRunner:
                 extra={"event": LogEvent.OPERATION_SUCCESS, "ws_id": ws_id},
             )
             try:
-                await self._ic.delete(ws_id)
+                await with_retry(
+                    lambda ws_id=ws_id: self._ic.delete(ws_id),
+                    circuit_breaker="external",
+                )
             except Exception as e:
                 logger.warning(
                     "Failed to delete container",
@@ -108,7 +112,10 @@ class GCRunner:
                 extra={"event": LogEvent.OPERATION_SUCCESS, "ws_id": ws_id},
             )
             try:
-                await self._storage.delete_volume(ws_id)
+                await with_retry(
+                    lambda ws_id=ws_id: self._storage.delete_volume(ws_id),
+                    circuit_breaker="external",
+                )
             except Exception as e:
                 logger.warning(
                     "Failed to delete volume",
@@ -167,9 +174,19 @@ class GCRunner:
         deleted = 0
 
         for key in archive_keys:
-            if await self._storage.delete_archive(key):
-                deleted += 1
-                logger.debug("Deleted: %s", key)
+            try:
+                result = await with_retry(
+                    lambda key=key: self._storage.delete_archive(key),
+                    circuit_breaker="external",
+                )
+                if result:
+                    deleted += 1
+                    logger.debug("Deleted: %s", key)
+            except Exception as e:
+                logger.warning(
+                    "Failed to delete archive",
+                    extra={"event": LogEvent.OPERATION_FAILED, "key": key, "error": str(e)},
+                )
 
         return deleted
 

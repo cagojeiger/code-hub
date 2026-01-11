@@ -21,6 +21,11 @@ from collections.abc import Awaitable, Callable
 from enum import Enum
 from typing import TypeVar
 
+from codehub.app.metrics.collector import (
+    CIRCUIT_BREAKER_CALLS_TOTAL,
+    CIRCUIT_BREAKER_REJECTIONS_TOTAL,
+    CIRCUIT_BREAKER_STATE,
+)
 from codehub.core.logging_schema import LogEvent
 
 logger = logging.getLogger(__name__)
@@ -52,7 +57,7 @@ class CircuitBreaker:
         name: Circuit breaker name for logging
         failure_threshold: Number of failures to open circuit (default: 5)
         success_threshold: Number of successes to close circuit (default: 2)
-        timeout: Seconds to wait before half-open (default: 30.0)
+        timeout: Seconds to wait before half-open (default: 60.0)
         error_classifier: Function to classify errors. Returns 'permanent', 'retryable',
                          or 'unknown'. Permanent errors don't count toward failure threshold.
     """
@@ -62,7 +67,7 @@ class CircuitBreaker:
         name: str = "default",
         failure_threshold: int = 5,
         success_threshold: int = 2,
-        timeout: float = 30.0,
+        timeout: float = 60.0,
         error_classifier: Callable[[Exception], str] | None = None,
     ) -> None:
         self.name = name
@@ -81,6 +86,11 @@ class CircuitBreaker:
     def state(self) -> CircuitState:
         """Current circuit state."""
         return self._state
+
+    def _update_state_metric(self) -> None:
+        """Update circuit breaker state metric."""
+        state_value = {"closed": 0, "half_open": 1, "open": 2}[self._state.value]
+        CIRCUIT_BREAKER_STATE.labels(circuit=self.name).set(state_value)
 
     async def call(
         self,
@@ -103,6 +113,7 @@ class CircuitBreaker:
 
             if self._state == CircuitState.OPEN:
                 retry_after = self.timeout - (time.time() - (self._last_failure_time or 0))
+                CIRCUIT_BREAKER_REJECTIONS_TOTAL.labels(circuit=self.name).inc()
                 logger.warning(
                     "Circuit OPEN, rejecting request",
                     extra={
@@ -115,9 +126,11 @@ class CircuitBreaker:
 
         try:
             result = await coro_factory()
+            CIRCUIT_BREAKER_CALLS_TOTAL.labels(circuit=self.name, result="success").inc()
             await self._on_success()
             return result
         except Exception as exc:
+            CIRCUIT_BREAKER_CALLS_TOTAL.labels(circuit=self.name, result="failure").inc()
             # Permanent errors (e.g., 404) should not count toward failure threshold
             if self._error_classifier:
                 error_class = self._error_classifier(exc)
@@ -147,6 +160,7 @@ class CircuitBreaker:
                 )
                 self._state = CircuitState.HALF_OPEN
                 self._success_count = 0
+                self._update_state_metric()
 
     async def _on_success(self) -> None:
         """Handle successful operation."""
@@ -164,6 +178,7 @@ class CircuitBreaker:
                     )
                     self._state = CircuitState.CLOSED
                     self._failure_count = 0
+                    self._update_state_metric()
             elif self._state == CircuitState.CLOSED:
                 # Reset failure count on success
                 self._failure_count = 0
@@ -180,6 +195,7 @@ class CircuitBreaker:
                     extra={"event": LogEvent.STATE_CHANGED, "circuit": self.name},
                 )
                 self._state = CircuitState.OPEN
+                self._update_state_metric()
             elif self._state == CircuitState.CLOSED:
                 if self._failure_count >= self.failure_threshold:
                     logger.warning(
@@ -191,6 +207,7 @@ class CircuitBreaker:
                         },
                     )
                     self._state = CircuitState.OPEN
+                    self._update_state_metric()
 
 
 _circuit_breakers: dict[str, CircuitBreaker] = {}

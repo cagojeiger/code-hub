@@ -24,11 +24,8 @@ from codehub.app.config import get_settings
 from codehub.app.logging import clear_trace_context, set_trace_id
 from codehub.app.metrics.collector import (
     WC_CAS_FAILURES_TOTAL,
-    WC_ERRORS_TOTAL,
     WC_EXECUTE_DURATION,
     WC_LOAD_DURATION,
-    WC_OPERATION_DURATION,
-    WC_OPERATIONS_TOTAL,
     WC_PERSIST_DURATION,
     WC_PLAN_DURATION,
 )
@@ -101,6 +98,10 @@ class WorkspaceController(CoordinatorBase):
         Hybrid execution strategy (ADR-012):
         - DB operations: Sequential (asyncpg single connection limit)
         - External operations (Docker/S3): Parallel for performance
+
+        Metrics strategy:
+        - Always record metrics (even when idle) for continuous graphs
+        - Record operation duration on both success and failure
         """
         # Generate tick-scoped trace_id for log correlation
         tick_id = str(uuid4())[:8]
@@ -109,117 +110,122 @@ class WorkspaceController(CoordinatorBase):
         try:
             tick_start = time.monotonic()
 
-            # Stage 1: Load (DB)
+            # Stage 1: Load (DB) - always measured
             load_start = time.monotonic()
             workspaces = await self._load_for_reconcile()
             load_duration = time.monotonic() - load_start
             load_ms = load_duration * 1000
             WC_LOAD_DURATION.observe(load_duration)
 
-            if not workspaces:
-                return  # No reconciliation needed - skip logging for idle state
+            # Initialize metrics variables for pass-through structure
+            plan_duration = 0.0
+            plan_ms = 0.0
+            exec_duration = 0.0
+            exec_ms = 0.0
+            persist_duration = 0.0
+            persist_ms = 0.0
+            action_counts: Counter[str] = Counter()
 
-            # Stage 2: Judge + Plan (CPU)
-            plan_start = time.monotonic()
-            plans: list[tuple[Workspace, PlanAction]] = []
-            for ws in workspaces:
-                action = self._judge_and_plan(ws)
-                plans.append((ws, action))
-            plan_duration = time.monotonic() - plan_start
-            plan_ms = plan_duration * 1000
-            WC_PLAN_DURATION.observe(plan_duration)
+            if workspaces:
+                # Stage 2: Judge + Plan (CPU)
+                plan_start = time.monotonic()
+                plans: list[tuple[Workspace, PlanAction]] = []
+                for ws in workspaces:
+                    action = self._judge_and_plan(ws)
+                    plans.append((ws, action))
+                plan_duration = time.monotonic() - plan_start
+                plan_ms = plan_duration * 1000
 
-            # Stage 3: Execute 병렬 (Docker/S3 - DB 미사용!)
-            exec_start = time.monotonic()
+                # Stage 3: Execute 병렬 (Docker/S3 - DB 미사용!)
+                exec_start = time.monotonic()
 
-            async def execute_one(
-                ws: Workspace, action: PlanAction
-            ) -> tuple[Workspace, PlanAction]:
-                if self._needs_execute(action, ws):
-                    op_start = time.monotonic()
+                async def execute_one(
+                    ws: Workspace, action: PlanAction
+                ) -> tuple[Workspace, PlanAction]:
+                    if self._needs_execute(action, ws):
+                        try:
+                            # with_retry handles transient errors with exponential backoff
+                            await asyncio.wait_for(
+                                with_retry(
+                                    lambda ws=ws, action=action: self._execute(ws, action),
+                                    max_retries=3,
+                                    base_delay=1.0,
+                                    max_delay=30.0,
+                                    circuit_breaker="external",
+                                ),
+                                timeout=self.OPERATION_TIMEOUT,
+                            )
+                        except asyncio.TimeoutError:
+                            logger.error(
+                                "Operation timeout",
+                                extra={
+                                    "event": LogEvent.OPERATION_TIMEOUT,
+                                    "ws_id": ws.id,
+                                    "operation": action.operation.value,
+                                    "error_class": "timeout",
+                                    "timeout_s": self.OPERATION_TIMEOUT,
+                                },
+                            )
+                        except Exception as exc:
+                            error_class = classify_error(exc)
+                            logger.exception(
+                                "Operation failed",
+                                extra={
+                                    "event": LogEvent.OPERATION_FAILED,
+                                    "ws_id": ws.id,
+                                    "operation": action.operation.value,
+                                    "error_class": error_class,
+                                    "retryable": error_class == "transient",
+                                },
+                            )
+                    return (ws, action)
+
+                results = await asyncio.gather(
+                    *[execute_one(ws, action) for ws, action in plans],
+                    return_exceptions=False,  # 개별 예외 처리됨
+                )
+                exec_duration = time.monotonic() - exec_start
+                exec_ms = exec_duration * 1000
+
+                # Stage 4: Persist 순차 (DB - ADR-012 준수)
+                persist_start = time.monotonic()
+                for ws, action in results:
                     try:
-                        # with_retry handles transient errors with exponential backoff
-                        await asyncio.wait_for(
-                            with_retry(
-                                lambda ws=ws, action=action: self._execute(ws, action),
-                                max_retries=3,
-                                base_delay=1.0,
-                                max_delay=30.0,
-                                circuit_breaker="external",
-                            ),
-                            timeout=self.OPERATION_TIMEOUT,
-                        )
-                        # Record successful operation metrics
-                        op_duration = time.monotonic() - op_start
-                        WC_OPERATIONS_TOTAL.labels(operation=action.operation.value).inc()
-                        WC_OPERATION_DURATION.labels(operation=action.operation.value).observe(op_duration)
-                    except asyncio.TimeoutError:
-                        WC_ERRORS_TOTAL.labels(error_class="timeout").inc()
-                        logger.error(
-                            "Operation timeout",
-                            extra={
-                                "event": LogEvent.OPERATION_TIMEOUT,
-                                "ws_id": ws.id,
-                                "operation": action.operation.value,
-                                "error_class": "timeout",
-                                "timeout_s": self.OPERATION_TIMEOUT,
-                            },
-                        )
-                    except Exception as exc:
-                        error_class = classify_error(exc)
-                        WC_ERRORS_TOTAL.labels(error_class=error_class).inc()
+                        await self._persist(ws, action)
+                        if action.operation != Operation.NONE:
+                            action_counts[action.operation.value] += 1
+                    except Exception:
                         logger.exception(
-                            "Operation failed",
+                            "Failed to persist",
                             extra={
                                 "event": LogEvent.OPERATION_FAILED,
                                 "ws_id": ws.id,
                                 "operation": action.operation.value,
-                                "error_class": error_class,
-                                "retryable": error_class == "transient",
+                                "error_class": "transient",
                             },
                         )
-                return (ws, action)
+                persist_duration = time.monotonic() - persist_start
+                persist_ms = persist_duration * 1000
 
-            results = await asyncio.gather(
-                *[execute_one(ws, action) for ws, action in plans],
-                return_exceptions=False,  # 개별 예외 처리됨
-            )
-            exec_duration = time.monotonic() - exec_start
-            exec_ms = exec_duration * 1000
+            # Always record stage duration metrics (for continuous graphs)
+            WC_PLAN_DURATION.observe(plan_duration)
             WC_EXECUTE_DURATION.observe(exec_duration)
-
-            # Stage 4: Persist 순차 (DB - ADR-012 준수)
-            persist_start = time.monotonic()
-            action_counts: Counter[str] = Counter()
-            for ws, action in results:
-                try:
-                    await self._persist(ws, action)
-                    if action.operation != Operation.NONE:
-                        action_counts[action.operation.value] += 1
-                except Exception:
-                    logger.exception(
-                        "Failed to persist",
-                        extra={
-                            "event": LogEvent.OPERATION_FAILED,
-                            "ws_id": ws.id,
-                            "operation": action.operation.value,
-                            "error_class": "transient",
-                        },
-                    )
-            persist_duration = time.monotonic() - persist_start
-            persist_ms = persist_duration * 1000
             WC_PERSIST_DURATION.observe(persist_duration)
+
+            # Tick summary for logging (metrics removed - logs are sufficient)
+            processed_count = len(workspaces)
+            changed_count = sum(action_counts.values())
 
             # Log reconcile result only when state changes OR hourly heartbeat
             duration_ms = (time.monotonic() - tick_start) * 1000
-            current_state = (len(workspaces), sum(action_counts.values()))
+            current_state = (processed_count, changed_count)
             now = time.monotonic()
 
             log_extra = {
                 "event": LogEvent.RECONCILE_COMPLETE,
                 "tick_id": tick_id,
-                "processed": len(workspaces),
-                "changed": sum(action_counts.values()),
+                "processed": processed_count,
+                "changed": changed_count,
                 "actions": dict(action_counts) if action_counts else {},
                 "duration_ms": duration_ms,
                 "load_ms": load_ms,
@@ -246,7 +252,7 @@ class WorkspaceController(CoordinatorBase):
                         "tick_id": tick_id,
                         "duration_ms": duration_ms,
                         "threshold_ms": _logging_config.slow_threshold_ms,
-                        "processed": len(workspaces),
+                        "processed": processed_count,
                         "load_ms": load_ms,
                         "plan_ms": plan_ms,
                         "exec_ms": exec_ms,

@@ -23,25 +23,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 2, "w": 5, "x": 0, "y": 1 },
-      "id": 1,
-      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "name" },
-      "targets": [{ "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "codehub_coordinator_is_leader{coordinator=\"gc\"}", "legendFormat": "gc", "refId": "A" }],
-      "title": "",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [{ "options": { "0": { "color": "red", "text": "Follower" }, "1": { "color": "green", "text": "Leader" } }, "type": "value" }],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 2, "w": 5, "x": 5, "y": 1 },
+      "gridPos": { "h": 2, "w": 6, "x": 0, "y": 1 },
       "id": 1001,
       "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "name" },
       "targets": [{ "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "codehub_coordinator_is_leader{coordinator=\"observer\"}", "legendFormat": "observer", "refId": "A" }],
@@ -59,25 +41,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 2, "w": 5, "x": 10, "y": 1 },
-      "id": 1002,
-      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "name" },
-      "targets": [{ "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "codehub_coordinator_is_leader{coordinator=\"ttl\"}", "legendFormat": "ttl", "refId": "A" }],
-      "title": "",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [{ "options": { "0": { "color": "red", "text": "Follower" }, "1": { "color": "green", "text": "Leader" } }, "type": "value" }],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 2, "w": 5, "x": 15, "y": 1 },
+      "gridPos": { "h": 2, "w": 6, "x": 6, "y": 1 },
       "id": 1003,
       "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "name" },
       "targets": [{ "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "codehub_coordinator_is_leader{coordinator=\"wc\"}", "legendFormat": "wc", "refId": "A" }],
@@ -95,7 +59,25 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 2, "w": 4, "x": 20, "y": 1 },
+      "gridPos": { "h": 2, "w": 6, "x": 12, "y": 1 },
+      "id": 1002,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "name" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "codehub_coordinator_is_leader{coordinator=\"scheduler\"}", "legendFormat": "scheduler", "refId": "A" }],
+      "title": "",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [{ "options": { "0": { "color": "red", "text": "Follower" }, "1": { "color": "green", "text": "Leader" } }, "type": "value" }],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 2, "w": 6, "x": 18, "y": 1 },
       "id": 1004,
       "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "name" },
       "targets": [{ "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "codehub_event_listener_is_leader", "legendFormat": "event_listener", "refId": "A" }],
@@ -192,7 +174,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_coordinator_tick_duration_seconds_sum[1m]) / rate(codehub_coordinator_tick_duration_seconds_count[1m])",
+          "expr": "rate(codehub_coordinator_tick_duration_seconds_sum[1m]) / (rate(codehub_coordinator_tick_duration_seconds_count[1m]) > 0)",
           "legendFormat": "{{ coordinator }}",
           "refId": "A"
         }
@@ -642,19 +624,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_observer_load_duration_seconds_sum[1m]) / rate(codehub_observer_load_duration_seconds_count[1m])",
+          "expr": "rate(codehub_observer_load_duration_seconds_sum[1m]) / (rate(codehub_observer_load_duration_seconds_count[1m]) > 0)",
           "legendFormat": "load (DB)",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_observer_observe_duration_seconds_sum[1m]) / rate(codehub_observer_observe_duration_seconds_count[1m])",
+          "expr": "rate(codehub_observer_observe_duration_seconds_sum[1m]) / (rate(codehub_observer_observe_duration_seconds_count[1m]) > 0)",
           "legendFormat": "observe (API)",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_observer_update_duration_seconds_sum[1m]) / rate(codehub_observer_update_duration_seconds_count[1m])",
+          "expr": "rate(codehub_observer_update_duration_seconds_sum[1m]) / (rate(codehub_observer_update_duration_seconds_count[1m]) > 0)",
           "legendFormat": "update (DB)",
           "refId": "C"
         }
@@ -703,19 +685,19 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_observer_api_duration_seconds_sum{api=\"containers\"}[1m]) / rate(codehub_observer_api_duration_seconds_count{api=\"containers\"}[1m])",
+          "expr": "rate(codehub_observer_api_duration_seconds_sum{api=\"containers\"}[1m]) / (rate(codehub_observer_api_duration_seconds_count{api=\"containers\"}[1m]) > 0)",
           "legendFormat": "containers",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_observer_api_duration_seconds_sum{api=\"volumes\"}[1m]) / rate(codehub_observer_api_duration_seconds_count{api=\"volumes\"}[1m])",
+          "expr": "rate(codehub_observer_api_duration_seconds_sum{api=\"volumes\"}[1m]) / (rate(codehub_observer_api_duration_seconds_count{api=\"volumes\"}[1m]) > 0)",
           "legendFormat": "volumes",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_observer_api_duration_seconds_sum{api=\"archives\"}[1m]) / rate(codehub_observer_api_duration_seconds_count{api=\"archives\"}[1m])",
+          "expr": "rate(codehub_observer_api_duration_seconds_sum{api=\"archives\"}[1m]) / (rate(codehub_observer_api_duration_seconds_count{api=\"archives\"}[1m]) > 0)",
           "legendFormat": "archives",
           "refId": "C"
         }
@@ -728,153 +710,6 @@
       "id": 300,
       "title": "WorkspaceController",
       "type": "row"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Operations executed per minute by type",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": { "group": "A", "mode": "normal" },
-            "thresholdsStyle": { "mode": "off" }
-          },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
-          "unit": "opm"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 37 },
-      "id": 20,
-      "options": {
-        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "increase(codehub_wc_operations_total[1m])",
-          "legendFormat": "{{ operation }}",
-          "refId": "A"
-        }
-      ],
-      "title": "Operations Rate (per min)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Operation errors per minute by class",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": { "group": "A", "mode": "normal" },
-            "thresholdsStyle": { "mode": "off" }
-          },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }] },
-          "unit": "opm"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 37 },
-      "id": 21,
-      "options": {
-        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_wc_errors_total[1m]) * 60",
-          "legendFormat": "{{ error_class }}",
-          "refId": "A"
-        }
-      ],
-      "title": "Errors Rate (per min)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "작업별 평균 소요 시간",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "off" }
-          },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 43 },
-      "id": 22,
-      "options": {
-        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "(increase(codehub_wc_operation_duration_seconds_sum[1m]) / increase(codehub_wc_operation_duration_seconds_count[1m])) or vector(0)",
-          "legendFormat": "{{ operation }}",
-          "refId": "A"
-        }
-      ],
-      "title": "Operation Duration",
-      "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
@@ -907,7 +742,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 49 },
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 37 },
       "id": 23,
       "options": {
         "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
@@ -917,25 +752,25 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_wc_load_duration_seconds_sum[1m]) / rate(codehub_wc_load_duration_seconds_count[1m])",
+          "expr": "rate(codehub_wc_load_duration_seconds_sum[1m]) / (rate(codehub_wc_load_duration_seconds_count[1m]) > 0)",
           "legendFormat": "load (DB)",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_wc_plan_duration_seconds_sum[1m]) / rate(codehub_wc_plan_duration_seconds_count[1m])",
+          "expr": "rate(codehub_wc_plan_duration_seconds_sum[1m]) / (rate(codehub_wc_plan_duration_seconds_count[1m]) > 0)",
           "legendFormat": "plan (CPU)",
           "refId": "B"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_wc_execute_duration_seconds_sum[1m]) / rate(codehub_wc_execute_duration_seconds_count[1m])",
+          "expr": "rate(codehub_wc_execute_duration_seconds_sum[1m]) / (rate(codehub_wc_execute_duration_seconds_count[1m]) > 0)",
           "legendFormat": "execute (API)",
           "refId": "C"
         },
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_wc_persist_duration_seconds_sum[1m]) / rate(codehub_wc_persist_duration_seconds_count[1m])",
+          "expr": "rate(codehub_wc_persist_duration_seconds_sum[1m]) / (rate(codehub_wc_persist_duration_seconds_count[1m]) > 0)",
           "legendFormat": "persist (DB)",
           "refId": "D"
         }
@@ -944,14 +779,14 @@
       "type": "timeseries"
     },
     {
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 54 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
       "id": 400,
       "title": "TTL Manager",
       "type": "row"
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "TTL expirations triggering state transitions",
+      "description": "Idle workspace auto-transitions\n- running_to_standby: idle timeout exceeded → container stopped\n- standby_to_archived: standby timeout exceeded → archived to S3",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -961,8 +796,8 @@
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
-            "drawStyle": "bars",
-            "fillOpacity": 100,
+            "drawStyle": "line",
+            "fillOpacity": 10,
             "gradientMode": "none",
             "hideFrom": { "legend": false, "tooltip": false, "viz": false },
             "lineInterpolation": "linear",
@@ -971,7 +806,7 @@
             "scaleDistribution": { "type": "linear" },
             "showPoints": "never",
             "spanNulls": false,
-            "stacking": { "group": "A", "mode": "normal" },
+            "stacking": { "group": "A", "mode": "none" },
             "thresholdsStyle": { "mode": "off" }
           },
           "mappings": [],
@@ -980,7 +815,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 55 },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 43 },
       "id": 30,
       "options": {
         "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true },
@@ -1000,7 +835,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Activities synced from Redis to DB per minute",
+      "description": "Activities synced from Redis to DB by TTLRunner",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -1029,10 +864,10 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 55 },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 43 },
       "id": 31,
       "options": {
-        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "right", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "pluginVersion": "12.3.1",
@@ -1044,7 +879,231 @@
           "refId": "A"
         }
       ],
-      "title": "Activity Sync Rate (per min)",
+      "title": "Activity Sync",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "description": "Sync duration (Redis to DB)",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 43 },
+      "id": 32,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "codehub_ttl_sync_duration_seconds * 1000",
+          "legendFormat": "sync_duration",
+          "refId": "A"
+        }
+      ],
+      "title": "Sync Duration",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 49 },
+      "id": 600,
+      "title": "Circuit Breaker",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "description": "서킷브레이커 상태\n- 0: Closed (정상)\n- 1: Half-Open (테스트 중)\n- 2: Open (차단)",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [{ "options": { "0": { "color": "green", "text": "Closed" }, "1": { "color": "yellow", "text": "Half-Open" }, "2": { "color": "red", "text": "Open" } }, "type": "value" }],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 2 }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 50 },
+      "id": 601,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "codehub_circuit_breaker_state{circuit=\"external\"}", "legendFormat": "external", "refId": "A" }],
+      "title": "Circuit State",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "description": "서킷브레이커 호출 성공/실패 비율",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "opm"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "failure" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "success" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] }
+        ]
+      },
+      "gridPos": { "h": 5, "w": 9, "x": 6, "y": 50 },
+      "id": 602,
+      "options": {
+        "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "rate(codehub_circuit_breaker_calls_total{circuit=\"external\"}[1m]) * 60",
+          "legendFormat": "{{ result }}",
+          "refId": "A"
+        }
+      ],
+      "title": "Circuit Breaker Calls (per min)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "description": "서킷 오픈 상태로 거부된 요청 수",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }] },
+          "unit": "opm"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 9, "x": 15, "y": 50 },
+      "id": 603,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "rate(codehub_circuit_breaker_rejections_total{circuit=\"external\"}[1m]) * 60",
+          "legendFormat": "rejections",
+          "refId": "A"
+        }
+      ],
+      "title": "Circuit Breaker Rejections (per min)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "description": "외부 호출 에러 분류별 카운트\n- timeout: 타임아웃\n- transient: 재시도 가능 에러\n- permanent: 재시도 불가 에러\n- circuit_open: 서킷 오픈으로 거부\n- unknown: 분류 불가",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 100,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 55 },
+      "id": 604,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "12.3.1",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "increase(codehub_external_call_errors_total[1m])",
+          "legendFormat": "{{ error_class }}",
+          "refId": "A"
+        }
+      ],
+      "title": "External Call Errors",
       "type": "timeseries"
     }
   ],
