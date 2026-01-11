@@ -48,6 +48,12 @@
           "expr": "codehub_coordinator_is_leader",
           "legendFormat": "{{ coordinator }}",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "codehub_event_listener_is_leader",
+          "legendFormat": "event_listener",
+          "refId": "B"
         }
       ],
       "title": "Control Plane Leadership",
@@ -159,47 +165,6 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "PostgreSQL NOTIFY를 Redis로 전달하는 CDC 컴포넌트",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "thresholds" },
-          "mappings": [
-            { "options": { "0": { "color": "red", "text": "Follower" }, "1": { "color": "green", "text": "Leader" } }, "type": "value" }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }]
-          },
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 5, "w": 3, "x": 0, "y": 13 },
-      "id": 55,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_event_listener_is_leader",
-          "legendFormat": "EventListener",
-          "refId": "A"
-        }
-      ],
-      "title": "EventListener Leader",
-      "type": "stat"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
       "description": "PostgreSQL에서 수신한 변경 알림\n- ws_sse: UI 업데이트용\n- ws_wake: Coordinator 깨우기용",
       "fieldConfig": {
         "defaults": {
@@ -229,7 +194,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 5, "w": 7, "x": 3, "y": 13 },
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 13 },
       "id": 50,
       "options": {
         "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "right", "showLegend": true },
@@ -278,7 +243,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 5, "w": 7, "x": 10, "y": 13 },
+      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 13 },
       "id": 51,
       "options": {
         "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "right", "showLegend": true },
@@ -333,7 +298,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 5, "w": 7, "x": 17, "y": 13 },
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 13 },
       "id": 52,
       "options": {
         "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "right", "showLegend": true },
