@@ -197,7 +197,8 @@ WC_LOAD_DURATION = Histogram(
 WC_PLAN_DURATION = Histogram(
     "codehub_wc_plan_duration_seconds",
     "Duration of judge + plan computation",
-    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0),
+    # Buckets start at 100µs for fast CPU-only operations
+    buckets=(0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1),
 )
 
 WC_EXECUTE_DURATION = Histogram(

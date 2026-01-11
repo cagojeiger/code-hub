@@ -811,21 +811,21 @@
           },
           "mappings": [],
           "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
-          "unit": "short"
+          "unit": "opm"
         },
         "overrides": []
       },
       "gridPos": { "h": 6, "w": 8, "x": 0, "y": 43 },
       "id": 30,
       "options": {
-        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "right", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "pluginVersion": "12.3.1",
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "increase(codehub_ttl_expirations_total[1m])",
+          "expr": "rate(codehub_ttl_expirations_total[1m]) * 60",
           "legendFormat": "{{ transition }}",
           "refId": "A"
         }
