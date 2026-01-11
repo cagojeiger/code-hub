@@ -14,17 +14,17 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Total connections across all workers vs system limit\nLimit = (pool_size + max_overflow) × worker count",
+      "description": "Total PostgreSQL connections across all workers",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
           "mappings": [],
           "thresholds": {
-            "mode": "percentage",
+            "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 70 },
-              { "color": "red", "value": 90 }
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 100 }
             ]
           },
           "unit": "none",
@@ -50,39 +50,24 @@
           "expr": "sum(codehub_postgresql_pool_total)",
           "legendFormat": "current",
           "refId": "A"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "(codehub_postgresql_pool_size + codehub_postgresql_max_overflow) * count(codehub_postgresql_connected_workers)",
-          "legendFormat": "limit",
-          "refId": "B"
         }
       ],
       "title": "PostgreSQL Total",
-      "transformations": [
-        {
-          "id": "configFromData",
-          "options": {
-            "configRefId": "B",
-            "mappings": [{ "fieldName": "limit", "handlerKey": "max" }]
-          }
-        }
-      ],
-      "type": "gauge"
+      "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Total Redis connections across all workers\nLimit = max_connections × worker count",
+      "description": "Total Redis connections across all workers",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
           "mappings": [],
           "thresholds": {
-            "mode": "percentage",
+            "mode": "absolute",
             "steps": [
               { "color": "green", "value": null },
-              { "color": "yellow", "value": 70 },
-              { "color": "red", "value": 90 }
+              { "color": "yellow", "value": 20 },
+              { "color": "red", "value": 50 }
             ]
           },
           "unit": "none",
@@ -108,25 +93,10 @@
           "expr": "sum(codehub_redis_pool_total)",
           "legendFormat": "current",
           "refId": "A"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_redis_max_connections * count(codehub_redis_connected_workers)",
-          "legendFormat": "limit",
-          "refId": "B"
         }
       ],
       "title": "Redis Total",
-      "transformations": [
-        {
-          "id": "configFromData",
-          "options": {
-            "configRefId": "B",
-            "mappings": [{ "fieldName": "limit", "handlerKey": "max" }]
-          }
-        }
-      ],
-      "type": "gauge"
+      "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
@@ -323,7 +293,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Total pool connections (sum of all workers)\nLimit = (pool_size + max_overflow) × workers",
+      "description": "Total pool connections (sum of all workers)",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -364,14 +334,6 @@
           {
             "matcher": { "id": "byName", "options": "total (sum)" },
             "properties": [{ "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } }]
-          },
-          {
-            "matcher": { "id": "byName", "options": "limit" },
-            "properties": [
-              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } },
-              { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } },
-              { "id": "custom.fillOpacity", "value": 0 }
-            ]
           }
         ]
       },
@@ -400,12 +362,6 @@
           "expr": "sum(codehub_postgresql_pool_total)",
           "legendFormat": "total (sum)",
           "refId": "C"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "(codehub_postgresql_pool_size + codehub_postgresql_max_overflow) * count(codehub_postgresql_connected_workers)",
-          "legendFormat": "limit",
-          "refId": "D"
         }
       ],
       "title": "Pool Usage (System Total)",
@@ -561,7 +517,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Total Redis pool connections (sum of all workers)\nLimit = max_connections × workers",
+      "description": "Total Redis pool connections (sum of all workers)",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -602,14 +558,6 @@
           {
             "matcher": { "id": "byName", "options": "total (sum)" },
             "properties": [{ "id": "color", "value": { "fixedColor": "purple", "mode": "fixed" } }]
-          },
-          {
-            "matcher": { "id": "byName", "options": "limit" },
-            "properties": [
-              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } },
-              { "id": "custom.lineStyle", "value": { "dash": [10, 10], "fill": "dash" } },
-              { "id": "custom.fillOpacity", "value": 0 }
-            ]
           }
         ]
       },
@@ -638,12 +586,6 @@
           "expr": "sum(codehub_redis_pool_total)",
           "legendFormat": "total (sum)",
           "refId": "C"
-        },
-        {
-          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_redis_max_connections * count(codehub_redis_connected_workers)",
-          "legendFormat": "limit",
-          "refId": "D"
         }
       ],
       "title": "Pool Usage (System Total)",
