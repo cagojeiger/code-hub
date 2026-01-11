@@ -14,7 +14,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Which coordinator is currently the leader (1=leader)",
+      "description": "각 컴포넌트의 리더 선출 상태 (HA 구성에서 1개만 Leader)",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -50,12 +50,12 @@
           "refId": "A"
         }
       ],
-      "title": "Coordinator Leadership",
+      "title": "Control Plane Leadership",
       "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Tick executions per minute by coordinator",
+      "description": "분당 상태 점검(Reconcile) 횟수 - 높을수록 빠른 반응",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -99,12 +99,12 @@
           "refId": "A"
         }
       ],
-      "title": "Tick Rate (per min)",
+      "title": "Reconcile Rate (per min)",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Tick duration by coordinator (p95)",
+      "description": "상태 점검(Reconcile) 소요 시간 95번째 백분위수",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -148,18 +148,18 @@
           "refId": "A"
         }
       ],
-      "title": "Tick Duration (p95)",
+      "title": "Reconcile Duration (p95)",
       "type": "timeseries"
     },
     {
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 12 },
       "id": 500,
-      "title": "Event Pipeline",
+      "title": "Event Pipeline (DB → Redis → Coordinator)",
       "type": "row"
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "EventListener leadership status (1=leader)",
+      "description": "PostgreSQL NOTIFY를 Redis로 전달하는 CDC 컴포넌트",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -195,12 +195,12 @@
           "refId": "A"
         }
       ],
-      "title": "EventListener",
+      "title": "EventListener Leader",
       "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "PostgreSQL NOTIFY events received per minute",
+      "description": "PostgreSQL에서 수신한 변경 알림\n- ws_sse: UI 업데이트용\n- ws_wake: Coordinator 깨우기용",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -244,12 +244,12 @@
           "refId": "A"
         }
       ],
-      "title": "NOTIFY Received (per min)",
+      "title": "DB NOTIFY → EventListener",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Events published to Redis per minute",
+      "description": "Redis로 발행한 이벤트\n- SSE: 클라이언트 UI 알림\n- Wake: Coordinator 깨우기",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -299,12 +299,12 @@
           "refId": "B"
         }
       ],
-      "title": "Published (per min)",
+      "title": "EventListener → Redis",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Wake events received by coordinators per minute",
+      "description": "Coordinator가 수신한 Wake 신호 (Observer, WC)",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -348,12 +348,12 @@
           "refId": "A"
         }
       ],
-      "title": "Wake Received (per min)",
+      "title": "Redis → Coordinator",
       "type": "timeseries"
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Event queue backlog (should be 0 normally)",
+      "description": "처리 대기 중인 이벤트 수 (정상: 0)",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "thresholds" },
@@ -391,12 +391,12 @@
           "refId": "A"
         }
       ],
-      "title": "Event Queue Size",
+      "title": "EventListener Queue",
       "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "EventListener errors per minute",
+      "description": "이벤트 처리 중 발생한 에러 (sse, wake)",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -440,7 +440,7 @@
           "refId": "A"
         }
       ],
-      "title": "Event Errors (per min)",
+      "title": "EventListener Errors",
       "type": "timeseries"
     },
     {
