@@ -26,6 +26,8 @@ from codehub.app.metrics.collector import (
     WC_CAS_FAILURES_TOTAL,
     WC_EXECUTE_DURATION,
     WC_LOAD_DURATION,
+    WC_OPERATION_FAST_DURATION,
+    WC_OPERATION_S3_DURATION,
     WC_PERSIST_DURATION,
     WC_PLAN_DURATION,
 )
@@ -277,6 +279,9 @@ class WorkspaceController(CoordinatorBase):
         """
         return needs_execute(action, Operation(ws.operation))
 
+    # S3 operations (long-running, separate histogram buckets)
+    _S3_OPERATIONS = {Operation.ARCHIVING, Operation.RESTORING}
+
     async def _execute(self, ws: Workspace, action: PlanAction) -> None:
         """Actuator 호출.
 
@@ -284,39 +289,48 @@ class WorkspaceController(CoordinatorBase):
         - ARCHIVING: archive() → delete_volume()
         - DELETING: delete() → delete_volume()
         """
-        match action.operation:
-            case Operation.PROVISIONING:
-                await self._sp.provision(ws.id)
+        start = time.perf_counter()
+        try:
+            match action.operation:
+                case Operation.PROVISIONING:
+                    await self._sp.provision(ws.id)
 
-            case Operation.RESTORING:
-                if ws.archive_key:
-                    await self._sp.restore(ws.id, ws.archive_key)
-                    action.restore_marker = ws.archive_key  # 완료 확인용 marker
+                case Operation.RESTORING:
+                    if ws.archive_key:
+                        await self._sp.restore(ws.id, ws.archive_key)
+                        action.restore_marker = ws.archive_key  # 완료 확인용 marker
 
-            case Operation.STARTING:
-                await self._ic.start(ws.id, ws.image_ref)
+                case Operation.STARTING:
+                    await self._ic.start(ws.id, ws.image_ref)
 
-            case Operation.STOPPING:
-                await self._ic.delete(ws.id)
+                case Operation.STOPPING:
+                    await self._ic.delete(ws.id)
 
-            case Operation.ARCHIVING:
-                # 3단계 operation: archive → delete container → delete_volume
-                # 컨테이너 삭제 추가: Exited 컨테이너도 볼륨 참조하므로 먼저 삭제 필요
-                op_id = action.op_id or ws.op_id or str(uuid4())
-                archive_key = await self._sp.archive(ws.id, op_id)
-                action.archive_key = archive_key
-                await self._ic.delete(ws.id)  # Exited 컨테이너 정리 (idempotent)
-                await self._sp.delete_volume(ws.id)
+                case Operation.ARCHIVING:
+                    # 3단계 operation: archive → delete container → delete_volume
+                    # 컨테이너 삭제 추가: Exited 컨테이너도 볼륨 참조하므로 먼저 삭제 필요
+                    op_id = action.op_id or ws.op_id or str(uuid4())
+                    archive_key = await self._sp.archive(ws.id, op_id)
+                    action.archive_key = archive_key
+                    await self._ic.delete(ws.id)  # Exited 컨테이너 정리 (idempotent)
+                    await self._sp.delete_volume(ws.id)
 
-            case Operation.CREATE_EMPTY_ARCHIVE:
-                op_id = action.op_id or ws.op_id or str(uuid4())
-                archive_key = await self._sp.create_empty_archive(ws.id, op_id)
-                action.archive_key = archive_key
+                case Operation.CREATE_EMPTY_ARCHIVE:
+                    op_id = action.op_id or ws.op_id or str(uuid4())
+                    archive_key = await self._sp.create_empty_archive(ws.id, op_id)
+                    action.archive_key = archive_key
 
-            case Operation.DELETING:
-                # 2단계 operation: delete container → delete_volume (계약 #8)
-                await self._ic.delete(ws.id)
-                await self._sp.delete_volume(ws.id)
+                case Operation.DELETING:
+                    # 2단계 operation: delete container → delete_volume (계약 #8)
+                    await self._ic.delete(ws.id)
+                    await self._sp.delete_volume(ws.id)
+        finally:
+            duration = time.perf_counter() - start
+            op_name = action.operation.name
+            if action.operation in self._S3_OPERATIONS:
+                WC_OPERATION_S3_DURATION.labels(operation=op_name).observe(duration)
+            else:
+                WC_OPERATION_FAST_DURATION.labels(operation=op_name).observe(duration)
 
     async def _persist(self, ws: Workspace, action: PlanAction) -> None:
         """CAS 패턴으로 DB 저장.

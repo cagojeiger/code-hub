@@ -207,6 +207,21 @@ WC_EXECUTE_DURATION = Histogram(
     buckets=(0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 120.0),
 )
 
+# Operation-level metrics for detailed latency analysis
+WC_OPERATION_FAST_DURATION = Histogram(
+    "codehub_wc_operation_fast_duration_seconds",
+    "Duration of fast WC operations (container/volume)",
+    ["operation"],  # STARTING, STOPPING, PROVISIONING, DELETING, CREATE_EMPTY_ARCHIVE
+    buckets=(0.1, 0.5, 1.0, 2.0, 5.0, 10.0),
+)
+
+WC_OPERATION_S3_DURATION = Histogram(
+    "codehub_wc_operation_s3_duration_seconds",
+    "Duration of S3 WC operations (archive/restore)",
+    ["operation"],  # ARCHIVING, RESTORING
+    buckets=(0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 120.0),
+)
+
 WC_PERSIST_DURATION = Histogram(
     "codehub_wc_persist_duration_seconds",
     "Duration of CAS persist to DB",
@@ -359,6 +374,12 @@ def _init_metrics() -> None:
     WS_ERRORS.labels(error_type="connection_failed")
     WS_ERRORS.labels(error_type="connection_closed")
     WS_ERRORS.labels(error_type="relay_error")
+
+    # WC Operations (may never happen if no state changes)
+    for op in ["STARTING", "STOPPING", "PROVISIONING", "DELETING", "CREATE_EMPTY_ARCHIVE"]:
+        WC_OPERATION_FAST_DURATION.labels(operation=op)
+    for op in ["ARCHIVING", "RESTORING"]:
+        WC_OPERATION_S3_DURATION.labels(operation=op)
 
 
 _init_metrics()

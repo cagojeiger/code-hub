@@ -82,7 +82,7 @@ class TTLRunner:
             logger.exception("TTL check failed: %s", e)
             raise
 
-    async def _sync_to_db(self) -> None:
+    async def _sync_to_db(self) -> int:
         """Sync Redis last_access:* to DB last_access_at."""
         # 1. Redis scan
         redis_start = time.monotonic()
@@ -91,7 +91,7 @@ class TTLRunner:
 
         if not activities:
             TTL_SYNC_DB_DURATION.observe(0)  # No activities to sync
-            return
+            return 0
 
         ws_ids = list(activities.keys())
         timestamps = [
@@ -117,6 +117,7 @@ class TTLRunner:
             await self._activity.delete(updated_ids)
 
         logger.debug("Synced %d workspace activities to DB", len(updated_ids))
+        return len(updated_ids)
 
     async def _check_standby_ttl(self) -> int:
         """Check standby_ttl for RUNNING workspaces."""

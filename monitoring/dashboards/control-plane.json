@@ -420,6 +420,8 @@
             "mode": "thresholds"
           },
           "mappings": [],
+          "min": 0,
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -473,12 +475,12 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le, coordinator) (rate(codehub_coordinator_reconcile_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le, coordinator) (rate(codehub_coordinator_reconcile_duration_seconds_bucket[1h])))",
           "legendFormat": "{{ coordinator }}",
           "refId": "A"
         }
       ],
-      "title": "Reconcile p99 [5m]",
+      "title": "Reconcile p99 [1h]",
       "type": "bargauge"
     },
     {
@@ -646,6 +648,8 @@
             "mode": "thresholds"
           },
           "mappings": [],
+          "min": 0,
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -699,7 +703,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[1h])))",
           "legendFormat": "load (DB)",
           "refId": "A"
         },
@@ -708,7 +712,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_observe_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_observe_duration_seconds_bucket[1h])))",
           "legendFormat": "observe (API)",
           "refId": "B"
         },
@@ -717,12 +721,12 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_update_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_update_duration_seconds_bucket[1h])))",
           "legendFormat": "update (DB)",
           "refId": "C"
         }
       ],
-      "title": "Observer Stage p99 [5m]",
+      "title": "Observer Stage p99 [1h]",
       "type": "bargauge"
     },
     {
@@ -737,6 +741,8 @@
             "mode": "thresholds"
           },
           "mappings": [],
+          "min": 0,
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -819,7 +825,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_load_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_load_duration_seconds_bucket[1h])))",
           "legendFormat": "load (DB)",
           "refId": "A"
         },
@@ -828,7 +834,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_plan_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_plan_duration_seconds_bucket[1h])))",
           "legendFormat": "plan (CPU)",
           "refId": "B"
         },
@@ -837,7 +843,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[1h])))",
           "legendFormat": "execute (API)",
           "refId": "C"
         },
@@ -846,12 +852,12 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_persist_duration_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_persist_duration_seconds_bucket[1h])))",
           "legendFormat": "persist (DB)",
           "refId": "D"
         }
       ],
-      "title": "WC Stage p99 [5m]",
+      "title": "WC Stage p99 [1h]",
       "type": "bargauge"
     },
     {
@@ -859,77 +865,117 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
-      "description": "Duration of fast WC operations (container/volume)",
+      "description": "99th percentile duration of WC operations",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "mode": "thresholds"
           },
           "mappings": [],
+          "min": 0,
+          "noValue": "0",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 30
               }
             ]
           },
           "unit": "s"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ARCHIVING"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 30
+                    },
+                    {
+                      "color": "red",
+                      "value": 120
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "RESTORING"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 30
+                    },
+                    {
+                      "color": "red",
+                      "value": 120
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
-        "h": 5,
-        "w": 12,
+        "h": 4,
+        "w": 24,
         "x": 0,
         "y": 17
       },
       "id": 303,
       "options": {
-        "legend": {
+        "displayMode": "lcd",
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
           "calcs": [
-            "mean",
-            "max"
+            "lastNotNull"
           ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
+          "fields": "",
+          "values": false
         },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
+        "showUnfilled": true,
+        "sizing": "auto",
+        "valueMode": "color"
       },
       "pluginVersion": "12.3.1",
       "targets": [
@@ -938,112 +984,29 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "rate(codehub_wc_operation_fast_duration_seconds_sum[1m]) / (rate(codehub_wc_operation_fast_duration_seconds_count[1m]) > 0)",
+          "expr": "histogram_quantile(0.99, sum by (le, operation) (rate(codehub_wc_operation_fast_duration_seconds_bucket[1h])))",
           "legendFormat": "{{ operation }}",
           "refId": "A"
-        }
-      ],
-      "title": "WC Operation (Fast)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "description": "Duration of S3 WC operations (archive/restore)",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "s"
         },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 12,
-        "x": 12,
-        "y": 17
-      },
-      "id": 304,
-      "options": {
-        "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "rate(codehub_wc_operation_s3_duration_seconds_sum[1m]) / (rate(codehub_wc_operation_s3_duration_seconds_count[1m]) > 0)",
+          "expr": "histogram_quantile(0.99, sum by (le, operation) (rate(codehub_wc_operation_s3_duration_seconds_bucket[1h])))",
           "legendFormat": "{{ operation }}",
-          "refId": "A"
+          "refId": "B"
         }
       ],
-      "title": "WC Operation (S3)",
-      "type": "timeseries"
+      "title": "WC Operation p99 [1h]",
+      "type": "bargauge"
     },
     {
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 22
+        "y": 21
       },
       "id": 500,
       "title": "Throughput & Events",
@@ -1108,7 +1071,7 @@
         "h": 5,
         "w": 24,
         "x": 0,
-        "y": 18
+        "y": 22
       },
       "id": 2,
       "options": {
@@ -1199,7 +1162,7 @@
         "h": 5,
         "w": 8,
         "x": 0,
-        "y": 23
+        "y": 27
       },
       "id": 50,
       "options": {
@@ -1290,7 +1253,7 @@
         "h": 5,
         "w": 8,
         "x": 8,
-        "y": 23
+        "y": 27
       },
       "id": 51,
       "options": {
@@ -1390,7 +1353,7 @@
         "h": 5,
         "w": 8,
         "x": 16,
-        "y": 23
+        "y": 27
       },
       "id": 52,
       "options": {
@@ -1427,7 +1390,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 28
+        "y": 32
       },
       "id": 200,
       "title": "Resources",
@@ -1462,7 +1425,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 29
+        "y": 33
       },
       "id": 10,
       "options": {
@@ -1525,7 +1488,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 29
+        "y": 33
       },
       "id": 11,
       "options": {
@@ -1588,7 +1551,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 29
+        "y": 33
       },
       "id": 12,
       "options": {
@@ -1651,7 +1614,7 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 29
+        "y": 33
       },
       "id": 13,
       "options": {
@@ -1691,7 +1654,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 33
+        "y": 37
       },
       "id": 201,
       "panels": [
@@ -2145,7 +2108,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 34
+        "y": 38
       },
       "id": 300,
       "panels": [
@@ -2386,6 +2349,212 @@
           ],
           "title": "WC Stage Duration (p99)",
           "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "description": "95th percentile WC operation duration over time",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "min": 0,
+              "noValue": "0",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 24,
+            "x": 0,
+            "y": 45
+          },
+          "id": 305,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(codehub_wc_operation_fast_duration_seconds_bucket[5m])))",
+              "legendFormat": "{{ operation }}",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(codehub_wc_operation_s3_duration_seconds_bucket[5m])))",
+              "legendFormat": "{{ operation }}",
+              "refId": "B"
+            }
+          ],
+          "title": "WC Operation Duration (p95)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "description": "99th percentile WC operation duration over time",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "min": 0,
+              "noValue": "0",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 24,
+            "x": 0,
+            "y": 50
+          },
+          "id": 306,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le, operation) (rate(codehub_wc_operation_fast_duration_seconds_bucket[5m])))",
+              "legendFormat": "{{ operation }}",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le, operation) (rate(codehub_wc_operation_s3_duration_seconds_bucket[5m])))",
+              "legendFormat": "{{ operation }}",
+              "refId": "B"
+            }
+          ],
+          "title": "WC Operation Duration (p99)",
+          "type": "timeseries"
         }
       ],
       "title": "WC Details",
@@ -2397,7 +2566,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 35
+        "y": 39
       },
       "id": 400,
       "panels": [
@@ -2457,8 +2626,8 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 6,
-            "w": 8,
+            "h": 5,
+            "w": 12,
             "x": 0,
             "y": 36
           },
@@ -2497,7 +2666,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "description": "Redis scan and DB update stage duration",
+          "description": "Redis scan and DB update stage duration (95th percentile)",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -2534,6 +2703,8 @@
                 }
               },
               "mappings": [],
+              "min": 0,
+              "noValue": "0",
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
@@ -2548,10 +2719,10 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 6,
-            "w": 8,
-            "x": 8,
-            "y": 36
+            "h": 5,
+            "w": 12,
+            "x": 0,
+            "y": 41
           },
           "id": 31,
           "options": {
@@ -2591,6 +2762,109 @@
             }
           ],
           "title": "Sync Stage Duration (p95)",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "description": "Redis scan and DB update stage duration (99th percentile)",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisBorderShow": false,
+                "axisCenteredZero": false,
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "min": 0,
+              "noValue": "0",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 5,
+            "w": 12,
+            "x": 12,
+            "y": 41
+          },
+          "id": 307,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_ttl_sync_redis_duration_seconds_bucket[5m])))",
+              "legendFormat": "scan (Redis)",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_ttl_sync_db_duration_seconds_bucket[5m])))",
+              "legendFormat": "update (DB)",
+              "refId": "B"
+            }
+          ],
+          "title": "Sync Stage Duration (p99)",
           "type": "timeseries"
         },
         {
@@ -2649,9 +2923,9 @@
             "overrides": []
           },
           "gridPos": {
-            "h": 6,
-            "w": 8,
-            "x": 16,
+            "h": 5,
+            "w": 12,
+            "x": 12,
             "y": 36
           },
           "id": 32,
@@ -2694,7 +2968,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 36
+        "y": 40
       },
       "id": 600,
       "panels": [
