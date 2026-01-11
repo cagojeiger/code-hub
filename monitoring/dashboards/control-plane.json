@@ -23,7 +23,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 2, "w": 6, "x": 0, "y": 1 },
+      "gridPos": { "h": 2, "w": 5, "x": 0, "y": 1 },
       "id": 1001,
       "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "name" },
       "targets": [{ "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "codehub_coordinator_is_leader{coordinator=\"observer\"}", "legendFormat": "observer", "refId": "A" }],
@@ -41,7 +41,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 2, "w": 6, "x": 6, "y": 1 },
+      "gridPos": { "h": 2, "w": 5, "x": 5, "y": 1 },
       "id": 1003,
       "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "name" },
       "targets": [{ "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "codehub_coordinator_is_leader{coordinator=\"wc\"}", "legendFormat": "wc", "refId": "A" }],
@@ -59,7 +59,7 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 2, "w": 6, "x": 12, "y": 1 },
+      "gridPos": { "h": 2, "w": 5, "x": 10, "y": 1 },
       "id": 1002,
       "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "name" },
       "targets": [{ "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "codehub_coordinator_is_leader{coordinator=\"scheduler\"}", "legendFormat": "scheduler", "refId": "A" }],
@@ -77,10 +77,28 @@
         },
         "overrides": []
       },
-      "gridPos": { "h": 2, "w": 6, "x": 18, "y": 1 },
+      "gridPos": { "h": 2, "w": 5, "x": 15, "y": 1 },
       "id": 1004,
       "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "name" },
       "targets": [{ "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "codehub_event_listener_is_leader", "legendFormat": "event_listener", "refId": "A" }],
+      "title": "",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [{ "options": { "0": { "color": "green", "text": "Closed" }, "1": { "color": "yellow", "text": "Half-Open" }, "2": { "color": "red", "text": "Open" } }, "type": "value" }],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 2 }] },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 2, "w": 4, "x": 20, "y": 1 },
+      "id": 1005,
+      "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
+      "targets": [{ "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }, "expr": "codehub_circuit_breaker_state{circuit=\"external\"}", "legendFormat": "circuit", "refId": "A" }],
       "title": "",
       "type": "stat"
     },
