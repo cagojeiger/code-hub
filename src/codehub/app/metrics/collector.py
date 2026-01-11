@@ -230,15 +230,16 @@ TTL_EXPIRATIONS_TOTAL = Counter(
     ["transition"],  # running_to_standby, standby_to_archived
 )
 
-TTL_ACTIVITY_SYNCED_TOTAL = Counter(
-    "codehub_ttl_activity_synced_total",
-    "Total activities synced from Redis to DB",
+TTL_SYNC_REDIS_DURATION = Histogram(
+    "codehub_ttl_sync_redis_duration_seconds",
+    "Duration to scan activities from Redis",
+    buckets=(0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0),
 )
 
-TTL_SYNC_DURATION = Gauge(
-    "codehub_ttl_sync_duration_seconds",
-    "Last duration of TTLRunner sync operation (Redis to DB)",
-    multiprocess_mode="livesum",
+TTL_SYNC_DB_DURATION = Histogram(
+    "codehub_ttl_sync_db_duration_seconds",
+    "Duration to bulk update activities to DB",
+    buckets=(0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0),
 )
 
 # =============================================================================

@@ -853,7 +853,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Activities synced from Redis to DB by TTLRunner",
+      "description": "Redis scan 및 DB update 각 단계별 소요 시간",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -878,61 +878,12 @@
           },
           "mappings": [],
           "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
-          "unit": "opm"
+          "unit": "s"
         },
         "overrides": []
       },
       "gridPos": { "h": 6, "w": 8, "x": 8, "y": 43 },
       "id": 31,
-      "options": {
-        "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "right", "showLegend": true },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "pluginVersion": "12.3.1",
-      "targets": [
-        {
-          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "rate(codehub_ttl_activity_synced_total[1m]) * 60",
-          "legendFormat": "synced/min",
-          "refId": "A"
-        }
-      ],
-      "title": "Activity Sync",
-      "type": "timeseries"
-    },
-    {
-      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Sync duration (Redis to DB)",
-      "fieldConfig": {
-        "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "off" }
-          },
-          "mappings": [],
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
-          "unit": "ms"
-        },
-        "overrides": []
-      },
-      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 43 },
-      "id": 32,
       "options": {
         "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
         "tooltip": { "mode": "multi", "sort": "desc" }
@@ -941,12 +892,18 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "codehub_ttl_sync_duration_seconds * 1000",
-          "legendFormat": "sync_duration",
+          "expr": "rate(codehub_ttl_sync_redis_duration_seconds_sum[1m]) / (rate(codehub_ttl_sync_redis_duration_seconds_count[1m]) > 0)",
+          "legendFormat": "scan (Redis)",
           "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
+          "expr": "rate(codehub_ttl_sync_db_duration_seconds_sum[1m]) / (rate(codehub_ttl_sync_db_duration_seconds_count[1m]) > 0)",
+          "legendFormat": "update (DB)",
+          "refId": "B"
         }
       ],
-      "title": "Sync Duration",
+      "title": "Sync Stage Duration",
       "type": "timeseries"
     },
     {

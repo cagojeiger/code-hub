@@ -13,9 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
 from codehub.app.metrics.collector import (
-    TTL_ACTIVITY_SYNCED_TOTAL,
     TTL_EXPIRATIONS_TOTAL,
-    TTL_SYNC_DURATION,
+    TTL_SYNC_DB_DURATION,
+    TTL_SYNC_REDIS_DURATION,
 )
 from codehub.core.domain.workspace import DesiredState, Operation, Phase
 from codehub.core.logging_schema import LogEvent
@@ -48,9 +48,7 @@ class TTLRunner:
         """TTL 체크 실행."""
         try:
             # 1. Redis → DB 동기화
-            synced = await self._sync_to_db()
-            if synced > 0:
-                TTL_ACTIVITY_SYNCED_TOTAL.inc(synced)
+            await self._sync_to_db()
 
             # 2. standby_ttl 체크 (RUNNING → STANDBY)
             standby_expired = await self._check_standby_ttl()
@@ -84,20 +82,24 @@ class TTLRunner:
             logger.exception("TTL check failed: %s", e)
             raise
 
-    async def _sync_to_db(self) -> int:
+    async def _sync_to_db(self) -> None:
         """Sync Redis last_access:* to DB last_access_at."""
-        start = time.monotonic()
-
+        # 1. Redis scan
+        redis_start = time.monotonic()
         activities = await self._activity.scan_all()
+        TTL_SYNC_REDIS_DURATION.observe(time.monotonic() - redis_start)
+
         if not activities:
-            TTL_SYNC_DURATION.set(time.monotonic() - start)
-            return 0
+            TTL_SYNC_DB_DURATION.observe(0)  # No activities to sync
+            return
 
         ws_ids = list(activities.keys())
         timestamps = [
             datetime.fromtimestamp(ts, tz=timezone.utc) for ts in activities.values()
         ]
 
+        # 2. DB bulk update
+        db_start = time.monotonic()
         result = await self._conn.execute(
             text("""
                 UPDATE workspaces AS w
@@ -108,14 +110,13 @@ class TTLRunner:
             """),
             {"ids": ws_ids, "timestamps": timestamps},
         )
+        TTL_SYNC_DB_DURATION.observe(time.monotonic() - db_start)
 
         updated_ids = [row[0] for row in result.fetchall()]
         if updated_ids:
             await self._activity.delete(updated_ids)
 
-        TTL_SYNC_DURATION.set(time.monotonic() - start)
         logger.debug("Synced %d workspace activities to DB", len(updated_ids))
-        return len(updated_ids)
 
     async def _check_standby_ttl(self) -> int:
         """Check standby_ttl for RUNNING workspaces."""
