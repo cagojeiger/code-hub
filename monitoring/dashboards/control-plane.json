@@ -32,13 +32,13 @@
       "gridPos": { "h": 4, "w": 24, "x": 0, "y": 1 },
       "id": 1,
       "options": {
-        "colorMode": "value",
+        "colorMode": "background",
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "horizontal",
         "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
         "showPercentChange": false,
-        "textMode": "auto",
+        "textMode": "name",
         "wideLayout": true
       },
       "pluginVersion": "12.3.1",
@@ -664,7 +664,7 @@
     },
     {
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-      "description": "Operation duration by type (p95)",
+      "description": "작업별 평균 소요 시간",
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -703,12 +703,12 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "histogram_quantile(0.95, sum(rate(codehub_wc_operation_duration_seconds_bucket[5m])) by (le, operation))",
+          "expr": "rate(codehub_wc_operation_duration_seconds_sum[5m]) / rate(codehub_wc_operation_duration_seconds_count[5m])",
           "legendFormat": "{{ operation }}",
           "refId": "A"
         }
       ],
-      "title": "Operation Duration (p95)",
+      "title": "Operation Duration",
       "type": "timeseries"
     },
     {
