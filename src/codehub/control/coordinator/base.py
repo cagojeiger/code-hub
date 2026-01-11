@@ -35,8 +35,7 @@ class CoordinatorType(StrEnum):
 
     OBSERVER = "observer"
     WC = "wc"
-    GC = "gc"
-    TTL = "ttl"
+    SCHEDULER = "scheduler"  # TTL + GC 통합
 
 
 class CoordinatorBase(ABC):

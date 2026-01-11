@@ -15,8 +15,6 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codehub import __version__
-from codehub.adapters.instance import DockerInstanceController
-from codehub.adapters.storage import S3StorageProvider
 from codehub.app.api.v1 import auth_router, events_router, workspaces_router
 from codehub.app.config import get_settings
 from codehub.app.logging import setup_logging
@@ -26,7 +24,6 @@ from codehub.core.logging_schema import LogEvent
 from codehub.core.models import User
 from codehub.core.security import hash_password
 from codehub.app.proxy import router as proxy_router
-from codehub.app.proxy.activity import get_activity_buffer
 from codehub.app.proxy.client import close_http_client
 from codehub.app.metrics import setup_metrics, get_metrics_response
 from codehub.app.metrics.collector import (
@@ -40,20 +37,12 @@ from codehub.app.metrics.collector import (
     REDIS_POOL_IDLE,
     REDIS_POOL_TOTAL,
 )
-from codehub.control.coordinator import (
-    ArchiveGC,
-    EventListener,
-    ObserverCoordinator,
-    TTLManager,
-    WorkspaceController,
-)
-from codehub.infra.pg_leader import SQLAlchemyLeaderElection
+from codehub.control import run_control_plane
 from codehub.infra import (
     close_db,
     close_docker,
     close_redis,
     close_storage,
-    get_activity_store,
     get_engine,
     get_redis,
     get_s3_client,
@@ -61,7 +50,6 @@ from codehub.infra import (
     init_redis,
     init_storage,
 )
-from codehub.infra.redis_pubsub import ChannelPublisher, ChannelSubscriber
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -119,7 +107,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     logger.info("Starting application", extra={"event": LogEvent.APP_STARTED})
 
-    coordinator_task = asyncio.create_task(_run_coordinators())
+    engine = get_engine()
+    redis_client = get_redis()
+    coordinator_task = asyncio.create_task(run_control_plane(engine, redis_client))
     metrics_task = asyncio.create_task(_metrics_updater_loop())
 
     yield
@@ -141,93 +131,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await close_storage()
     await close_redis()
     await close_db()
-
-
-async def _run_coordinators() -> None:
-    """Run all coordinators with separate DB connections.
-
-    Each coordinator gets its own connection to avoid SQLAlchemy
-    AsyncConnection sharing issues across concurrent tasks.
-    """
-    engine = get_engine()
-    redis_client = get_redis()
-
-    # Adapters (thread-safe, can be shared)
-    ic = DockerInstanceController()
-    sp = S3StorageProvider()
-
-    # Redis wrappers
-    publisher = ChannelPublisher(redis_client)
-    activity_store = get_activity_store()
-
-    def make_runner(coordinator_cls: type, *args) -> callable:
-        """Factory for coordinator runner coroutines.
-
-        Uses coordinator_cls.COORDINATOR_TYPE to create LeaderElection.
-        Uses Redis PUB/SUB for wake notifications (broadcasting to all coordinators).
-        """
-        async def runner() -> None:
-            async with engine.connect() as conn:
-                leader = SQLAlchemyLeaderElection(conn, coordinator_cls.COORDINATOR_TYPE)
-                subscriber = ChannelSubscriber(redis_client)
-                coordinator = coordinator_cls(conn, leader, subscriber, *args)
-                await coordinator.run()
-        return runner
-
-    async def event_listener_runner() -> None:
-        """Run EventListener.
-
-        Uses asyncpg connection for PG LISTEN support.
-        Uses PostgreSQL Advisory Lock for leader election (only 1 instance writes).
-        """
-        settings = get_settings()
-        # Convert SQLAlchemy URL to asyncpg URL (remove +asyncpg suffix)
-        db_url = settings.database.url.replace("+asyncpg", "")
-        listener = EventListener(db_url, redis_client)
-        await listener.run()
-
-    async def activity_buffer_flush_loop() -> None:
-        """Flush activity buffer to Redis periodically.
-
-        Runs based on ActivityConfig.flush_interval to batch memory buffer to Redis.
-        TTL Manager then syncs Redis to DB every 60 seconds.
-
-        Reference: docs/architecture_v2/ttl-manager.md
-        """
-        flush_interval = get_settings().activity.flush_interval
-        buffer = get_activity_buffer()
-        while True:
-            await asyncio.sleep(flush_interval)
-            try:
-                count = await buffer.flush(activity_store)
-                if count > 0:
-                    logger.debug("Flushed %d activities to Redis", count)
-            except Exception as e:
-                logger.warning(
-                    "Activity buffer flush error",
-                    extra={"event": LogEvent.REDIS_CONNECTION_ERROR, "error": str(e)},
-                )
-
-    try:
-        await asyncio.gather(
-            make_runner(ObserverCoordinator, ic, sp)(),
-            make_runner(WorkspaceController, ic, sp)(),
-            make_runner(TTLManager, activity_store, publisher)(),
-            make_runner(ArchiveGC, sp, ic)(),
-            event_listener_runner(),
-            activity_buffer_flush_loop(),
-        )
-    except asyncio.CancelledError:
-        logger.info("Coordinators cancelled", extra={"event": LogEvent.APP_STOPPED})
-        raise
-    except Exception as e:
-        logger.exception(
-            "Coordinator error",
-            extra={"event": LogEvent.APP_STOPPED, "error": str(e)},
-        )
-    finally:
-        await ic.close()
-        await sp.close()
 
 
 app = FastAPI(title="CodeHub", version=__version__, lifespan=lifespan)

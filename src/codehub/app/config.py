@@ -80,7 +80,7 @@ class RuntimeConfig(BaseSettings):
 
     resource_prefix: str = Field(default="codehub-ws-")
     container_port: int = Field(default=8080)
-    default_image: str = Field(default="cagojeiger/code-server:4.107.0")
+    default_image: str = Field(default="cagojeiger/code-server:4.107.1")
     storage_job_image: str = Field(default="codehub/storage-job:latest")
 
 

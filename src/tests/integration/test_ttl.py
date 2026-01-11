@@ -1,4 +1,4 @@
-"""TTL Manager integration tests.
+"""Scheduler TTL integration tests.
 
 Tests SQL syntax and actual database operations.
 Unit tests mock DB, so SQL syntax errors are not caught.
@@ -9,22 +9,38 @@ Reference: docs/architecture_v2/ttl-manager.md
 
 import pytest
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from codehub.control.coordinator.ttl import TTLManager
+from codehub.control.coordinator.scheduler import Scheduler
+from codehub.core.interfaces import InstanceController, StorageProvider
 from codehub.core.models import Workspace, User
 
 
-class TestTTLManagerSync:
-    """TTLManager._sync_to_db() integration test with real DB.
+class TestSchedulerSync:
+    """Scheduler._sync_to_db() integration test with real DB.
 
     Validates SQL syntax:
     - unnest(CAST(:ids AS text[]), CAST(:timestamps AS timestamptz[]))
     - Bulk UPDATE using PostgreSQL array functions
     """
+
+    @pytest.fixture
+    def mock_storage(self) -> MagicMock:
+        """Mock StorageProvider."""
+        storage = MagicMock(spec=StorageProvider)
+        storage.list_all_archive_keys = AsyncMock(return_value=set())
+        storage.list_volumes = AsyncMock(return_value=[])
+        return storage
+
+    @pytest.fixture
+    def mock_ic(self) -> MagicMock:
+        """Mock InstanceController."""
+        ic = MagicMock(spec=InstanceController)
+        ic.list_all = AsyncMock(return_value=[])
+        return ic
 
     @pytest.fixture
     async def test_user(self, test_db_engine: AsyncEngine) -> User:
@@ -69,7 +85,8 @@ class TestTTLManagerSync:
             return ws
 
     async def test_sync_to_db_sql_syntax(
-        self, test_db_engine: AsyncEngine, test_workspace: Workspace, test_redis
+        self, test_db_engine: AsyncEngine, test_workspace: Workspace, test_redis,
+        mock_storage: MagicMock, mock_ic: MagicMock,
     ):
         """TTL-INT-001: _sync_to_db() SQL 문법 검증.
 
@@ -98,14 +115,16 @@ class TestTTLManagerSync:
 
         # Act: _sync_to_db() 실행 (실제 SQL 실행)
         async with test_db_engine.connect() as conn:
-            ttl = TTLManager(
+            scheduler = Scheduler(
                 conn,
                 mock_leader,
                 mock_subscriber,
                 mock_activity,
                 mock_publisher,
+                mock_storage,
+                mock_ic,
             )
-            synced = await ttl._sync_to_db()
+            synced = await scheduler._sync_to_db()
             await conn.commit()
 
         # Assert: SQL이 성공적으로 실행됨 (문법 오류 없음)
@@ -120,7 +139,8 @@ class TestTTLManagerSync:
             assert ws.last_access_at is not None
 
     async def test_sync_to_db_empty_activities(
-        self, test_db_engine: AsyncEngine, test_workspace: Workspace
+        self, test_db_engine: AsyncEngine, test_workspace: Workspace,
+        mock_storage: MagicMock, mock_ic: MagicMock,
     ):
         """TTL-INT-002: activity가 없을 때 SQL 실행 안 함."""
         mock_leader = AsyncMock()
@@ -130,19 +150,22 @@ class TestTTLManagerSync:
         mock_publisher = AsyncMock()
 
         async with test_db_engine.connect() as conn:
-            ttl = TTLManager(
+            scheduler = Scheduler(
                 conn,
                 mock_leader,
                 mock_subscriber,
                 mock_activity,
                 mock_publisher,
+                mock_storage,
+                mock_ic,
             )
-            synced = await ttl._sync_to_db()
+            synced = await scheduler._sync_to_db()
 
         assert synced == 0
 
     async def test_sync_to_db_multiple_workspaces(
-        self, test_db_engine: AsyncEngine, test_user: User
+        self, test_db_engine: AsyncEngine, test_user: User,
+        mock_storage: MagicMock, mock_ic: MagicMock,
     ):
         """TTL-INT-003: 여러 workspace 동시 동기화."""
         # Create 3 workspaces
@@ -181,27 +204,44 @@ class TestTTLManagerSync:
 
         # Act
         async with test_db_engine.connect() as conn:
-            ttl = TTLManager(
+            scheduler = Scheduler(
                 conn,
                 mock_leader,
                 mock_subscriber,
                 mock_activity,
                 mock_publisher,
+                mock_storage,
+                mock_ic,
             )
-            synced = await ttl._sync_to_db()
+            synced = await scheduler._sync_to_db()
             await conn.commit()
 
         # Assert
         assert synced == 3, "3개 workspace가 동기화되어야 함"
 
 
-class TestTTLManagerStandbyTTL:
-    """TTLManager._check_standby_ttl() integration test.
+class TestSchedulerStandbyTTL:
+    """Scheduler._check_standby_ttl() integration test.
 
     Validates SQL syntax:
     - make_interval(secs := :standby_ttl)
     - NOW() - last_access_at comparison
     """
+
+    @pytest.fixture
+    def mock_storage(self) -> MagicMock:
+        """Mock StorageProvider."""
+        storage = MagicMock(spec=StorageProvider)
+        storage.list_all_archive_keys = AsyncMock(return_value=set())
+        storage.list_volumes = AsyncMock(return_value=[])
+        return storage
+
+    @pytest.fixture
+    def mock_ic(self) -> MagicMock:
+        """Mock InstanceController."""
+        ic = MagicMock(spec=InstanceController)
+        ic.list_all = AsyncMock(return_value=[])
+        return ic
 
     @pytest.fixture
     async def test_user(self, test_db_engine: AsyncEngine) -> User:
@@ -247,7 +287,8 @@ class TestTTLManagerStandbyTTL:
             return ws
 
     async def test_check_standby_ttl_sql_syntax(
-        self, test_db_engine: AsyncEngine, expired_workspace: Workspace
+        self, test_db_engine: AsyncEngine, expired_workspace: Workspace,
+        mock_storage: MagicMock, mock_ic: MagicMock,
     ):
         """TTL-INT-004: _check_standby_ttl() SQL 문법 검증.
 
@@ -271,16 +312,18 @@ class TestTTLManagerStandbyTTL:
 
         # Act
         async with test_db_engine.connect() as conn:
-            ttl = TTLManager(
+            scheduler = Scheduler(
                 conn,
                 mock_leader,
                 mock_subscriber,
                 mock_activity,
                 mock_publisher,
+                mock_storage,
+                mock_ic,
             )
             # Override TTL to ensure test passes (1 second)
-            ttl._standby_ttl = 1
-            expired = await ttl._check_standby_ttl()
+            scheduler._standby_ttl = 1
+            expired = await scheduler._check_standby_ttl()
             await conn.commit()
 
         # Assert: SQL 성공 + workspace가 STANDBY로 전환
@@ -294,7 +337,8 @@ class TestTTLManagerStandbyTTL:
             assert ws.desired_state == "STANDBY"
 
     async def test_check_standby_ttl_ignores_non_running(
-        self, test_db_engine: AsyncEngine, test_user: User
+        self, test_db_engine: AsyncEngine, test_user: User,
+        mock_storage: MagicMock, mock_ic: MagicMock,
     ):
         """TTL-INT-005: RUNNING이 아닌 workspace는 무시."""
         # Create STANDBY workspace with old last_access_at
@@ -325,26 +369,43 @@ class TestTTLManagerStandbyTTL:
         mock_publisher = AsyncMock()
 
         async with test_db_engine.connect() as conn:
-            ttl = TTLManager(
+            scheduler = Scheduler(
                 conn,
                 mock_leader,
                 mock_subscriber,
                 mock_activity,
                 mock_publisher,
+                mock_storage,
+                mock_ic,
             )
-            ttl._standby_ttl = 1
-            expired = await ttl._check_standby_ttl()
+            scheduler._standby_ttl = 1
+            expired = await scheduler._check_standby_ttl()
 
         assert expired == 0
 
 
-class TestTTLManagerArchiveTTL:
-    """TTLManager._check_archive_ttl() integration test.
+class TestSchedulerArchiveTTL:
+    """Scheduler._check_archive_ttl() integration test.
 
     Validates SQL syntax:
     - make_interval(secs := :archive_ttl)
     - NOW() - phase_changed_at comparison
     """
+
+    @pytest.fixture
+    def mock_storage(self) -> MagicMock:
+        """Mock StorageProvider."""
+        storage = MagicMock(spec=StorageProvider)
+        storage.list_all_archive_keys = AsyncMock(return_value=set())
+        storage.list_volumes = AsyncMock(return_value=[])
+        return storage
+
+    @pytest.fixture
+    def mock_ic(self) -> MagicMock:
+        """Mock InstanceController."""
+        ic = MagicMock(spec=InstanceController)
+        ic.list_all = AsyncMock(return_value=[])
+        return ic
 
     @pytest.fixture
     async def test_user(self, test_db_engine: AsyncEngine) -> User:
@@ -390,7 +451,8 @@ class TestTTLManagerArchiveTTL:
             return ws
 
     async def test_check_archive_ttl_sql_syntax(
-        self, test_db_engine: AsyncEngine, standby_workspace: Workspace
+        self, test_db_engine: AsyncEngine, standby_workspace: Workspace,
+        mock_storage: MagicMock, mock_ic: MagicMock,
     ):
         """TTL-INT-006: _check_archive_ttl() SQL 문법 검증.
 
@@ -413,16 +475,18 @@ class TestTTLManagerArchiveTTL:
         mock_publisher = AsyncMock()
 
         async with test_db_engine.connect() as conn:
-            ttl = TTLManager(
+            scheduler = Scheduler(
                 conn,
                 mock_leader,
                 mock_subscriber,
                 mock_activity,
                 mock_publisher,
+                mock_storage,
+                mock_ic,
             )
             # Override TTL to ensure test passes (1 second)
-            ttl._archive_ttl = 1
-            expired = await ttl._check_archive_ttl()
+            scheduler._archive_ttl = 1
+            expired = await scheduler._check_archive_ttl()
             await conn.commit()
 
         # Assert: SQL 성공 + workspace가 ARCHIVED로 전환
@@ -436,7 +500,8 @@ class TestTTLManagerArchiveTTL:
             assert ws.desired_state == "ARCHIVED"
 
     async def test_check_archive_ttl_ignores_running(
-        self, test_db_engine: AsyncEngine, test_user: User
+        self, test_db_engine: AsyncEngine, test_user: User,
+        mock_storage: MagicMock, mock_ic: MagicMock,
     ):
         """TTL-INT-007: STANDBY가 아닌 workspace는 무시."""
         async with AsyncSession(test_db_engine) as session:
@@ -466,21 +531,38 @@ class TestTTLManagerArchiveTTL:
         mock_publisher = AsyncMock()
 
         async with test_db_engine.connect() as conn:
-            ttl = TTLManager(
+            scheduler = Scheduler(
                 conn,
                 mock_leader,
                 mock_subscriber,
                 mock_activity,
                 mock_publisher,
+                mock_storage,
+                mock_ic,
             )
-            ttl._archive_ttl = 1
-            expired = await ttl._check_archive_ttl()
+            scheduler._archive_ttl = 1
+            expired = await scheduler._check_archive_ttl()
 
         assert expired == 0
 
 
-class TestTTLManagerTick:
-    """TTLManager.tick() full integration test."""
+class TestSchedulerRunTtl:
+    """Scheduler._run_ttl() full integration test."""
+
+    @pytest.fixture
+    def mock_storage(self) -> MagicMock:
+        """Mock StorageProvider."""
+        storage = MagicMock(spec=StorageProvider)
+        storage.list_all_archive_keys = AsyncMock(return_value=set())
+        storage.list_volumes = AsyncMock(return_value=[])
+        return storage
+
+    @pytest.fixture
+    def mock_ic(self) -> MagicMock:
+        """Mock InstanceController."""
+        ic = MagicMock(spec=InstanceController)
+        ic.list_all = AsyncMock(return_value=[])
+        return ic
 
     @pytest.fixture
     async def test_user(self, test_db_engine: AsyncEngine) -> User:
@@ -497,10 +579,11 @@ class TestTTLManagerTick:
             await session.refresh(user)
             return user
 
-    async def test_tick_full_cycle(
-        self, test_db_engine: AsyncEngine, test_user: User
+    async def test_run_ttl_full_cycle(
+        self, test_db_engine: AsyncEngine, test_user: User,
+        mock_storage: MagicMock, mock_ic: MagicMock,
     ):
-        """TTL-INT-008: tick() 전체 사이클 테스트.
+        """TTL-INT-008: _run_ttl() 전체 사이클 테스트.
 
         1. Redis activity 동기화
         2. standby_ttl 체크
@@ -557,16 +640,18 @@ class TestTTLManagerTick:
 
         # Act
         async with test_db_engine.connect() as conn:
-            ttl = TTLManager(
+            scheduler = Scheduler(
                 conn,
                 mock_leader,
                 mock_subscriber,
                 mock_activity,
                 mock_publisher,
+                mock_storage,
+                mock_ic,
             )
-            ttl._standby_ttl = 1
-            ttl._archive_ttl = 1
-            await ttl.tick()
+            scheduler._standby_ttl = 1
+            scheduler._archive_ttl = 1
+            await scheduler._run_ttl()
 
         # Assert: publish called (since workspaces expired)
         mock_publisher.publish.assert_called_once()

@@ -1,4 +1,4 @@
-"""Tests for ArchiveGC.
+"""Tests for Scheduler GC functionality.
 
 Reference: docs/spec/05-data-plane.md (Archive GC)
 Contract #9: GC Separation & Protection
@@ -8,8 +8,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from codehub.control.coordinator.gc import ArchiveGC
+from codehub.control.coordinator.scheduler import Scheduler
 from codehub.core.interfaces import InstanceController, StorageProvider
+from codehub.infra.redis_kv import ActivityStore
+from codehub.infra.redis_pubsub import ChannelPublisher
 
 
 @pytest.fixture
@@ -41,6 +43,23 @@ def mock_subscriber() -> MagicMock:
 
 
 @pytest.fixture
+def mock_activity() -> AsyncMock:
+    """Mock ActivityStore."""
+    activity = AsyncMock(spec=ActivityStore)
+    activity.scan_all = AsyncMock(return_value={})
+    activity.delete = AsyncMock(return_value=0)
+    return activity
+
+
+@pytest.fixture
+def mock_publisher() -> AsyncMock:
+    """Mock ChannelPublisher."""
+    publisher = AsyncMock(spec=ChannelPublisher)
+    publisher.publish = AsyncMock()
+    return publisher
+
+
+@pytest.fixture
 def mock_storage() -> MagicMock:
     """Mock StorageProvider."""
     storage = MagicMock(spec=StorageProvider)
@@ -62,23 +81,28 @@ def mock_ic() -> MagicMock:
 
 
 @pytest.fixture
-def archive_gc(
+def scheduler(
     mock_conn: MagicMock,
     mock_leader: MagicMock,
     mock_subscriber: MagicMock,
+    mock_activity: AsyncMock,
+    mock_publisher: AsyncMock,
     mock_storage: MagicMock,
     mock_ic: MagicMock,
-) -> ArchiveGC:
-    """Create ArchiveGC with mocked dependencies."""
-    return ArchiveGC(mock_conn, mock_leader, mock_subscriber, mock_storage, mock_ic)
+) -> Scheduler:
+    """Create Scheduler with mocked dependencies."""
+    return Scheduler(
+        mock_conn, mock_leader, mock_subscriber,
+        mock_activity, mock_publisher, mock_storage, mock_ic
+    )
 
 
-class TestArchiveGCConfig:
-    """ArchiveGC configuration tests."""
+class TestSchedulerGCConfig:
+    """Scheduler GC configuration tests."""
 
-    def test_idle_interval(self, archive_gc: ArchiveGC):
-        """IDLE_INTERVAL is 4 hours (14400 seconds)."""
-        assert archive_gc.IDLE_INTERVAL == 14400.0
+    def test_gc_interval(self, scheduler: Scheduler):
+        """GC interval is 4 hours (14400 seconds)."""
+        assert scheduler._gc_interval == 14400.0
 
 
 class TestListArchives:
@@ -86,19 +110,19 @@ class TestListArchives:
 
     async def test_empty_storage(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_storage: MagicMock,
     ):
         """Returns empty set when no archives in storage."""
         mock_storage.list_all_archive_keys.return_value = set()
 
-        result = await archive_gc._list_archives()
+        result = await scheduler._list_archives()
 
         assert result == set()
 
     async def test_returns_all_archive_keys(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_storage: MagicMock,
     ):
         """Returns all archive keys from storage."""
@@ -108,7 +132,7 @@ class TestListArchives:
             "ws-def456/op1/home.tar.zst",
         }
 
-        result = await archive_gc._list_archives()
+        result = await scheduler._list_archives()
 
         assert len(result) == 3
         assert "ws-abc123/op1/home.tar.zst" in result
@@ -117,7 +141,7 @@ class TestListArchives:
 
     async def test_uses_list_all_archive_keys(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_storage: MagicMock,
     ):
         """Uses list_all_archive_keys() not list_archives()."""
@@ -125,7 +149,7 @@ class TestListArchives:
             "ws-abc123/op1/home.tar.zst",
         }
 
-        await archive_gc._list_archives()
+        await scheduler._list_archives()
 
         mock_storage.list_all_archive_keys.assert_called_once()
         mock_storage.list_archives.assert_not_called()
@@ -136,7 +160,7 @@ class TestGetProtectedPaths:
 
     async def test_archive_key_protected(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_conn: MagicMock,
     ):
         """archive_key from any workspace is protected."""
@@ -146,13 +170,13 @@ class TestGetProtectedPaths:
         ]
         mock_conn.execute.return_value = mock_result
 
-        result = await archive_gc._get_protected_paths()
+        result = await scheduler._get_protected_paths()
 
         assert "ws-abc123/op1/home.tar.zst" in result
 
     async def test_op_id_protected_for_active_workspace(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_conn: MagicMock,
     ):
         """op_id path protected for active (not deleted) workspace."""
@@ -162,13 +186,13 @@ class TestGetProtectedPaths:
         ]
         mock_conn.execute.return_value = mock_result
 
-        result = await archive_gc._get_protected_paths()
+        result = await scheduler._get_protected_paths()
 
         assert "ws-abc123/current-op-id/home.tar.zst" in result
 
     async def test_empty_db(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_conn: MagicMock,
     ):
         """Returns empty set when no protected paths."""
@@ -176,7 +200,7 @@ class TestGetProtectedPaths:
         mock_result.fetchall.return_value = []
         mock_conn.execute.return_value = mock_result
 
-        result = await archive_gc._get_protected_paths()
+        result = await scheduler._get_protected_paths()
 
         assert result == set()
 
@@ -186,14 +210,14 @@ class TestDeleteArchives:
 
     async def test_calls_storage_delete(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_storage: MagicMock,
     ):
         """Calls storage.delete_archive for each key."""
         mock_storage.delete_archive.return_value = True
 
         archive_keys = {"ws-abc123/op1/home.tar.zst"}
-        deleted = await archive_gc._delete_archives(archive_keys)
+        deleted = await scheduler._delete_archives(archive_keys)
 
         assert deleted == 1
         mock_storage.delete_archive.assert_called_once_with(
@@ -202,7 +226,7 @@ class TestDeleteArchives:
 
     async def test_continues_on_single_failure(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_storage: MagicMock,
     ):
         """Continues deleting other archives if one fails."""
@@ -213,7 +237,7 @@ class TestDeleteArchives:
             "ws-fail/op1/home.tar.zst",
             "ws-success/op2/home.tar.zst",
         }
-        deleted = await archive_gc._delete_archives(archive_keys)
+        deleted = await scheduler._delete_archives(archive_keys)
 
         # Only 1 succeeded
         assert deleted == 1
@@ -221,30 +245,30 @@ class TestDeleteArchives:
         assert mock_storage.delete_archive.call_count == 2
 
 
-class TestTick:
-    """tick() tests."""
+class TestRunGC:
+    """_run_gc() tests."""
 
     async def test_no_archives_in_storage(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_conn: MagicMock,
         mock_storage: MagicMock,
     ):
-        """tick() returns early when no archives in storage."""
+        """_run_gc() returns early when no archives in storage."""
         mock_storage.list_all_archive_keys.return_value = set()
 
-        await archive_gc.tick()
+        await scheduler._run_gc()
 
         # Should not query DB for protected paths
         mock_conn.execute.assert_not_called()
 
     async def test_no_orphans(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_conn: MagicMock,
         mock_storage: MagicMock,
     ):
-        """tick() does not delete when all archives are protected."""
+        """_run_gc() does not delete when all archives are protected."""
         # Storage has one archive
         mock_storage.list_all_archive_keys.return_value = {
             "ws-abc123/op1/home.tar.zst",
@@ -255,18 +279,18 @@ class TestTick:
         mock_result.fetchall.return_value = [("ws-abc123/op1/home.tar.zst",)]
         mock_conn.execute.return_value = mock_result
 
-        await archive_gc.tick()
+        await scheduler._run_gc()
 
         # Should not call delete_archive
         mock_storage.delete_archive.assert_not_called()
 
     async def test_deletes_orphans(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_conn: MagicMock,
         mock_storage: MagicMock,
     ):
-        """tick() deletes archives not in protected list."""
+        """_run_gc() deletes archives not in protected list."""
         # Storage has two archives
         mock_storage.list_all_archive_keys.return_value = {
             "ws-abc123/op1/home.tar.zst",  # Protected
@@ -278,7 +302,7 @@ class TestTick:
         mock_result.fetchall.return_value = [("ws-abc123/op1/home.tar.zst",)]
         mock_conn.execute.return_value = mock_result
 
-        await archive_gc.tick()
+        await scheduler._run_gc()
 
         # Should call delete_archive for orphan
         mock_storage.delete_archive.assert_called_once_with(
@@ -287,14 +311,14 @@ class TestTick:
 
     async def test_handles_storage_error_gracefully(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_storage: MagicMock,
     ):
-        """tick() skips archive cleanup on S3 error (doesn't propagate)."""
+        """_run_gc() skips archive cleanup on S3 error (doesn't propagate)."""
         mock_storage.list_all_archive_keys.side_effect = RuntimeError("Storage error")
 
         # Should NOT raise - S3 error is caught and logged, cleanup skipped
-        await archive_gc.tick()
+        await scheduler._run_gc()
 
         # delete_archive should NOT be called since list failed
         mock_storage.delete_archive.assert_not_called()
@@ -305,7 +329,7 @@ class TestProtectionRules:
 
     async def test_deleted_workspace_archive_key_not_protected(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_conn: MagicMock,
     ):
         """deleted_at workspace: archive_key is NOT protected (user wants deletion).
@@ -317,14 +341,14 @@ class TestProtectionRules:
         mock_result.fetchall.return_value = []
         mock_conn.execute.return_value = mock_result
 
-        result = await archive_gc._get_protected_paths()
+        result = await scheduler._get_protected_paths()
 
         # Deleted workspace's archive_key should NOT be protected
         assert result == set()
 
     async def test_deleted_workspace_op_id_not_protected(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_conn: MagicMock,
     ):
         """deleted_at workspace: op_id path is NOT protected (user wants deletion)."""
@@ -335,14 +359,14 @@ class TestProtectionRules:
         mock_result.fetchall.return_value = []  # No paths from deleted workspace
         mock_conn.execute.return_value = mock_result
 
-        result = await archive_gc._get_protected_paths()
+        result = await scheduler._get_protected_paths()
 
         # Deleted workspace's op_id path should NOT be protected
         assert result == set()
 
     async def test_error_workspace_both_protected(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_conn: MagicMock,
     ):
         """ERROR workspace: both archive_key and op_id paths are protected."""
@@ -355,7 +379,7 @@ class TestProtectionRules:
         ]
         mock_conn.execute.return_value = mock_result
 
-        result = await archive_gc._get_protected_paths()
+        result = await scheduler._get_protected_paths()
 
         assert "ws-error/archive-key/home.tar.zst" in result
         assert "ws-error/current-op/home.tar.zst" in result
@@ -366,7 +390,7 @@ class TestCleanupOrphanResources:
 
     async def test_no_resources(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_storage: MagicMock,
         mock_ic: MagicMock,
         mock_conn: MagicMock,
@@ -375,7 +399,7 @@ class TestCleanupOrphanResources:
         mock_ic.list_all.return_value = []
         mock_storage.list_volumes.return_value = []
 
-        await archive_gc._cleanup_orphan_resources()
+        await scheduler._cleanup_orphan_resources()
 
         # Should not query DB (early return)
         mock_conn.execute.assert_not_called()
@@ -384,7 +408,7 @@ class TestCleanupOrphanResources:
 
     async def test_deletes_orphan_container(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_storage: MagicMock,
         mock_ic: MagicMock,
         mock_conn: MagicMock,
@@ -401,13 +425,13 @@ class TestCleanupOrphanResources:
         mock_result.fetchall.return_value = []
         mock_conn.execute.return_value = mock_result
 
-        await archive_gc._cleanup_orphan_resources()
+        await scheduler._cleanup_orphan_resources()
 
         mock_ic.delete.assert_called_once_with("orphan-container-ws")
 
     async def test_deletes_orphan_volume(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_storage: MagicMock,
         mock_ic: MagicMock,
         mock_conn: MagicMock,
@@ -425,13 +449,13 @@ class TestCleanupOrphanResources:
         mock_result.fetchall.return_value = []
         mock_conn.execute.return_value = mock_result
 
-        await archive_gc._cleanup_orphan_resources()
+        await scheduler._cleanup_orphan_resources()
 
         mock_storage.delete_volume.assert_called_once_with("orphan-volume-ws")
 
     async def test_preserves_valid_resources(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_storage: MagicMock,
         mock_ic: MagicMock,
         mock_conn: MagicMock,
@@ -450,14 +474,14 @@ class TestCleanupOrphanResources:
         mock_result.fetchall.return_value = [("valid-ws",)]
         mock_conn.execute.return_value = mock_result
 
-        await archive_gc._cleanup_orphan_resources()
+        await scheduler._cleanup_orphan_resources()
 
         mock_ic.delete.assert_not_called()
         mock_storage.delete_volume.assert_not_called()
 
     async def test_observer_pattern_race_condition_safe(
         self,
-        archive_gc: ArchiveGC,
+        scheduler: Scheduler,
         mock_storage: MagicMock,
         mock_ic: MagicMock,
         mock_conn: MagicMock,
@@ -482,7 +506,7 @@ class TestCleanupOrphanResources:
         mock_result.fetchall.return_value = [("ws-a",), ("ws-b",)]
         mock_conn.execute.return_value = mock_result
 
-        await archive_gc._cleanup_orphan_resources()
+        await scheduler._cleanup_orphan_resources()
 
         # Neither should be deleted
         mock_ic.delete.assert_not_called()
