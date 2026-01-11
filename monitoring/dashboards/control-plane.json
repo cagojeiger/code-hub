@@ -770,7 +770,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "(rate(codehub_wc_operations_total[1m]) * 60) or vector(0)",
+          "expr": "increase(codehub_wc_operations_total[1m])",
           "legendFormat": "{{ operation }}",
           "refId": "A"
         }
@@ -868,7 +868,7 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
-          "expr": "(rate(codehub_wc_operation_duration_seconds_sum[1m]) / rate(codehub_wc_operation_duration_seconds_count[1m])) or vector(0)",
+          "expr": "(increase(codehub_wc_operation_duration_seconds_sum[1m]) / increase(codehub_wc_operation_duration_seconds_count[1m])) or vector(0)",
           "legendFormat": "{{ operation }}",
           "refId": "A"
         }
