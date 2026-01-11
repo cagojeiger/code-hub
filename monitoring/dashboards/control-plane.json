@@ -1682,7 +1682,7 @@
           },
           "gridPos": {
             "h": 6,
-            "w": 24,
+            "w": 18,
             "x": 0,
             "y": 34
           },
@@ -1743,6 +1743,84 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
+          "description": "p50/p95/p99 latency over 1h window",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 1},
+                  {"color": "red", "value": 5}
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 6,
+            "x": 18,
+            "y": 34
+          },
+          "id": 1014,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[1h])))",
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[1h])))",
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[1h])))",
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "title": "Observer Stage [1h]",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "description": "Observer API duration distribution. Darker = more events at that latency.",
           "fieldConfig": {
             "defaults": {
@@ -1762,7 +1840,7 @@
           },
           "gridPos": {
             "h": 6,
-            "w": 24,
+            "w": 18,
             "x": 0,
             "y": 40
           },
@@ -1817,6 +1895,84 @@
           ],
           "title": "Observer API Duration Heatmap",
           "type": "heatmap"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "description": "p50/p95/p99 latency over 1h window",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 1},
+                  {"color": "red", "value": 5}
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 6,
+            "x": 18,
+            "y": 40
+          },
+          "id": 1015,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_observer_api_duration_seconds_bucket[1h])))",
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_observer_api_duration_seconds_bucket[1h])))",
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_api_duration_seconds_bucket[1h])))",
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "title": "Observer API [1h]",
+          "type": "stat"
         }
       ],
       "title": "Observer Details",
@@ -1856,7 +2012,7 @@
           },
           "gridPos": {
             "h": 6,
-            "w": 24,
+            "w": 18,
             "x": 0,
             "y": 35
           },
@@ -1917,6 +2073,84 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
+          "description": "p50/p95/p99 latency over 1h window",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 1},
+                  {"color": "red", "value": 5}
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 6,
+            "x": 18,
+            "y": 35
+          },
+          "id": 1023,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[1h])))",
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[1h])))",
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[1h])))",
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "title": "WC Stage [1h]",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
           "description": "WC operation duration distribution. Darker = more events at that latency.",
           "fieldConfig": {
             "defaults": {
@@ -1936,7 +2170,7 @@
           },
           "gridPos": {
             "h": 6,
-            "w": 24,
+            "w": 18,
             "x": 0,
             "y": 41
           },
@@ -1991,6 +2225,84 @@
           ],
           "title": "WC Operation Duration Heatmap",
           "type": "heatmap"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "description": "p50/p95/p99 latency over 1h window",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 5},
+                  {"color": "red", "value": 30}
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 6,
+            "x": 18,
+            "y": 41
+          },
+          "id": 1305,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_wc_operation_fast_duration_seconds_bucket[1h]))) or histogram_quantile(0.50, sum by (le) (rate(codehub_wc_operation_s3_duration_seconds_bucket[1h])))",
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_wc_operation_fast_duration_seconds_bucket[1h]))) or histogram_quantile(0.95, sum by (le) (rate(codehub_wc_operation_s3_duration_seconds_bucket[1h])))",
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_operation_fast_duration_seconds_bucket[1h]))) or histogram_quantile(0.99, sum by (le) (rate(codehub_wc_operation_s3_duration_seconds_bucket[1h])))",
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "title": "WC Operation [1h]",
+          "type": "stat"
         }
       ],
       "title": "WC Details",
@@ -2121,7 +2433,7 @@
           },
           "gridPos": {
             "h": 6,
-            "w": 24,
+            "w": 18,
             "x": 0,
             "y": 41
           },
@@ -2176,6 +2488,84 @@
           ],
           "title": "TTL Sync Duration Heatmap",
           "type": "heatmap"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "description": "p50/p95/p99 latency over 1h window",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 0.1},
+                  {"color": "red", "value": 0.5}
+                ]
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 6,
+            "x": 18,
+            "y": 41
+          },
+          "id": 1031,
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": ["lastNotNull"],
+              "fields": "",
+              "values": false
+            },
+            "showPercentChange": false,
+            "textMode": "auto",
+            "wideLayout": true
+          },
+          "pluginVersion": "12.3.1",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_ttl_sync_redis_duration_seconds_bucket[1h])))",
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_ttl_sync_redis_duration_seconds_bucket[1h])))",
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_ttl_sync_redis_duration_seconds_bucket[1h])))",
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "title": "TTL Sync [1h]",
+          "type": "stat"
         },
         {
           "datasource": {

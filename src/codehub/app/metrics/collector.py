@@ -204,7 +204,7 @@ WC_PLAN_DURATION = Histogram(
 WC_EXECUTE_DURATION = Histogram(
     "codehub_wc_execute_duration_seconds",
     "Duration of parallel execution (Docker/S3)",
-    buckets=(0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 120.0),
+    buckets=(0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0),
 )
 
 # Operation-level metrics for detailed latency analysis
@@ -212,14 +212,14 @@ WC_OPERATION_FAST_DURATION = Histogram(
     "codehub_wc_operation_fast_duration_seconds",
     "Duration of fast WC operations (container/volume)",
     ["operation"],  # STARTING, STOPPING, PROVISIONING, DELETING, CREATE_EMPTY_ARCHIVE
-    buckets=(0.1, 0.5, 1.0, 2.0, 5.0, 10.0),
+    buckets=(0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0),
 )
 
 WC_OPERATION_S3_DURATION = Histogram(
     "codehub_wc_operation_s3_duration_seconds",
     "Duration of S3 WC operations (archive/restore)",
     ["operation"],  # ARCHIVING, RESTORING
-    buckets=(0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 120.0),
+    buckets=(0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0),
 )
 
 WC_PERSIST_DURATION = Histogram(
