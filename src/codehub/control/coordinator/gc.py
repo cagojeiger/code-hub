@@ -39,8 +39,9 @@ class ArchiveGC(CoordinatorBase):
     COORDINATOR_TYPE = CoordinatorType.GC
     WAKE_TARGET = "gc"
 
-    # GC uses longer interval from config
+    # GC uses fixed interval from config (always same idle/active like TTL)
     IDLE_INTERVAL = _settings.coordinator.gc_interval
+    ACTIVE_INTERVAL = _settings.coordinator.gc_interval
 
     def __init__(
         self,

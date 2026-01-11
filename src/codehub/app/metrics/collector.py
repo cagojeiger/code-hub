@@ -238,3 +238,10 @@ COORDINATOR_WAKE_RECEIVED_TOTAL = Counter(
     "Total wake events received by coordinator",
     ["coordinator"],
 )
+
+# EventListener leadership (separate from CoordinatorBase)
+EVENT_LISTENER_IS_LEADER = Gauge(
+    "codehub_event_listener_is_leader",
+    "Whether EventListener is the leader (1) or not (0)",
+    multiprocess_mode="livesum",
+)

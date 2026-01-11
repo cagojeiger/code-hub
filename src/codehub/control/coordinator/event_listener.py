@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from codehub.app.config import get_settings
 from codehub.app.metrics.collector import (
     EVENT_ERRORS_TOTAL,
+    EVENT_LISTENER_IS_LEADER,
     EVENT_NOTIFY_RECEIVED_TOTAL,
     EVENT_QUEUE_SIZE,
     EVENT_SSE_PUBLISHED_TOTAL,
@@ -140,6 +141,7 @@ class EventListener:
             if not self._running:
                 return
 
+            EVENT_LISTENER_IS_LEADER.set(1)
             logger.info(
                 "Acquired leadership",
                 extra={"event": LogEvent.LEADERSHIP_ACQUIRED},
@@ -206,6 +208,7 @@ class EventListener:
 
     async def _close_connections(self) -> None:
         """Close all connections."""
+        EVENT_LISTENER_IS_LEADER.set(0)
         if self._notify_conn:
             await self._notify_conn.close()
             self._notify_conn = None
