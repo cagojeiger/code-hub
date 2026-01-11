@@ -17,6 +17,7 @@ from codehub.app.metrics.collector import (
     COORDINATOR_IS_LEADER,
     COORDINATOR_TICK_DURATION,
     COORDINATOR_TICK_TOTAL,
+    COORDINATOR_WAKE_RECEIVED_TOTAL,
 )
 from codehub.core.interfaces.leader import LeaderElection
 from codehub.core.logging_schema import LogEvent
@@ -245,6 +246,9 @@ class CoordinatorBase(ABC):
         try:
             msg = await self._subscriber.get_message(timeout=interval)
             if msg is not None:  # Empty string "" is valid wake signal
+                COORDINATOR_WAKE_RECEIVED_TOTAL.labels(
+                    coordinator=self.COORDINATOR_TYPE
+                ).inc()
                 self.accelerate()
         except asyncio.CancelledError:
             raise

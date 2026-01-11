@@ -197,3 +197,44 @@ TTL_ACTIVITY_SYNCED_TOTAL = Counter(
     "codehub_ttl_activity_synced_total",
     "Total activities synced from Redis to DB",
 )
+
+# =============================================================================
+# EventListener Metrics
+# =============================================================================
+# CDC (Change Data Capture) event pipeline tracking
+
+EVENT_NOTIFY_RECEIVED_TOTAL = Counter(
+    "codehub_event_notify_received_total",
+    "Total PostgreSQL NOTIFY events received",
+    ["channel"],  # ws_sse, ws_wake
+)
+
+EVENT_SSE_PUBLISHED_TOTAL = Counter(
+    "codehub_event_sse_published_total",
+    "Total SSE events published to Redis",
+)
+
+EVENT_WAKE_PUBLISHED_TOTAL = Counter(
+    "codehub_event_wake_published_total",
+    "Total wake events published to Redis",
+    ["target"],  # ob, wc
+)
+
+EVENT_QUEUE_SIZE = Gauge(
+    "codehub_event_queue_size",
+    "Current event queue size (backlog)",
+    multiprocess_mode="livesum",
+)
+
+EVENT_ERRORS_TOTAL = Counter(
+    "codehub_event_errors_total",
+    "Total EventListener errors",
+    ["operation"],  # sse, wake
+)
+
+# Coordinator wake reception tracking
+COORDINATOR_WAKE_RECEIVED_TOTAL = Counter(
+    "codehub_coordinator_wake_received_total",
+    "Total wake events received by coordinator",
+    ["coordinator"],
+)
