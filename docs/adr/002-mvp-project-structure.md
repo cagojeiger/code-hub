@@ -1,7 +1,7 @@
 # ADR-002: MVP Project Structure
 
 ## 상태
-Accepted
+Superseded by [ADR-010](./010-package-separation.md)
 
 ## 컨텍스트
 code-hub MVP 개발을 위한 프로젝트 구조 결정이 필요합니다.

@@ -1,4 +1,4 @@
-# TTL Manager
+# TTL Runner
 
 > 워크스페이스 TTL 관리: 활동 기반 STANDBY 전환, 시간 기반 ARCHIVE 전환
 >
@@ -8,7 +8,7 @@
 
 ## 개요
 
-TTL Manager는 두 가지 TTL을 관리합니다:
+TTL Runner는 두 가지 TTL을 관리합니다:
 
 | TTL 유형 | 트리거 상태 | 기준 컬럼 | 의미 |
 |----------|-------------|-----------|------|
@@ -39,7 +39,7 @@ sequenceDiagram
     participant M as Memory Buffer
     participant R as Redis (ZSET)
     participant D as DB
-    participant T as TTL Manager
+    participant T as TTL Runner
 
     Note over P,M: 1. Proxy 활동 (즉시)
     P->>M: record(ws_id)
@@ -49,7 +49,7 @@ sequenceDiagram
     M->>R: ZADD codehub:activity GT ws1 ts1 ws2 ts2 ...
     M->>M: clear buffer
 
-    Note over R,D: 3. Redis → DB (60초, TTL Manager)
+    Note over R,D: 3. Redis → DB (60초, TTL Runner)
     T->>R: ZRANGE codehub:activity 0 -1 WITHSCORES
     T->>D: UPDATE last_access_at<br/>WHERE id IN (...)
     T->>R: ZREM codehub:activity ws1 ws2 ...
@@ -61,7 +61,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    subgraph TTL["TTL Manager tick()"]
+    subgraph TTL["TTL Runner tick()"]
         SYNC["_sync_to_db()<br/>Redis → DB"]
         STB["_check_standby_ttl()<br/>RUNNING → STANDBY"]
         ARC["_check_archive_ttl()<br/>STANDBY → ARCHIVED"]
@@ -127,9 +127,9 @@ RETURNING id
 
 | 컬럼 | 소유자 | 업데이트 시점 |
 |------|--------|---------------|
-| `last_access_at` | TTL Manager | Redis → DB 동기화 시 |
+| `last_access_at` | TTL Runner | Redis → DB 동기화 시 |
 | `phase_changed_at` | WC | phase 변경 시 (CASE WHEN) |
-| `desired_state` | TTL Manager | TTL 만료 시 |
+| `desired_state` | TTL Runner | TTL 만료 시 |
 
 ### WC의 phase_changed_at 업데이트
 
@@ -206,7 +206,7 @@ Proxy (router.py)
 
 ---
 
-## TTL Manager 동작
+## TTL Runner 동작
 
 ### tick() 구조
 
@@ -245,7 +245,7 @@ flowchart TD
 | 컴포넌트 | 환경변수 | 기본값 | 설명 |
 |----------|----------|--------|------|
 | Memory → Redis flush | `ACTIVITY_FLUSH_INTERVAL` | 30초 | Proxy 인스턴스별 |
-| TTL Manager tick | `COORDINATOR_TTL_INTERVAL` | 60초 | Redis → DB + TTL 체크 |
+| TTL Runner tick | `COORDINATOR_TTL_INTERVAL` | 60초 | Redis → DB + TTL 체크 |
 
 > **설정 클래스**: `ActivityConfig`, `CoordinatorConfig` (config.py)
 
@@ -279,10 +279,10 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     participant P as Proxy
-    participant T as TTL Manager
+    participant T as TTL Runner
     participant D as DB
 
-    Note over T,D: TTL Manager tick (60초 전 DB 기준)
+    Note over T,D: TTL Runner tick (60초 전 DB 기준)
     T->>D: last_access_at 오래됨 → STANDBY
 
     Note over P,D: 동시에 Proxy 활동

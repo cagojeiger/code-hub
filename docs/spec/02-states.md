@@ -297,7 +297,7 @@ stateDiagram-v2
 | RUNNING | STOPPING | 정지 중 |
 | ERROR | NONE | 에러 상태 |
 | DELETING | DELETING | 삭제 진행 중 |
-| DELETING | NONE | Archive GC 대기 중 |
+| DELETING | NONE | GC Runner 대기 중 |
 
 > **불변식 (C4)**: `Phase=ERROR → operation=NONE`
 
@@ -323,7 +323,7 @@ stateDiagram-v2
 |------|------|
 | operation ≠ NONE | 409 Conflict |
 
-> **재시도 필요**: Auto-wake/TTL Manager는 409 시 exponential backoff 후 재시도
+> **재시도 필요**: Auto-wake/TTL Runner는 409 시 exponential backoff 후 재시도
 
 ---
 

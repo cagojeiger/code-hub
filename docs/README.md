@@ -7,8 +7,7 @@ docs/
 ├── spec/           # 정의 (What) - 시스템 규칙과 계약
 ├── architecture/   # 구현 (How) - 알고리즘과 패턴
 ├── adr/            # 결정 (Why) - 기술 선택 근거
-├── roadmap/        # 일정 - 마일스톤과 태스크
-└── workflow.md     # 작업 프로세스
+└── roadmap/        # 일정 - 마일스톤과 태스크
 ```
 
 ## 시작점
@@ -46,8 +45,8 @@ PENDING(0) → ARCHIVED(5) → STANDBY(10) → RUNNING(20)
 |-------------|------|------|
 | Observer | 리소스 관측 → conditions | 10s |
 | WC | 상태 수렴 (Judge+Control) | 10s |
-| TTL Manager | 비활성 워크스페이스 강등 | 60s |
-| Archive GC | orphan archive 정리 | 1h |
+| TTL Runner | 비활성 워크스페이스 강등 | 60s |
+| GC Runner | orphan archive 정리 | 1h |
 | EventListener | CDC (PG → Redis) | 실시간 |
 
 ## 문서별 역할

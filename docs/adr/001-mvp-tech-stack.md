@@ -1,7 +1,7 @@
 # ADR-001: MVP Tech Stack
 
 ## 상태
-Accepted
+Superseded by [ADR-004](./004-postgresql-migration.md)
 
 ## 컨텍스트
 code-hub MVP 개발을 위한 기술 스택 결정이 필요합니다.
