@@ -319,12 +319,10 @@ class S3StorageProvider(StorageProvider):
         return archive_key
 
     async def delete_volume(self, workspace_id: str) -> None:
-        """Delete volume."""
         volume_name = self._volume_name(workspace_id)
         await self._volumes.remove(volume_name)
 
     async def volume_exists(self, workspace_id: str) -> bool:
-        """Check if volume exists."""
         volume_name = self._volume_name(workspace_id)
         return await self._volumes.exists(volume_name)
 

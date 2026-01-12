@@ -89,7 +89,6 @@ class DockerInstanceController(InstanceController):
                 else:
                     raise
 
-        # Ensure image exists (auto-pull if not)
         image = image_ref or self._runtime.default_image
         await self._images.ensure(image)
 
