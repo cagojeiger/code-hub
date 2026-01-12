@@ -5,6 +5,18 @@ from pathlib import Path
 
 from prometheus_client import Counter, Gauge, Histogram
 
+# =============================================================================
+# Unified Histogram Buckets (logarithmic scale)
+# =============================================================================
+# numpy.geomspace(0.001, 180.0, 29) - covers 1ms to 180s
+# All duration histograms use the same buckets for consistent comparison
+_BUCKETS_DURATION = (
+    0.001, 0.0015, 0.0023, 0.0035, 0.0054, 0.0082, 0.012, 0.019,
+    0.029, 0.044, 0.066, 0.1, 0.15, 0.23, 0.35, 0.54,
+    0.82, 1.25, 1.9, 2.88, 4.38, 6.66, 10.13, 15.4,
+    23.41, 35.6, 54.13, 82.3, 180.0,
+)  # 1ms ~ 180s, 29 buckets (logarithmic scale)
+
 # Ensure multiprocess directory exists before creating gauges
 # This is required because multiprocess_mode gauges need the directory at import time
 _multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR", "/tmp/prometheus_metrics")
@@ -94,10 +106,7 @@ WS_MESSAGE_LATENCY = Histogram(
     "codehub_ws_message_latency_seconds",
     "WebSocket message relay latency",
     ["direction"],
-    buckets=(
-        0.0005, 0.001, 0.002, 0.005, 0.008, 0.015, 0.03, 0.05,
-        0.08, 0.15, 0.3, 0.5, 0.8, 1.5, 3.0, 6.0, 10.0,
-    ),
+    buckets=_BUCKETS_DURATION,
 )
 
 WS_ERRORS = Counter(
@@ -122,10 +131,7 @@ COORDINATOR_RECONCILE_DURATION = Histogram(
     "codehub_coordinator_reconcile_duration_seconds",
     "Duration of coordinator reconcile cycle execution",
     ["coordinator"],
-    buckets=(
-        0.008, 0.015, 0.03, 0.05, 0.08, 0.15, 0.3, 0.5,
-        0.8, 1.5, 3.0, 5.0, 8.0, 15.0, 30.0, 45.0, 60.0,
-    ),
+    buckets=_BUCKETS_DURATION,
 )
 
 COORDINATOR_IS_LEADER = Gauge(
@@ -168,38 +174,26 @@ OBSERVER_ARCHIVES = Gauge(
 OBSERVER_LOAD_DURATION = Histogram(
     "codehub_observer_load_duration_seconds",
     "Duration to load workspace IDs from DB",
-    buckets=(
-        0.002, 0.004, 0.006, 0.01, 0.015, 0.025, 0.04, 0.06,
-        0.1, 0.15, 0.25, 0.4, 0.6, 1.0, 1.5, 2.5, 4.0,
-    ),
+    buckets=_BUCKETS_DURATION,
 )
 
 OBSERVER_OBSERVE_DURATION = Histogram(
     "codehub_observer_observe_duration_seconds",
     "Duration of parallel API observation (containers, volumes, archives)",
-    buckets=(
-        0.015, 0.03, 0.05, 0.08, 0.12, 0.2, 0.35, 0.6,
-        1.0, 1.5, 2.5, 4.0, 6.0, 10.0, 18.0, 30.0, 45.0,
-    ),
+    buckets=_BUCKETS_DURATION,
 )
 
 OBSERVER_UPDATE_DURATION = Histogram(
     "codehub_observer_update_duration_seconds",
     "Duration of bulk workspace conditions update",
-    buckets=(
-        0.002, 0.004, 0.006, 0.01, 0.015, 0.025, 0.04, 0.06,
-        0.1, 0.15, 0.25, 0.4, 0.6, 1.0, 1.5, 2.5, 4.0,
-    ),
+    buckets=_BUCKETS_DURATION,
 )
 
 OBSERVER_API_DURATION = Histogram(
     "codehub_observer_api_duration_seconds",
     "Duration of individual observation API calls",
     ["api"],  # containers, volumes, archives
-    buckets=(
-        0.015, 0.03, 0.05, 0.08, 0.12, 0.2, 0.35, 0.6,
-        1.0, 1.5, 2.5, 4.0, 6.0, 10.0, 18.0, 30.0, 45.0,
-    ),
+    buckets=_BUCKETS_DURATION,
 )
 
 # =============================================================================
@@ -209,28 +203,19 @@ OBSERVER_API_DURATION = Histogram(
 WC_LOAD_DURATION = Histogram(
     "codehub_wc_load_duration_seconds",
     "Duration to load workspaces from DB",
-    buckets=(
-        0.002, 0.004, 0.006, 0.01, 0.015, 0.025, 0.04, 0.06,
-        0.1, 0.15, 0.25, 0.4, 0.6, 1.0, 1.5, 2.5, 4.0,
-    ),
+    buckets=_BUCKETS_DURATION,
 )
 
 WC_PLAN_DURATION = Histogram(
     "codehub_wc_plan_duration_seconds",
     "Duration of judge + plan computation",
-    buckets=(
-        0.00005, 0.0001, 0.0002, 0.0004, 0.0007, 0.001, 0.0015, 0.0025,
-        0.004, 0.006, 0.01, 0.015, 0.025, 0.04, 0.06, 0.1, 0.15,
-    ),
+    buckets=_BUCKETS_DURATION,
 )
 
 WC_EXECUTE_DURATION = Histogram(
     "codehub_wc_execute_duration_seconds",
     "Duration of parallel execution (Docker/S3)",
-    buckets=(
-        0.015, 0.03, 0.05, 0.08, 0.12, 0.2, 0.35, 0.6,
-        1.0, 1.5, 2.5, 4.0, 6.0, 10.0, 18.0, 30.0, 45.0,
-    ),
+    buckets=_BUCKETS_DURATION,
 )
 
 # Operation-level metrics for detailed latency analysis
@@ -238,19 +223,13 @@ WC_OPERATION_DURATION = Histogram(
     "codehub_wc_operation_duration_seconds",
     "Duration of WC operations",
     ["operation"],  # STARTING, STOPPING, PROVISIONING, DELETING, CREATE_EMPTY_ARCHIVE, ARCHIVING, RESTORING
-    buckets=(
-        0.015, 0.03, 0.06, 0.1, 0.18, 0.3, 0.5, 0.8,
-        1.5, 3.0, 6.0, 12.0, 25.0, 45.0, 80.0, 120.0, 180.0,
-    ),
+    buckets=_BUCKETS_DURATION,
 )
 
 WC_PERSIST_DURATION = Histogram(
     "codehub_wc_persist_duration_seconds",
     "Duration of CAS persist to DB",
-    buckets=(
-        0.002, 0.004, 0.006, 0.01, 0.015, 0.025, 0.04, 0.06,
-        0.1, 0.15, 0.25, 0.4, 0.6, 1.0, 1.5, 2.5, 4.0,
-    ),
+    buckets=_BUCKETS_DURATION,
 )
 
 WC_CAS_FAILURES_TOTAL = Counter(
@@ -273,19 +252,13 @@ TTL_EXPIRATIONS_TOTAL = Counter(
 TTL_SYNC_REDIS_DURATION = Histogram(
     "codehub_ttl_sync_redis_duration_seconds",
     "Duration to scan activities from Redis",
-    buckets=(
-        0.0005, 0.001, 0.002, 0.003, 0.005, 0.008, 0.012, 0.02,
-        0.03, 0.05, 0.08, 0.12, 0.2, 0.35, 0.6, 1.0, 2.0,
-    ),
+    buckets=_BUCKETS_DURATION,
 )
 
 TTL_SYNC_DB_DURATION = Histogram(
     "codehub_ttl_sync_db_duration_seconds",
     "Duration to bulk update activities to DB",
-    buckets=(
-        0.001, 0.002, 0.004, 0.006, 0.01, 0.015, 0.025, 0.04,
-        0.06, 0.1, 0.15, 0.25, 0.4, 0.6, 1.0, 1.5, 2.5,
-    ),
+    buckets=_BUCKETS_DURATION,
 )
 
 # =============================================================================
@@ -360,8 +333,13 @@ CIRCUIT_BREAKER_REJECTIONS_TOTAL = Counter(
     ["circuit"],
 )
 
-CIRCUIT_BREAKER_ERRORS_TOTAL = Counter(
-    "codehub_circuit_breaker_errors_total",
+# =============================================================================
+# External Call Metrics
+# =============================================================================
+# Error classification for retry logic (independent of circuit breaker)
+
+EXTERNAL_CALL_ERRORS_TOTAL = Counter(
+    "codehub_external_call_errors_total",
     "Total external call errors by type",
     ["error_type"],  # retryable, permanent, unknown, circuit_open
 )
@@ -386,10 +364,10 @@ def _init_metrics() -> None:
     CIRCUIT_BREAKER_REJECTIONS_TOTAL.labels(circuit="external")
 
     # External Call Errors
-    CIRCUIT_BREAKER_ERRORS_TOTAL.labels(error_type="retryable")
-    CIRCUIT_BREAKER_ERRORS_TOTAL.labels(error_type="permanent")
-    CIRCUIT_BREAKER_ERRORS_TOTAL.labels(error_type="unknown")
-    CIRCUIT_BREAKER_ERRORS_TOTAL.labels(error_type="circuit_open")
+    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="retryable")
+    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="permanent")
+    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="unknown")
+    EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="circuit_open")
 
     # TTL Expirations (may never happen if workspaces are active)
     TTL_EXPIRATIONS_TOTAL.labels(transition="running_to_standby")
