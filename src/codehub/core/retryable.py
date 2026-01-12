@@ -209,7 +209,6 @@ async def with_retry(
                 return await cb.call(coro_factory)
             return await coro_factory()
         except CircuitOpenError:
-            # Circuit is open - fail immediately without retry
             EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="circuit_open").inc()
             raise
         except Exception as exc:

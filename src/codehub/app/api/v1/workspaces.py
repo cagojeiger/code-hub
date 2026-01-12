@@ -89,8 +89,6 @@ async def create_workspace(
     """
     user_id = await get_user_id_from_session(db, session)
 
-    # Check limit before creating (avoid creating workspace that can't start)
-    # Create workspace (with desired_state=RUNNING but not counted yet)
     workspace = await workspace_service.create_workspace(
         db=db,
         user_id=user_id,
@@ -98,8 +96,6 @@ async def create_workspace(
         description=request.description,
         image_ref=request.image_ref,
     )
-    # request_start validates and commits the start request
-    # RunningLimitExceededError is handled by FastAPI exception handler
     workspace = await workspace_service.request_start(db, workspace.id, user_id)
 
     return _to_response(workspace)
@@ -160,11 +156,8 @@ async def update_workspace(
     """
     user_id = await get_user_id_from_session(db, session)
 
-    # desired_state=RUNNING → request_start() 단일 진입점 사용
-    # RunningLimitExceededError is handled by FastAPI exception handler
     if request.desired_state == DesiredState.RUNNING:
         workspace = await workspace_service.request_start(db, workspace_id, user_id)
-        # Update other fields if provided
         if request.name or request.description is not None or request.memo is not None:
             workspace = await workspace_service.update_workspace(
                 db=db,
