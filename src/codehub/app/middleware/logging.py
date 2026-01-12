@@ -23,7 +23,7 @@ _logging_config = _settings.logging
 # Path normalization patterns (replace dynamic IDs with :id)
 _PATH_PATTERNS = [
     (re.compile(r"/workspaces/[a-f0-9-]+"), "/workspaces/:id"),
-    (re.compile(r"/w/.*"), "/w/*"),  # VS Code proxy - all paths combined
+    (re.compile(r"/w/[a-f0-9-]+"), "/w/:id"),  # VS Code proxy workspace ID
 ]
 
 
@@ -77,8 +77,8 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         finally:
             clear_trace_context()
 
-        duration_ms = (time.monotonic() - start) * 1000
-        duration_seconds = duration_ms / 1000
+        duration_seconds = time.monotonic() - start
+        duration_ms = duration_seconds * 1000
 
         # Record HTTP metrics (skip static files and internal endpoints)
         skip_metrics_paths = ("/health", "/metrics", "/healthz", "/readyz")
