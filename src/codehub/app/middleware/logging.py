@@ -20,18 +20,38 @@ logger = logging.getLogger(__name__)
 _settings = get_settings()
 _logging_config = _settings.logging
 
-# Path normalization patterns (replace dynamic IDs with :id)
+# Path normalization patterns (replace dynamic IDs with placeholders)
 _PATH_PATTERNS = [
-    (re.compile(r"/workspaces/[a-f0-9-]+"), "/workspaces/:id"),
-    (re.compile(r"/w/[a-f0-9-]+"), "/w/:id"),  # VS Code proxy workspace ID
+    (re.compile(r"/api/v1/workspaces/[a-f0-9-]+"), "/api/v1/workspaces/:id"),
+    (re.compile(r"/w/[a-f0-9-]+.*"), "/w/*"),  # VS Code proxy - all paths combined
 ]
+
+# Whitelist of known endpoints for metrics (cardinality control)
+_KNOWN_ENDPOINTS = frozenset({
+    # Auth
+    "/api/v1/login",
+    "/api/v1/logout",
+    "/api/v1/session",
+    # Workspaces
+    "/api/v1/workspaces",
+    "/api/v1/workspaces/:id",
+    # SSE
+    "/api/v1/events",
+    # VS Code Proxy
+    "/w/*",
+    # Frontend pages
+    "/",
+    "/workspaces",
+})
 
 
 def _normalize_path(path: str) -> str:
-    """Normalize path by replacing dynamic IDs with placeholders."""
+    """Normalize path and apply whitelist for cardinality control."""
+    # Step 1: Apply normalization patterns
     for pattern, replacement in _PATH_PATTERNS:
         path = pattern.sub(replacement, path)
-    return path
+    # Step 2: Whitelist check - unknown paths become "other"
+    return path if path in _KNOWN_ENDPOINTS else "other"
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):
