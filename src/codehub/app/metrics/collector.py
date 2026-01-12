@@ -371,6 +371,24 @@ EXTERNAL_CALL_ERRORS_TOTAL = Counter(
     ["error_type"],  # retryable, permanent, unknown, circuit_open
 )
 
+# =============================================================================
+# HTTP API Metrics
+# =============================================================================
+# Track REST API request counts and latencies
+
+HTTP_REQUESTS_TOTAL = Counter(
+    "codehub_http_requests_total",
+    "Total HTTP requests",
+    ["method", "endpoint", "status"],
+)
+
+HTTP_REQUEST_DURATION = Histogram(
+    "codehub_http_request_duration_seconds",
+    "HTTP request latency",
+    ["method", "endpoint"],
+    buckets=_BUCKETS_MEDIUM,
+)
+
 
 # =============================================================================
 # Metric Initialization (ensure labels appear before first use)
@@ -429,6 +447,12 @@ def _init_metrics() -> None:
         WC_STAGE_DURATION.labels(stage=stage)
     for target in ["redis", "db"]:
         TTL_SYNC_DURATION.labels(target=target)
+
+    # HTTP API (common endpoints - others will be created on first use)
+    for method in ["GET", "POST", "PATCH", "DELETE"]:
+        HTTP_REQUEST_DURATION.labels(method=method, endpoint="/api/v1/login")
+    HTTP_REQUEST_DURATION.labels(method="GET", endpoint="/workspaces")
+    HTTP_REQUEST_DURATION.labels(method="GET", endpoint="/health")
 
 
 _init_metrics()
