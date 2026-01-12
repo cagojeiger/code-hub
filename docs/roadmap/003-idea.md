@@ -25,11 +25,20 @@ v0.3.0
     │  K8s Agent 추가 (Control Plane 수정 없이!)
     │  - Agent API 계약 그대로 사용
     │  - K8s Runtime만 구현
+    │  - ⚠️ 같은 네트워크 망 조건
+    │
+    ▼
+v0.4.0+ (미래)
+    │
+    │  네트워크 유연성 확장
+    │  - VPN, FRP 터널 지원
     │
     ▼
 ```
 
 **핵심 원칙**: v0.2.1에서 Agent API 계약을 확정하고, v0.3.0에서는 Control Plane 수정 없이 K8s Agent만 추가한다.
+
+**v0.3.0 제약**: Control Plane과 Agent는 같은 네트워크 망에 있어야 한다. (직접 HTTP 통신)
 
 ---
 
@@ -235,20 +244,22 @@ code-hub/
 
 ## 7. 네트워크 유연성
 
-### Case 1: 같은 네트워크 (직접 연결)
+### v0.3.0: 같은 네트워크 (직접 연결)
 
 ```
 Control Plane ────► Agent (직접 HTTP)
 ```
 
-### Case 2: 다른 네트워크 (VPN)
+v0.3.0에서는 Control Plane과 Agent가 같은 네트워크 망에 있어야 합니다.
 
+### v0.4.0+ (미래): 다른 네트워크 지원
+
+**Case 2: VPN**
 ```
 Control Plane ──(VPN)──► Agent
 ```
 
-### Case 3: NAT 뒤 (FRP 터널)
-
+**Case 3: NAT 뒤 (FRP 터널)**
 ```
 Control Plane ──► FRP Server ◄── Agent (outbound tunnel)
 ```
