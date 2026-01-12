@@ -1,0 +1,6 @@
+[submodule ".repos/code-server"]
+	path = .repos/code-server
+	url = https://github.com/coder/code-server
+[submodule ".repos/gitpod"]
+	path = .repos/gitpod
+	url = https://github.com/gitpod-io/gitpod

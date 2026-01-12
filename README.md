@@ -1,6 +1,6 @@
 # code-hub
 
-> v0.1.0 (MVP)
+> v0.2.0
 
 클라우드 개발 환경(CDE) 플랫폼.
 필요할 때 격리된 워크스페이스를 생성하고, 브라우저에서 바로 코딩.
@@ -49,9 +49,9 @@ docker compose up -d
 
 ## 문서
 
-- [스펙](docs/spec.md) - API, DB 스키마, 플로우, 설정
-- [아키텍처](docs/architecture.md) - 시스템 구조 다이어그램
-- [용어집](docs/glossary.md) - 핵심 용어 정의
+- [스펙](docs/spec/) - API, DB 스키마, 상태 머신, 설정
+- [아키텍처](docs/architecture/) - 시스템 구조 및 Coordinator 패턴
+- [용어집](docs/spec/01-glossary.md) - 핵심 용어 정의
 
 ## 기술 스택
 

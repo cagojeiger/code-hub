@@ -60,7 +60,6 @@ cover/
 local_settings.py
 
 # Flask stuff:
-instance/
 .webassets-cache
 
 # Scrapy stuff:
@@ -211,3 +210,4 @@ __marimo__/
 # code-hub specific
 data/
 !backend/app/services/instance/
+.playwright-mcp/

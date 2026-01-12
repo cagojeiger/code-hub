@@ -1,197 +1,75 @@
+# =============================================================================
+# Common Configuration (YAML Anchors)
+# =============================================================================
+
+# External DNS servers for VPN/network stability
+# Docker Desktop 4.48.0+ has DNS routing issues with VPN
+# See: https://github.com/docker/for-mac/issues/4751
+x-dns: &dns
+  dns:
+    - 8.8.8.8
+    - 1.1.1.1
+  dns_opt:
+    - use-vc  # Force TCP for DNS queries (more stable with VPN)
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-network: &network
+  networks:
+    - codehub-net
+
+x-restart: &restart
+  restart: unless-stopped
+
+x-common-env: &common-env
+  PYTHONUNBUFFERED: "1"
+  DATABASE_URL: postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
+  REDIS_URL: redis://redis:6379
+  S3_ENDPOINT: http://minio:9000
+  S3_ACCESS_KEY: codehub
+  S3_SECRET_KEY: codehub123
+  DOCKER_HOST: tcp://docker-proxy:2375
+
+# =============================================================================
+# Services
+# =============================================================================
+
 services:
-  # PostgreSQL Database
-  postgres:
-    image: postgres:17
-    container_name: codehub-postgres
-    ports:
-      - "127.0.0.1:5432:5432"
-    environment:
-      POSTGRES_USER: codehub
-      POSTGRES_PASSWORD: codehub
-      POSTGRES_DB: codehub
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - codehub-net
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U codehub"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-    mem_limit: 256m
-    cpus: 0.5
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
+  # ---------------------------------------------------------------------------
+  # Core Application
+  # ---------------------------------------------------------------------------
 
-  # Redis - Pub/Sub for SSE event broadcasting
-  redis:
-    image: redis:7
-    container_name: codehub-redis
-    ports:
-      - "127.0.0.1:6379:6379"
-    networks:
-      - codehub-net
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-    mem_limit: 128m
-    cpus: 0.25
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # Docker Socket Proxy - secure access to Docker API
-  docker-proxy:
-    image: tecnativa/docker-socket-proxy
-    container_name: codehub-docker-proxy
-    environment:
-      - CONTAINERS=1
-      - NETWORKS=1
-      - IMAGES=1
-      - INFO=1
-      - VERSION=1
-      - POST=1
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    networks:
-      - codehub-net
-    restart: unless-stopped
-    mem_limit: 128m
-    cpus: 0.25
-    healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost:2375/_ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # Database migration service - runs once before backend starts
-  migrate:
+  # Control Plane - API, Reconciler, Coordinator
+  control-plane:
     build:
-      context: ./backend
+      context: src
       dockerfile: Dockerfile
-    container_name: codehub-migrate
-    command: uv run alembic upgrade head
-    depends_on:
-      postgres:
-        condition: service_healthy
+    container_name: codehub-control-plane
+    ports:
+      - "0.0.0.0:18000:8000"
     environment:
-      - CODEHUB_DATABASE__URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
-    networks:
-      - codehub-net
-    # No restart - runs once and exits
-
-  # Startup sync - reconciles transitional states once before backend starts
-  startup-sync:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: codehub-startup-sync
-    command: uv run python -m app.scripts.recovery
+      <<: *common-env
+      WORKERS: "3"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      docker-proxy:
-        condition: service_healthy
-      migrate:
-        condition: service_completed_successfully
-    environment:
-      - CODEHUB_DATABASE__URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
-      - CODEHUB_REDIS__URL=redis://redis:6379
-      - DOCKER_HOST=tcp://docker-proxy:2375
-      - CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/var/lib/codehub/homes
-      - CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=${PWD}/data/codehub/homes
-    volumes:
-      - ./data/codehub:/var/lib/codehub
-    networks:
-      - codehub-net
-    # No restart - runs once and exits
-
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: codehub-backend
-    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --workers 4
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
+      minio:
         condition: service_healthy
       docker-proxy:
-        condition: service_healthy
+        condition: service_started
       migrate:
         condition: service_completed_successfully
-      startup-sync:
-        condition: service_completed_successfully
-
-    ports:
-      - "127.0.0.1:8080:8080"
-
-    volumes:
-      # data directory bind mount (not Docker volume)
-      - ./data/codehub:/var/lib/codehub
-
-    environment:
-      - PYTHONUNBUFFERED=1
-      - CODEHUB_ENV=production
-      - CODEHUB_HOME_STORE__CONTROL_PLANE_BASE_DIR=/var/lib/codehub/homes
-      - CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR=${PWD}/data/codehub/homes
-      - CODEHUB_DATABASE__URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
-      - CODEHUB_REDIS__URL=redis://redis:6379
-      - DOCKER_HOST=tcp://docker-proxy:2375
-      #
-      # === Configurable Options ===
-      #
-      # Server settings
-      # - CODEHUB_SERVER__BIND=:8080
-      # - CODEHUB_SERVER__PUBLIC_BASE_URL=https://your-domain.com
-      #
-      # Auth settings
-      # - CODEHUB_AUTH__INITIAL_ADMIN_PASSWORD=admin
-      # - CODEHUB_AUTH__SESSION__TTL=24h
-      # - CODEHUB_AUTH__SESSION__COOKIE_NAME=session
-      #
-      # Workspace settings
-      # - CODEHUB_WORKSPACE__DEFAULT_IMAGE=cagojeiger/code-server:4.107.0
-      # - CODEHUB_WORKSPACE__CONTAINER_PREFIX=codehub-ws-
-      # - CODEHUB_WORKSPACE__NETWORK_NAME=codehub-net
-      # - CODEHUB_WORKSPACE__HEALTHCHECK__INTERVAL=2s
-      # - CODEHUB_WORKSPACE__HEALTHCHECK__TIMEOUT=60s
-      #
-      # Database settings
-      # - CODEHUB_DATABASE__ECHO=false
-      #
-      # Redis settings
-      # - CODEHUB_REDIS__URL=redis://localhost:6379
-
-    user: "1000:1000"
-
-    networks:
-      - codehub-net
-
-    restart: unless-stopped
     mem_limit: 512m
     cpus: 1.0
-
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -201,6 +79,187 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
+    <<: [*dns, *network, *restart]
+
+  # Database migration - runs once before control-plane starts
+  migrate:
+    build:
+      context: src
+      dockerfile: Dockerfile
+    container_name: codehub-migrate
+    command: uv run alembic upgrade head
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
+    <<: [*dns, *network]
+    # No restart - runs once and exits
+
+  # ---------------------------------------------------------------------------
+  # Database & Storage
+  # ---------------------------------------------------------------------------
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:17
+    container_name: codehub-postgres
+    environment:
+      POSTGRES_USER: codehub
+      POSTGRES_PASSWORD: codehub
+      POSTGRES_DB: codehub
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U codehub" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    mem_limit: 256m
+    cpus: 0.5
+    <<: [*dns, *logging, *network, *restart]
+
+  # Redis - Pub/Sub for SSE event broadcasting
+  redis:
+    image: redis:7
+    container_name: codehub-redis
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    mem_limit: 128m
+    cpus: 0.25
+    <<: [*dns, *logging, *network, *restart]
+
+  # MinIO - Object Storage (S3 compatible)
+  minio:
+    image: minio/minio
+    container_name: codehub-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "0.0.0.0:19001:9001"
+    environment:
+      MINIO_ROOT_USER: codehub
+      MINIO_ROOT_PASSWORD: codehub123
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: [ "CMD", "mc", "ready", "local" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    mem_limit: 256m
+    cpus: 0.5
+    <<: [*dns, *logging, *network, *restart]
+
+  # ---------------------------------------------------------------------------
+  # Infrastructure
+  # ---------------------------------------------------------------------------
+
+  # Docker Socket Proxy - Secure Docker API access
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: codehub-docker-proxy
+    environment:
+      - CONTAINERS=1
+      - NETWORKS=1
+      - IMAGES=1
+      - INFO=1
+      - VERSION=1
+      - POST=1
+      - VOLUMES=1
+      # Archive/Restore helper container support
+      - ALLOW_START=1
+      - ALLOW_STOP=1
+      - ALLOW_RESTARTS=1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    mem_limit: 64m
+    cpus: 0.25
+    <<: [*dns, *logging, *network, *restart]
+
+  # Storage Job - Archive/Restore helper container (build only)
+  storage-job:
+    build:
+      context: containers/storage-job
+    image: codehub/storage-job:latest
+    deploy:
+      replicas: 0 # Build image but don't run container
+    <<: [*dns, *network]
+
+  # ---------------------------------------------------------------------------
+  # Monitoring
+  # ---------------------------------------------------------------------------
+
+  # Prometheus - Metrics collection
+  prometheus:
+    image: prom/prometheus:v3.9.1
+    container_name: codehub-prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    mem_limit: 256m
+    cpus: 0.5
+    <<: [*dns, *network, *restart]
+
+  # Grafana - Metrics visualization
+  grafana:
+    image: grafana/grafana:12.3.1
+    container_name: codehub-grafana
+    ports:
+      - "0.0.0.0:13000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=qwer1234
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+      - ./monitoring/grafana-dashboards.yml:/etc/grafana/provisioning/dashboards/dashboards.yml:ro
+      - ./monitoring/dashboards:/etc/grafana/provisioning/dashboards/json:ro
+    depends_on:
+      - prometheus
+    mem_limit: 256m
+    cpus: 0.5
+    <<: [*dns, *network, *restart]
+
+  # ---------------------------------------------------------------------------
+  # Development & Testing
+  # ---------------------------------------------------------------------------
+
+  # Test runner - isolated test environment
+  test:
+    build:
+      context: src
+      dockerfile: Dockerfile.test
+    container_name: codehub-test
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_started
+    environment:
+      <<: *common-env
+    profiles:
+      - test
+    <<: [*dns, *network]
+    # No restart - runs once and exits
+
+# =============================================================================
+# Networks & Volumes
+# =============================================================================
 
 networks:
   codehub-net:
@@ -209,3 +268,6 @@ networks:
 
 volumes:
   postgres_data:
+  minio_data:
+  prometheus_data:
+  grafana_data:

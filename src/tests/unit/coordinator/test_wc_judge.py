@@ -1,0 +1,242 @@
+"""Tests for judge.py - Phase calculation and invariant checking.
+
+Reference: docs/architecture_v2/wc-judge.md
+"""
+
+from codehub.control.coordinator.wc_judge import (
+    JudgeInput,
+    JudgeOutput,
+    check_invariants,
+    judge,
+)
+from codehub.core.domain.conditions import ConditionInput
+from codehub.core.domain.workspace import (
+    ErrorReason,
+    Phase,
+)
+
+
+class TestBasicPhaseCalculation:
+    """기본 상태 계산 테스트 (JDG-001 ~ JDG-004)."""
+
+    def test_jdg_001_all_false_returns_pending(self):
+        """JDG-001: 모든 조건 False → PENDING."""
+        cond = ConditionInput(
+            container_ready=False,
+            volume_ready=False,
+            archive_ready=False,
+        )
+        input = JudgeInput(conditions=cond, deleted_at=False)
+
+        output = judge(input)
+
+        assert output.phase == Phase.PENDING
+        assert output.healthy is True
+
+    def test_jdg_002_archive_only_returns_archived(self):
+        """JDG-002: archive만 True → ARCHIVED."""
+        cond = ConditionInput(
+            container_ready=False,
+            volume_ready=False,
+            archive_ready=True,
+        )
+        input = JudgeInput(conditions=cond, deleted_at=False)
+
+        output = judge(input)
+
+        assert output.phase == Phase.ARCHIVED
+        assert output.healthy is True
+
+    def test_jdg_003_volume_only_returns_standby(self):
+        """JDG-003: volume만 True → STANDBY."""
+        cond = ConditionInput(
+            container_ready=False,
+            volume_ready=True,
+            archive_ready=False,
+        )
+        input = JudgeInput(conditions=cond, deleted_at=False)
+
+        output = judge(input)
+
+        assert output.phase == Phase.STANDBY
+        assert output.healthy is True
+
+    def test_jdg_004_container_and_volume_returns_running(self):
+        """JDG-004: container + volume → RUNNING."""
+        cond = ConditionInput(
+            container_ready=True,
+            volume_ready=True,
+            archive_ready=False,
+        )
+        input = JudgeInput(conditions=cond, deleted_at=False)
+
+        output = judge(input)
+
+        assert output.phase == Phase.RUNNING
+        assert output.healthy is True
+
+
+class TestInvariantViolation:
+    """불변식 위반 테스트 (JDG-005)."""
+
+    def test_jdg_005_container_without_volume_returns_error(self):
+        """JDG-005: container=T, volume=F → ERROR (ContainerWithoutVolume)."""
+        cond = ConditionInput(
+            container_ready=True,
+            volume_ready=False,
+            archive_ready=False,
+        )
+        input = JudgeInput(conditions=cond, deleted_at=False)
+
+        output = judge(input)
+
+        assert output.phase == Phase.ERROR
+        assert output.healthy is False
+        assert output.error_reason == ErrorReason.CONTAINER_WITHOUT_VOLUME
+
+
+class TestDeletionHandling:
+    """삭제 처리 테스트 (JDG-006, JDG-007)."""
+
+    def test_jdg_006_deleted_with_resources_returns_deleting(self):
+        """JDG-006: deleted_at + resources → DELETING."""
+        cond = ConditionInput(
+            container_ready=True,
+            volume_ready=True,
+            archive_ready=False,
+        )
+        input = JudgeInput(conditions=cond, deleted_at=True)
+
+        output = judge(input)
+
+        assert output.phase == Phase.DELETING
+        assert output.healthy is True
+
+    def test_jdg_007_deleted_without_resources_returns_deleted(self):
+        """JDG-007: deleted_at + no resources → DELETED."""
+        cond = ConditionInput(
+            container_ready=False,
+            volume_ready=False,
+            archive_ready=False,
+        )
+        input = JudgeInput(conditions=cond, deleted_at=True)
+
+        output = judge(input)
+
+        assert output.phase == Phase.DELETED
+        assert output.healthy is True
+
+
+class TestOrderPriority:
+    """판단 순서 검증 (JDG-ORD-001 ~ JDG-ORD-003)."""
+
+    def test_jdg_ord_001_deleted_at_takes_priority_over_resources(self):
+        """JDG-ORD-001: deleted_at > resources."""
+        # deleted_at + RUNNING 상태 리소스 → DELETING (not RUNNING)
+        cond = ConditionInput(
+            container_ready=True,
+            volume_ready=True,
+            archive_ready=True,
+        )
+        input = JudgeInput(conditions=cond, deleted_at=True)
+
+        output = judge(input)
+
+        assert output.phase == Phase.DELETING
+
+    def test_jdg_ord_002_healthy_takes_priority_over_resources(self):
+        """JDG-ORD-002: healthy > resources."""
+        # 불변식 위반 + volume 있음 → ERROR (not STANDBY)
+        cond = ConditionInput(
+            container_ready=True,
+            volume_ready=False,  # 불변식 위반
+            archive_ready=True,
+        )
+        input = JudgeInput(conditions=cond, deleted_at=False)
+
+        output = judge(input)
+
+        assert output.phase == Phase.ERROR
+
+    def test_jdg_ord_003_higher_level_resource_takes_priority(self):
+        """JDG-ORD-003: 구체(volume) > 일반(archive)."""
+        # volume + archive → STANDBY (not ARCHIVED)
+        cond = ConditionInput(
+            container_ready=False,
+            volume_ready=True,
+            archive_ready=True,
+        )
+        input = JudgeInput(conditions=cond, deleted_at=False)
+
+        output = judge(input)
+
+        assert output.phase == Phase.STANDBY
+
+
+class TestCheckInvariants:
+    """check_invariants 함수 테스트."""
+
+    def test_healthy_returns_true_and_none(self):
+        """정상 상태 → (True, None)."""
+        cond = ConditionInput(
+            container_ready=True,
+            volume_ready=True,
+            archive_ready=False,
+        )
+
+        healthy, error_reason = check_invariants(cond)
+
+        assert healthy is True
+        assert error_reason is None
+
+    def test_container_without_volume_returns_false(self):
+        """Container without Volume → (False, CONTAINER_WITHOUT_VOLUME)."""
+        cond = ConditionInput(
+            container_ready=True,
+            volume_ready=False,
+        )
+
+        healthy, error_reason = check_invariants(cond)
+
+        assert healthy is False
+        assert error_reason == ErrorReason.CONTAINER_WITHOUT_VOLUME
+
+
+class TestConditionInputFromConditions:
+    """ConditionInput.from_conditions 테스트."""
+
+    def test_from_empty_conditions(self):
+        """빈 conditions → 모든 필드 기본값."""
+        cond = ConditionInput.from_conditions({})
+
+        assert cond.container_ready is False
+        assert cond.volume_ready is False
+        assert cond.archive_ready is False
+
+    def test_from_full_conditions(self):
+        """모든 조건 True인 conditions."""
+        conditions = {
+            "container": {"workspace_id": "ws-1", "running": True, "reason": "Running", "message": ""},
+            "volume": {"workspace_id": "ws-1", "exists": True, "reason": "VolumeExists", "message": ""},
+            "archive": {"workspace_id": "ws-1", "archive_key": "ws-1/op/home.tar.zst", "exists": True, "reason": "ArchiveUploaded", "message": ""},
+        }
+
+        cond = ConditionInput.from_conditions(conditions)
+
+        assert cond.container_ready is True
+        assert cond.volume_ready is True
+        assert cond.archive_ready is True
+
+    def test_from_conditions_with_none_values(self):
+        """None 값 처리 테스트."""
+        conditions = {
+            "container": None,
+            "volume": None,
+            "archive": None,
+        }
+
+        cond = ConditionInput.from_conditions(conditions)
+
+        assert cond.container_ready is False
+        assert cond.volume_ready is False
+        assert cond.archive_ready is False

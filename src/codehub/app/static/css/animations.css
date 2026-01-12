@@ -1,0 +1,32 @@
+/**
+ * CodeHub Animations
+ * Keyframe animations and animation utility classes
+ * Note: slide-in and fade-in are now in tailwind.config (use animate-slide-in, animate-fade-in)
+ */
+
+/* Spinner animation - used in proxy pages and cards */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+/* Skeleton loading pulse - used for loading states */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.skeleton {
+  animation: pulse 1.5s ease-in-out infinite;
+  background: linear-gradient(90deg, #3c3c3c 25%, #4a4a4a 50%, #3c3c3c 75%);
+  background-size: 200% 100%;
+}

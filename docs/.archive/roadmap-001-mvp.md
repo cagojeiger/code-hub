@@ -1,0 +1,153 @@
+# Roadmap 001: MVP
+
+## Status: Done
+
+> spec.md MVP 완료 기준 달성을 목표로 합니다.
+
+---
+
+## Milestones
+
+### M1: Foundation
+**Status**: Done
+
+**Tasks**:
+- [x] Dockerfile + docker-compose.yml (Exit: `docker compose up` 성공, hot reload 동작, Docker socket mount)
+- [x] pyproject.toml + uv 설정 (Exit: 컨테이너 내 `uv sync` 성공) (PR #5)
+- [x] Config 모듈 구현 (Exit: env-only로도 부팅 가능, 잘못된 값은 명확한 에러) (PR #7)
+- [x] Errors 모듈 구현 (Exit: INVALID_STATE, WORKSPACE_NOT_FOUND 등 spec 에러 코드 정의) (PR #8)
+- [x] DB 설정 + 모델 구현 (Exit: SQLite WAL 모드, 전체 테이블 생성, 초기 admin seed) (PR #9)
+- [x] 로깅 포맷팅 (Exit: 일관된 로깅 포맷, timestamp/level/module 포함) (PR #10)
+- [x] 코드 리팩토링 (Exit: ruff/mypy 통과, pre-commit 설정, 불필요한 주석 정리, 일관된 코드 스타일) (PR #11)
+
+**Notes**:
+- 명시적 네트워크 이름 `codehub-net` 사용 (M3에서 생성하는 워크스페이스 컨테이너도 같은 네트워크로 관리)
+- uid/gid 설정 필요 (code-server 호환: 1000:1000)
+- data 디렉토리는 bind mount 사용 (Docker volume 아님), .gitignore에 추가
+- Docker Socket Proxy (tecnativa/docker-socket-proxy) 사용: Backend가 non-root(1000:1000)로 실행하면서도 Docker API 접근 가능. `DOCKER_HOST=tcp://docker-proxy:2375` 환경변수로 연결
+- FIX: spec.md의 `home_mount` 정의 수정 - `control_plane_base_dir + key`에서 `workspace_base_dir + key`로 변경 (Docker bind mount는 호스트 경로 필요)
+- 로깅: `python-json-logger` 사용 (MVP 단순성), 추후 `structlog`로 마이그레이션 가능
+- 로깅: Request ID 미들웨어 추가 (`X-Request-ID` 헤더) - OpenTelemetry trace_id 연계 준비
+- 코드 품질: ruff (린트/포맷), mypy (타입 체크), pre-commit (커밋 전 자동 검사)
+- pre-commit: `files: ^backend/` 로 backend 경로 변경 시에만 실행
+- 주석 정리: 자명한 함수의 docstring 제거, 타입힌트와 중복되는 Attributes 나열 제거, 모듈 docstring/복잡한 로직 설명은 유지
+
+---
+
+### M2: Storage Provider
+**Status**: Done
+
+**Tasks**:
+- [x] Storage Provider 인터페이스 정의 (Exit: Provision/Deprovision/Purge/GetStatus 시그니처) (PR #12)
+- [x] local-dir 백엔드 구현 (Exit: Provision 멱등성 테스트 통과) (PR #13)
+
+**Notes**:
+- 디렉토리 생성 시 uid/gid 설정 (M1에서 정의한 1000:1000 사용)
+- ⚠️ 경로 불일치 주의: Control Plane 컨테이너 경로 vs 호스트 경로 (Docker bind mount에는 호스트 경로 필요)
+- Config에서 `CODEHUB_HOME_STORE__WORKSPACE_BASE_DIR` 환경변수로 호스트 경로 관리
+
+---
+
+### M3: Instance Controller
+**Status**: Done
+
+**Tasks**:
+- [x] Instance Controller 인터페이스 정의 (Exit: Start/Stop/Delete/ResolveUpstream/GetStatus 시그니처) (PR #14)
+- [x] local-docker 백엔드 구현 (Exit: 컨테이너 생성/시작/정지/삭제 멱등성 테스트 통과) (PR #15)
+- [x] 초기화 스크립트 (Exit: 개발 중 남은 워크스페이스 컨테이너 정리 가능) (PR #16)
+
+**Notes**:
+- docker-py 사용 (Docker socket 통해 제어)
+- 컨테이너 이름 prefix `codehub-ws-`로 다른 컨테이너와 분리
+- 테스트 시 간단한 이미지 사용 (busybox/alpine), code-server는 M5에서
+- 시작 시 `codehub-net` 네트워크 존재 확인 + 자동 생성 로직 필요
+- FIX: `.gitignore`에 Flask용 `instance/` 패턴이 있어 `!backend/app/instance/` 예외 추가
+
+---
+
+### M4: Workspace API
+**Status**: Done
+
+**Tasks**:
+- [x] Workspace CRUD API (Exit: 생성/조회/수정/삭제 동작) (PR #17)
+- [x] StartWorkspace API (Exit: CREATED/STOPPED/ERROR → PROVISIONING → RUNNING) (PR #18)
+- [x] StopWorkspace API (Exit: RUNNING/ERROR → STOPPING → STOPPED) (PR #19)
+- [x] DeleteWorkspace API (Exit: CREATED/STOPPED/ERROR → DELETING → DELETED) (PR #20)
+- [x] Startup Recovery (Exit: 서버 재시작 시 전이 상태 자동 복구) (PR #21)
+- [x] 더미 UI (Exit: Start/Stop/Delete 버튼 + 실시간 상태 + 에러 표시) (PR #22)
+
+**Notes**:
+- Auth 없이 구현, 테스트 유저로 고정 (M6에서 인증/인가 추가)
+- ⚠️ CAS 패턴 필수: `WHERE status IN (...)` 으로 동시 요청 시 하나만 성공
+- 상태 전이 매트릭스 전체 테스트 케이스 작성 (spec.md 참조)
+- 백그라운드 작업: FastAPI BackgroundTasks 사용 (단일 프로세스 내)
+- 더미 UI 실시간 상태: polling 방식 (5초 주기)
+- 더미 UI: Tailwind CSS CDN 사용 (프로덕션에서는 빌드 필요), VS Code 다크 테마 색상
+- FIX: docker-socket-proxy에 `POST=1` 권한 추가 필요 (M1에서 누락, PR #22에서 수정)
+- ADR-002 준수: `instance/`, `storage/` → `services/` 이동, WorkspaceService에 CRUD 로직 집중 (PR #18)
+- ~~FIX: spec.md Startup Recovery 의사 코드에 Deprovision/home_ctx 정리 로직 추가 필요 (PR #21에서 구현, spec 미반영)~~ → spec 반영 완료
+
+---
+
+### M5: Proxy
+**Status**: Done
+
+**Tasks**:
+- [x] HTTP/WebSocket 프록시 PoC (Exit: 로컬 code-server 컨테이너 연결, 터미널/에디터 동작 확인) (PR #23)
+- [x] Workspace Proxy 통합 (Exit: /w/{workspace_id}/ → code-server 연결) (PR #23)
+- [x] Trailing Slash Redirect (Exit: /w/{id} → 308 → /w/{id}/) (PR #23)
+
+**Notes**:
+- Auth 없이 구현 (M6에서 인가 추가)
+- 첫 Task에서 기술 검증 겸 구현 (별도 spike 없이 진행)
+- code-server 리버스 프록시 문서 참조: https://coder.com/docs/code-server/guide
+- Health check: /healthz (HTTP 200)
+- 이미지: cagojeiger/code-server:4.107.0 (--auth none으로 비밀번호 비활성화)
+- 대규모 코드 품질 리뷰 수행: 125개 이슈 발견 (HIGH: 16, MEDIUM: 43, LOW: 66)
+- PR #23에서 프록시 리팩토링: 상수 추출, 모듈 레벨 함수, TaskGroup, WebSocket accept 타이밍, RFC 6455/7230 헤더 준수
+- Phase 1 리팩토링: CAS 헬퍼 추출, 세션 팩토리 헬퍼 (코드 중복 30% → 10% 목표)
+- FIX: Docker 블로킹 호출을 asyncio.to_thread()로 래핑 (이벤트 루프 블로킹 방지)
+- FIX: WebSocket 프록시에서 origin 헤더 필터링 (code-server 403 방지)
+- REFACTOR: Host port binding 제거 (내부 네트워크로 통신, K8s 마이그레이션 용이)
+- FIX: Startup Recovery에 RUNNING 상태 검증 추가 (docker compose down/up 시 컨테이너 없으면 ERROR 전환)
+
+---
+
+### M6: Auth + E2E
+**Status**: Done
+
+**Tasks**:
+- [x] Session 모델 + 로직 (Exit: 생성/만료/폐기 동작) (PR #24)
+- [x] Login/Logout API (Exit: 세션 쿠키 발급/폐기) (PR #24)
+- [x] Session 조회 API (Exit: GET /api/v1/session → 현재 유저 정보) (PR #24)
+- [x] Auth Middleware (Exit: 쿠키 없으면 401, 만료면 401) (PR #24)
+- [x] Workspace owner 필터링 + Pagination (Exit: CRUD + Proxy에서 owner 검증, 목록 API pagination) (PR #24)
+- [x] Frontend Auth UI (Exit: 로그인 페이지, 로그아웃 버튼, 동적 사용자 표시, Pagination UI) (PR #24)
+- [x] E2E 테스트 (Exit: MVP 완료 기준 4가지 모두 통과) (PR #47)
+
+**MVP 완료 기준** (spec.md):
+- [x] 내 계정으로 생성 → `/w/{workspace_id}/` 접속 성공
+- [x] 다른 계정으로 `/w/{workspace_id}/` 접근 → 403
+- [x] STOP 후 START → Home 유지
+- [x] WebSocket 포함 정상 동작 (터미널/에디터)
+
+**Notes**:
+- WebSocket 인증: handshake 시점에 세션 쿠키 검증
+- E2E 환경: docker-compose로 전체 스택 실행
+- Frontend: HTML + Tailwind CDN + Vanilla JS (현재와 동일)
+- UI 레이아웃: Master-Detail (사이드바 목록 + 메인 상세)
+- 사이드바에 액션 버튼 직접 노출 (클릭 최소화)
+- Pagination: offset-based (`?page=N&per_page=M`)
+- 쿠키 설정: HttpOnly, SameSite=Lax, Path=/
+- M6-1~5 + Frontend를 하나의 PR로 통합 구현, E2E는 별도 PR
+- 향후 OIDC/Multi-tenancy 확장 고려: [900-future-auth.md](./900-future-auth.md)
+- FIX: 프록시에서 `aiter_bytes()` → `aiter_raw()` 변경 (Safari Content-Encoding 불일치 버그 수정) (PR #25)
+
+---
+
+## References
+
+- [spec/](../spec/) - 상세 스펙
+- [architecture/](../architecture/) - 시스템 아키텍처
+- [ADR-001: MVP Tech Stack](../adr/001-mvp-tech-stack.md)
+- [ADR-002: MVP Project Structure](../adr/002-mvp-project-structure.md)
