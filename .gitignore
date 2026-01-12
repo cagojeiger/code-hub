@@ -210,3 +210,4 @@ __marimo__/
 # code-hub specific
 data/
 !backend/app/services/instance/
+.playwright-mcp/
