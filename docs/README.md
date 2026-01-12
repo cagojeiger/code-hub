@@ -7,8 +7,7 @@ docs/
 ├── spec/           # 정의 (What) - 시스템 규칙과 계약
 ├── architecture/   # 구현 (How) - 알고리즘과 패턴
 ├── adr/            # 결정 (Why) - 기술 선택 근거
-├── roadmap/        # 일정 - 마일스톤과 태스크
-└── workflow.md     # 작업 프로세스
+└── roadmap/        # 일정 - 마일스톤과 태스크
 ```
 
 ## 시작점
