@@ -672,7 +672,7 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 3,
+        "h": 4,
         "w": 24,
         "x": 0,
         "y": 10
@@ -681,7 +681,7 @@
       "options": {
         "displayMode": "lcd",
         "maxVizHeight": 300,
-        "minVizHeight": 16,
+        "minVizHeight": 20,
         "minVizWidth": 8,
         "namePlacement": "auto",
         "orientation": "horizontal",
@@ -694,7 +694,11 @@
         },
         "showUnfilled": true,
         "sizing": "auto",
-        "valueMode": "color"
+        "valueMode": "color",
+        "text": {
+          "titleSize": 11,
+          "valueSize": 16
+        }
       },
       "pluginVersion": "12.3.1",
       "targets": [
@@ -794,16 +798,16 @@
         ]
       },
       "gridPos": {
-        "h": 4,
+        "h": 5,
         "w": 24,
         "x": 0,
-        "y": 13
+        "y": 14
       },
       "id": 24,
       "options": {
         "displayMode": "lcd",
         "maxVizHeight": 300,
-        "minVizHeight": 16,
+        "minVizHeight": 20,
         "minVizWidth": 8,
         "namePlacement": "auto",
         "orientation": "horizontal",
@@ -816,7 +820,11 @@
         },
         "showUnfilled": true,
         "sizing": "auto",
-        "valueMode": "color"
+        "valueMode": "color",
+        "text": {
+          "titleSize": 11,
+          "valueSize": 16
+        }
       },
       "pluginVersion": "12.3.1",
       "targets": [
@@ -953,16 +961,16 @@
         ]
       },
       "gridPos": {
-        "h": 7,
+        "h": 8,
         "w": 24,
         "x": 0,
-        "y": 17
+        "y": 19
       },
       "id": 303,
       "options": {
         "displayMode": "lcd",
         "maxVizHeight": 300,
-        "minVizHeight": 16,
+        "minVizHeight": 20,
         "minVizWidth": 8,
         "namePlacement": "auto",
         "orientation": "horizontal",
@@ -975,7 +983,11 @@
         },
         "showUnfilled": true,
         "sizing": "auto",
-        "valueMode": "color"
+        "valueMode": "color",
+        "text": {
+          "titleSize": 11,
+          "valueSize": 16
+        }
       },
       "pluginVersion": "12.3.1",
       "targets": [
@@ -1051,7 +1063,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 24
+        "y": 27
       },
       "id": 500,
       "title": "Throughput & Events",
@@ -1116,7 +1128,7 @@
         "h": 5,
         "w": 24,
         "x": 0,
-        "y": 25
+        "y": 28
       },
       "id": 2,
       "options": {
@@ -1207,7 +1219,7 @@
         "h": 5,
         "w": 8,
         "x": 0,
-        "y": 30
+        "y": 33
       },
       "id": 50,
       "options": {
@@ -1298,7 +1310,7 @@
         "h": 5,
         "w": 8,
         "x": 8,
-        "y": 30
+        "y": 33
       },
       "id": 51,
       "options": {
@@ -1398,7 +1410,7 @@
         "h": 5,
         "w": 8,
         "x": 16,
-        "y": 30
+        "y": 33
       },
       "id": 52,
       "options": {
@@ -1435,7 +1447,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 35
+        "y": 38
       },
       "id": 200,
       "title": "Resources",
@@ -1470,7 +1482,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 36
+        "y": 39
       },
       "id": 10,
       "options": {
@@ -1533,7 +1545,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 36
+        "y": 39
       },
       "id": 11,
       "options": {
@@ -1596,7 +1608,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 36
+        "y": 39
       },
       "id": 12,
       "options": {
@@ -1659,7 +1671,7 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 36
+        "y": 39
       },
       "id": 13,
       "options": {
@@ -1699,7 +1711,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 40
+        "y": 43
       },
       "id": 201,
       "panels": [
@@ -2073,7 +2085,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 41
+        "y": 44
       },
       "id": 300,
       "panels": [
@@ -2493,7 +2505,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 42
+        "y": 45
       },
       "id": 400,
       "panels": [
@@ -2869,7 +2881,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 43
+        "y": 46
       },
       "id": 600,
       "panels": [
