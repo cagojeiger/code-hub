@@ -24,6 +24,7 @@ from codehub.app.config import get_settings
 from codehub.app.logging import clear_trace_context, set_trace_id
 from codehub.app.metrics.collector import (
     WC_CAS_FAILURES_TOTAL,
+    WC_EXECUTE_DURATION,
     WC_OPERATION_DURATION,
     WC_STAGE_DURATION,
 )
@@ -207,7 +208,7 @@ class WorkspaceController(CoordinatorBase):
 
             # Always record stage duration metrics (for continuous graphs)
             WC_STAGE_DURATION.labels(stage="plan").observe(plan_duration)
-            WC_STAGE_DURATION.labels(stage="execute").observe(exec_duration)
+            WC_EXECUTE_DURATION.observe(exec_duration)
             WC_STAGE_DURATION.labels(stage="persist").observe(persist_duration)
 
             # Reconcile summary for logging (metrics removed - logs are sufficient)

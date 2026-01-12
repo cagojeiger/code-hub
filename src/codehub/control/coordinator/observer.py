@@ -23,6 +23,7 @@ from codehub.app.metrics.collector import (
     OBSERVER_API_DURATION,
     OBSERVER_ARCHIVES,
     OBSERVER_CONTAINERS,
+    OBSERVER_OBSERVE_DURATION,
     OBSERVER_STAGE_DURATION,
     OBSERVER_VOLUMES,
     OBSERVER_WORKSPACES,
@@ -136,7 +137,7 @@ class ObserverCoordinator(CoordinatorBase):
         # Stage 2: Observe resources (parallel API calls)
         observe_start = time.monotonic()
         containers, volumes, archives = await self._observer.observe_all()
-        OBSERVER_STAGE_DURATION.labels(stage="observe").observe(time.monotonic() - observe_start)
+        OBSERVER_OBSERVE_DURATION.observe(time.monotonic() - observe_start)
 
         # 하나라도 실패 → skip (상태 일관성 보장, 다음 reconcile에서 재시도)
         if any(x is None for x in [containers, volumes, archives]):

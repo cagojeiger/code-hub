@@ -716,7 +716,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_stage_duration_seconds_bucket{stage=\"observe\"}[$__range])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_observe_duration_seconds_bucket[$__range])))",
           "legendFormat": "observe",
           "refId": "B"
         },
@@ -851,7 +851,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_stage_duration_seconds_bucket{stage=\"execute\"}[$__range])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[$__range])))",
           "legendFormat": "execute",
           "refId": "C"
         },
@@ -1851,7 +1851,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_observer_stage_duration_seconds_bucket{stage=\"observe\"}[$__range])))",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_observer_observe_duration_seconds_bucket[$__range])))",
               "legendFormat": "observe p50",
               "refId": "B_p50"
             },
@@ -1860,7 +1860,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_observer_stage_duration_seconds_bucket{stage=\"observe\"}[$__range])))",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_observer_observe_duration_seconds_bucket[$__range])))",
               "legendFormat": "observe p95",
               "refId": "B"
             },
@@ -1869,7 +1869,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_stage_duration_seconds_bucket{stage=\"observe\"}[$__range])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_observe_duration_seconds_bucket[$__range])))",
               "legendFormat": "observe p99",
               "refId": "B_p99"
             },
@@ -1878,7 +1878,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "rate(codehub_observer_stage_duration_seconds_sum{stage=\"observe\"}[$__range]) / rate(codehub_observer_stage_duration_seconds_count{stage=\"observe\"}[$__range])",
+              "expr": "rate(codehub_observer_observe_duration_seconds_sum[$__range]) / rate(codehub_observer_observe_duration_seconds_count[$__range])",
               "legendFormat": "observe mean",
               "refId": "B2"
             },
@@ -1887,7 +1887,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(1, sum by (le) (rate(codehub_observer_stage_duration_seconds_bucket{stage=\"observe\"}[$__range])))",
+              "expr": "histogram_quantile(1, sum by (le) (rate(codehub_observer_observe_duration_seconds_bucket[$__range])))",
               "legendFormat": "observe max",
               "refId": "B3"
             },
@@ -2270,7 +2270,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_wc_stage_duration_seconds_bucket{stage=\"execute\"}[$__range])))",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[$__range])))",
               "legendFormat": "execute p50",
               "refId": "C_p50"
             },
@@ -2279,7 +2279,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_wc_stage_duration_seconds_bucket{stage=\"execute\"}[$__range])))",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[$__range])))",
               "legendFormat": "execute p95",
               "refId": "C"
             },
@@ -2288,7 +2288,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_stage_duration_seconds_bucket{stage=\"execute\"}[$__range])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[$__range])))",
               "legendFormat": "execute p99",
               "refId": "C_p99"
             },
@@ -2297,7 +2297,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "rate(codehub_wc_stage_duration_seconds_sum{stage=\"execute\"}[$__range]) / rate(codehub_wc_stage_duration_seconds_count{stage=\"execute\"}[$__range])",
+              "expr": "rate(codehub_wc_execute_duration_seconds_sum[$__range]) / rate(codehub_wc_execute_duration_seconds_count[$__range])",
               "legendFormat": "execute mean",
               "refId": "C2"
             },
@@ -2306,7 +2306,7 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
-              "expr": "histogram_quantile(1, sum by (le) (rate(codehub_wc_stage_duration_seconds_bucket{stage=\"execute\"}[$__range])))",
+              "expr": "histogram_quantile(1, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[$__range])))",
               "legendFormat": "execute max",
               "refId": "C3"
             },

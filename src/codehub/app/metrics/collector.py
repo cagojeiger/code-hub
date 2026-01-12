@@ -11,24 +11,28 @@ from prometheus_client import Counter, Gauge, Histogram
 # Bucket count: 10-14 (labeled histograms should be conservative)
 # Scale: logarithmic with SLO boundaries (200ms, 1s, 5s)
 
-# FAST: DB queries, CPU computation, Redis operations (0.5ms ~ 500ms)
+# FAST: DB queries, CPU computation, Redis operations (0.5ms ~ 5s)
+# Log scale: ratio ≈ 2.15
 _BUCKETS_FAST = (
     0.0005, 0.001, 0.002, 0.005, 0.01,
     0.02, 0.05, 0.1, 0.2, 0.5,
-)  # 10 buckets
+    1, 2, 5,
+)  # 13 buckets
 
-# MEDIUM: API calls, external services, reconcile cycles (10ms ~ 60s)
+# MEDIUM: API calls, external services, reconcile cycles (5ms ~ 60s)
+# Log scale: ratio ≈ 2.04
 _BUCKETS_MEDIUM = (
-    0.01, 0.02, 0.05, 0.1, 0.2,
-    0.5, 1, 2, 5, 10,
-    20, 30, 45, 60,
+    0.005, 0.01, 0.02, 0.04, 0.09,
+    0.18, 0.36, 0.73, 1.5, 3,
+    6.2, 12.7, 26, 53,
 )  # 14 buckets
 
 # SLOW: Docker/S3 operations with 7 labels (100ms ~ 180s)
+# Log scale: ratio ≈ 1.98
 _BUCKETS_SLOW = (
-    0.1, 0.3, 0.8, 1.5, 3,
-    6, 12, 25, 45, 80,
-    120, 180,
+    0.1, 0.2, 0.39, 0.77, 1.5,
+    3, 6, 12, 23, 46,
+    91, 180,
 )  # 12 buckets
 
 # Ensure multiprocess directory exists before creating gauges
@@ -184,11 +188,18 @@ OBSERVER_ARCHIVES = Gauge(
     multiprocess_mode="livesum",
 )
 
-# Observer stage durations (load, observe, update)
+# Observer stage durations (load, update) - fast DB operations
 OBSERVER_STAGE_DURATION = Histogram(
     "codehub_observer_stage_duration_seconds",
     "Duration of observer stages",
-    ["stage"],  # load, observe, update
+    ["stage"],  # load, update
+    buckets=_BUCKETS_FAST,
+)
+
+# Observer observe duration - slow external API calls
+OBSERVER_OBSERVE_DURATION = Histogram(
+    "codehub_observer_observe_duration_seconds",
+    "Duration of observer observe stage",
     buckets=_BUCKETS_MEDIUM,
 )
 
@@ -202,11 +213,18 @@ OBSERVER_API_DURATION = Histogram(
 # =============================================================================
 # WorkspaceController Metrics
 # =============================================================================
-# WC stage durations (load, plan, execute, persist)
+# WC stage durations (load, plan, persist) - fast DB/CPU operations
 WC_STAGE_DURATION = Histogram(
     "codehub_wc_stage_duration_seconds",
     "Duration of WC stages",
-    ["stage"],  # load, plan, execute, persist
+    ["stage"],  # load, plan, persist
+    buckets=_BUCKETS_FAST,
+)
+
+# WC execute duration - slow external operations (Docker/S3)
+WC_EXECUTE_DURATION = Histogram(
+    "codehub_wc_execute_duration_seconds",
+    "Duration of WC execute stage",
     buckets=_BUCKETS_MEDIUM,
 )
 
@@ -370,9 +388,9 @@ def _init_metrics() -> None:
         WC_OPERATION_DURATION.labels(operation=op)
 
     # Stage durations (labeled histograms)
-    for stage in ["load", "observe", "update"]:
+    for stage in ["load", "update"]:
         OBSERVER_STAGE_DURATION.labels(stage=stage)
-    for stage in ["load", "plan", "execute", "persist"]:
+    for stage in ["load", "plan", "persist"]:
         WC_STAGE_DURATION.labels(stage=stage)
     for target in ["redis", "db"]:
         TTL_SYNC_DURATION.labels(target=target)
