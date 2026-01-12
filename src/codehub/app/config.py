@@ -102,8 +102,8 @@ class DockerConfig(BaseSettings):
     # Timeout settings
     api_timeout: float = Field(default=30.0)  # seconds (Docker API calls)
     image_pull_timeout: float = Field(default=600.0)  # seconds (10 minutes)
-    container_wait_timeout: int = Field(default=300)  # seconds (5 minutes)
-    job_timeout: int = Field(default=300)  # seconds (storage job)
+    container_wait_timeout: int = Field(default=600)  # seconds (10 minutes)
+    job_timeout: int = Field(default=600)  # seconds (storage job)
 
 
 class TtlConfig(BaseSettings):
@@ -203,7 +203,7 @@ class CoordinatorConfig(BaseSettings):
     leader_timeout: float = Field(default=5.0)  # seconds (advisory lock timeout)
 
     # WC specific
-    operation_timeout: int = Field(default=300)  # seconds (5 minutes)
+    operation_timeout: int = Field(default=600)  # seconds (10 minutes)
 
     # TTL specific
     ttl_interval: float = Field(default=60.0)  # seconds (1 minute)

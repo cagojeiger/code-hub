@@ -1,5 +1,6 @@
 """Docker job runner implementation for Storage Job."""
 
+import asyncio
 import logging
 import uuid
 
@@ -32,6 +33,24 @@ class DockerJobRunner(JobRunner):
         self._docker = settings.docker
         self._containers = containers or ContainerAPI()
         self._timeout = timeout or self._docker.job_timeout
+
+    async def _force_cleanup(self, container_name: str) -> None:
+        """Force stop and remove container (for timeout/cancel scenarios)."""
+        try:
+            await self._containers.stop(container_name, timeout=5)
+        except Exception:
+            pass
+        try:
+            await self._containers.remove(container_name, force=True)
+        except Exception as e:
+            logger.warning(
+                "Force cleanup failed",
+                extra={
+                    "event": LogEvent.OPERATION_FAILED,
+                    "container": container_name,
+                    "error": str(e),
+                },
+            )
 
     async def run_archive(
         self,
@@ -77,11 +96,21 @@ class DockerJobRunner(JobRunner):
             )
             return JobResult(exit_code=exit_code, logs=logs.decode("utf-8", errors="replace"))
 
+        except asyncio.CancelledError:
+            logger.warning(
+                "Archive job cancelled, forcing cleanup",
+                extra={
+                    "event": LogEvent.OPERATION_TIMEOUT,
+                    "job": helper_name,
+                },
+            )
+            await self._force_cleanup(helper_name)
+            raise
+
         finally:
             try:
                 await self._containers.remove(helper_name)
             except Exception as e:
-                # Log but don't mask the actual job result
                 logger.error(
                     "Failed to cleanup archive job container",
                     extra={"event": LogEvent.OPERATION_FAILED, "job": helper_name, "error": str(e)},
@@ -131,11 +160,21 @@ class DockerJobRunner(JobRunner):
             )
             return JobResult(exit_code=exit_code, logs=logs.decode("utf-8", errors="replace"))
 
+        except asyncio.CancelledError:
+            logger.warning(
+                "Restore job cancelled, forcing cleanup",
+                extra={
+                    "event": LogEvent.OPERATION_TIMEOUT,
+                    "job": helper_name,
+                },
+            )
+            await self._force_cleanup(helper_name)
+            raise
+
         finally:
             try:
                 await self._containers.remove(helper_name)
             except Exception as e:
-                # Log but don't mask the actual job result
                 logger.error(
                     "Failed to cleanup restore job container",
                     extra={"event": LogEvent.OPERATION_FAILED, "job": helper_name, "error": str(e)},
