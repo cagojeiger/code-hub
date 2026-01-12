@@ -1,5 +1,6 @@
 """Unit tests for DockerJobRunner."""
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -135,3 +136,39 @@ class TestDockerJobRunner:
 
         assert result.exit_code == 1
         assert "error: archive failed" in result.logs
+
+    async def test_archive_cancelled_forces_cleanup(
+        self, job_runner: DockerJobRunner, mock_containers: AsyncMock
+    ):
+        """CancelledError 발생 시 컨테이너 강제 정리."""
+        mock_containers.wait.side_effect = asyncio.CancelledError()
+        mock_containers.stop = AsyncMock()
+
+        with pytest.raises(asyncio.CancelledError):
+            await job_runner.run_archive(
+                archive_url="s3://bucket/key",
+                volume_name="test-vol",
+                s3_endpoint="http://minio:9000",
+                s3_access_key="key",
+                s3_secret_key="secret",
+            )
+
+        mock_containers.stop.assert_called_once()
+
+    async def test_restore_cancelled_forces_cleanup(
+        self, job_runner: DockerJobRunner, mock_containers: AsyncMock
+    ):
+        """Restore CancelledError 발생 시 컨테이너 강제 정리."""
+        mock_containers.wait.side_effect = asyncio.CancelledError()
+        mock_containers.stop = AsyncMock()
+
+        with pytest.raises(asyncio.CancelledError):
+            await job_runner.run_restore(
+                archive_url="s3://bucket/key",
+                volume_name="test-vol",
+                s3_endpoint="http://minio:9000",
+                s3_access_key="key",
+                s3_secret_key="secret",
+            )
+
+        mock_containers.stop.assert_called_once()
