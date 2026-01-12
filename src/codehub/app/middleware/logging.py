@@ -39,9 +39,6 @@ _KNOWN_ENDPOINTS = frozenset({
     "/api/v1/events",
     # VS Code Proxy
     "/w/*",
-    # Frontend pages
-    "/",
-    "/workspaces",
 })
 
 
@@ -100,8 +97,8 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         duration_seconds = time.monotonic() - start
         duration_ms = duration_seconds * 1000
 
-        # Record HTTP metrics (skip static files and internal endpoints)
-        skip_metrics_paths = ("/health", "/metrics", "/healthz", "/readyz")
+        # Record HTTP metrics (skip static files, internal endpoints, and frontend pages)
+        skip_metrics_paths = ("/health", "/metrics", "/healthz", "/readyz", "/", "/workspaces")
         if not request.url.path.startswith("/static/") and request.url.path not in skip_metrics_paths:
             endpoint = _normalize_path(request.url.path)
             HTTP_REQUESTS_TOTAL.labels(
