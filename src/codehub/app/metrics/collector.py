@@ -6,16 +6,30 @@ from pathlib import Path
 from prometheus_client import Counter, Gauge, Histogram
 
 # =============================================================================
-# Unified Histogram Buckets (logarithmic scale)
+# Histogram Buckets (optimized by latency category)
 # =============================================================================
-# numpy.geomspace(0.001, 180.0, 29) - covers 1ms to 180s
-# All duration histograms use the same buckets for consistent comparison
-_BUCKETS_DURATION = (
-    0.001, 0.0015, 0.0023, 0.0035, 0.0054, 0.0082, 0.012, 0.019,
-    0.029, 0.044, 0.066, 0.1, 0.15, 0.23, 0.35, 0.54,
-    0.82, 1.25, 1.9, 2.88, 4.38, 6.66, 10.13, 15.4,
-    23.41, 35.6, 54.13, 82.3, 180.0,
-)  # 1ms ~ 180s, 29 buckets (logarithmic scale)
+# Bucket count: 10-14 (labeled histograms should be conservative)
+# Scale: logarithmic with SLO boundaries (200ms, 1s, 5s)
+
+# FAST: DB queries, CPU computation, Redis operations (0.5ms ~ 500ms)
+_BUCKETS_FAST = (
+    0.0005, 0.001, 0.002, 0.005, 0.01,
+    0.02, 0.05, 0.1, 0.2, 0.5,
+)  # 10 buckets
+
+# MEDIUM: API calls, external services, reconcile cycles (10ms ~ 60s)
+_BUCKETS_MEDIUM = (
+    0.01, 0.02, 0.05, 0.1, 0.2,
+    0.5, 1, 2, 5, 10,
+    20, 30, 45, 60,
+)  # 14 buckets
+
+# SLOW: Docker/S3 operations with 7 labels (100ms ~ 180s)
+_BUCKETS_SLOW = (
+    0.1, 0.3, 0.8, 1.5, 3,
+    6, 12, 25, 45, 80,
+    120, 180,
+)  # 12 buckets
 
 # Ensure multiprocess directory exists before creating gauges
 # This is required because multiprocess_mode gauges need the directory at import time
@@ -106,7 +120,7 @@ WS_MESSAGE_LATENCY = Histogram(
     "codehub_ws_message_latency_seconds",
     "WebSocket message relay latency",
     ["direction"],
-    buckets=_BUCKETS_DURATION,
+    buckets=_BUCKETS_FAST,
 )
 
 WS_ERRORS = Counter(
@@ -131,7 +145,7 @@ COORDINATOR_RECONCILE_DURATION = Histogram(
     "codehub_coordinator_reconcile_duration_seconds",
     "Duration of coordinator reconcile cycle execution",
     ["coordinator"],
-    buckets=_BUCKETS_DURATION,
+    buckets=_BUCKETS_MEDIUM,
 )
 
 COORDINATOR_IS_LEADER = Gauge(
@@ -175,14 +189,14 @@ OBSERVER_STAGE_DURATION = Histogram(
     "codehub_observer_stage_duration_seconds",
     "Duration of observer stages",
     ["stage"],  # load, observe, update
-    buckets=_BUCKETS_DURATION,
+    buckets=_BUCKETS_MEDIUM,
 )
 
 OBSERVER_API_DURATION = Histogram(
     "codehub_observer_api_duration_seconds",
     "Duration of individual observation API calls",
     ["api"],  # containers, volumes, archives
-    buckets=_BUCKETS_DURATION,
+    buckets=_BUCKETS_MEDIUM,
 )
 
 # =============================================================================
@@ -193,7 +207,7 @@ WC_STAGE_DURATION = Histogram(
     "codehub_wc_stage_duration_seconds",
     "Duration of WC stages",
     ["stage"],  # load, plan, execute, persist
-    buckets=_BUCKETS_DURATION,
+    buckets=_BUCKETS_MEDIUM,
 )
 
 # Operation-level metrics for detailed latency analysis
@@ -201,7 +215,7 @@ WC_OPERATION_DURATION = Histogram(
     "codehub_wc_operation_duration_seconds",
     "Duration of WC operations",
     ["operation"],  # STARTING, STOPPING, PROVISIONING, DELETING, CREATE_EMPTY_ARCHIVE, ARCHIVING, RESTORING
-    buckets=_BUCKETS_DURATION,
+    buckets=_BUCKETS_SLOW,
 )
 
 WC_CAS_FAILURES_TOTAL = Counter(
@@ -225,7 +239,7 @@ TTL_SYNC_DURATION = Histogram(
     "codehub_ttl_sync_duration_seconds",
     "Duration of TTL sync operations",
     ["target"],  # redis, db
-    buckets=_BUCKETS_DURATION,
+    buckets=_BUCKETS_FAST,
 )
 
 # =============================================================================
