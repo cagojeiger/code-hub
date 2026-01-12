@@ -107,7 +107,7 @@ CLOSED ──────────→ OPEN
 |-------------|------|
 | Observer | 실패 시 tick skip (다음 주기에 자연 재시도) |
 | GC | 비긴급 작업, 다음 tick에 재시도 |
-| TTL Manager | DB 작업만 수행 (외부 호출 없음) |
+| TTL Runner | DB 작업만 수행 (외부 호출 없음) |
 
 ---
 

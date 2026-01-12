@@ -10,7 +10,7 @@
 
 1. [Coordinator](#coordinator)
 2. [WorkspaceController](#workspacecontroller)
-3. [TTL Manager](#ttl-manager)
+3. [TTL Runner](#ttl-manager)
 4. [Events](#events)
 5. [Activity](#activity)
 6. [Error Policy](#error-policy)
@@ -35,8 +35,8 @@ flowchart TB
     subgraph Coordinator["Coordinator Process<br/>(pg_advisory_lock 보유)"]
         EL["EventListener<br/>(실시간)"]
         WC["WorkspaceController<br/>(idle=15s, active=1s)"]
-        TTL["TTL Manager<br/>(60s 주기)"]
-        GC["Archive GC<br/>(4h 주기)"]
+        TTL["TTL Runner<br/>(60s 주기)"]
+        GC["GC Runner<br/>(4h 주기)"]
     end
 ```
 
@@ -48,8 +48,8 @@ flowchart TB
 |---------|------|
 | EventListener | PG NOTIFY → Redis PUBLISH (CDC) |
 | WorkspaceController | 리소스 관측 → conditions/phase 갱신 → 상태 수렴 |
-| TTL Manager | TTL 만료 → desired_state 변경 |
-| Archive GC | orphan archive 정리 |
+| TTL Runner | TTL 만료 → desired_state 변경 |
+| GC Runner | orphan archive 정리 |
 
 > **계약 #2 준수**: Level-Triggered Reconciliation ([00-contracts.md](./00-contracts.md#2-level-triggered-reconciliation))
 
@@ -250,9 +250,9 @@ WHERE id = ? AND operation != 'NONE'
 
 ---
 
-## TTL Manager
+## TTL Runner
 
-TTL Manager는 비활성 워크스페이스의 TTL을 체크하고 desired_state를 변경합니다.
+TTL Runner는 비활성 워크스페이스의 TTL을 체크하고 desired_state를 변경합니다.
 
 ### TTL 종류
 
@@ -304,7 +304,7 @@ sequenceDiagram
     participant M as Memory Buffer
     participant R as Redis (ZSET)
     participant D as DB
-    participant T as TTL Manager
+    participant T as TTL Runner
 
     B->>P: WebSocket 메시지/HTTP 요청
     P->>M: record(workspace_id)
@@ -540,7 +540,7 @@ sequenceDiagram
 2. **Operation 중단 불가**: 시작 후 취소 불가, 완료까지 대기
 3. **순차적 전이**: RUNNING → ARCHIVED 직접 불가 (STOPPING → ARCHIVING 순차)
 4. ~~**재시도 간격 고정**: 지수 백오프 미적용~~ → M2에서 구현 예정
-5. ~~**desired_state 경쟁**: API/TTL Manager/Proxy 동시 변경 시 Last-Write-Wins~~
+5. ~~**desired_state 경쟁**: API/TTL Runner/Proxy 동시 변경 시 Last-Write-Wins~~
    - **해결됨**: 계약 #3에 따라 API만 desired_state 변경 가능
 6. **ERROR 자동 복구 불가**: 관리자 수동 개입 필요 (error_reason, error_count 리셋)
 7. ~~**observed_status에 ERROR 포함**: 리소스 관측과 정책 판정 혼재~~

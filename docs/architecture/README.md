@@ -24,8 +24,8 @@ graph TB
         SP[StorageProvider]
         subgraph Coordinator["Coordinator (Single Leader)"]
             WC[WorkspaceController]
-            TTL[TTL Manager]
-            GC[Archive GC]
+            TTL[TTL Runner]
+            GC[GC Runner]
             EL[EventListener]
         end
     end
@@ -76,8 +76,8 @@ graph TB
 | 컴포넌트 | 주기 | 역할 |
 |---------|------|------|
 | WorkspaceController | 10s (진행 중 2s) | 리소스 관측 → 상태 수렴 |
-| TTL Manager | 1m | 비활성 워크스페이스 강등 |
-| Archive GC | 1h | orphan archive 정리 |
+| TTL Runner | 1m | 비활성 워크스페이스 강등 |
+| GC Runner | 1h | orphan archive 정리 |
 | EventListener | 실시간 | PG NOTIFY → Redis PUBLISH |
 
 > **Note**: InstanceController, StorageProvider는 Coordinator가 호출하는 내부 모듈 (별도 프로세스 아님)
@@ -152,8 +152,8 @@ PENDING(0) < ARCHIVED(5) < STANDBY(10) < RUNNING(20)
 | 컴포넌트 | 역할 | 상세 문서 |
 |---------|------|----------|
 | **WorkspaceController** | Reconcile 루프, 상태 수렴 | [reconciler.md](./reconciler.md) |
-| **TTL Manager** | desired_state 자동 강등 | [spec/04-control-plane.md](../spec/04-control-plane.md) |
-| **Archive GC** | orphan archive 정리 | [spec/05-data-plane.md](../spec/05-data-plane.md) |
+| **TTL Runner** | desired_state 자동 강등 | [spec/04-control-plane.md](../spec/04-control-plane.md) |
+| **GC Runner** | orphan archive 정리 | [spec/05-data-plane.md](../spec/05-data-plane.md) |
 | **EventListener** | CDC (PG → Redis) | [spec/04-control-plane.md](../spec/04-control-plane.md) |
 
 ### Container Runtime (Docker|K8s)

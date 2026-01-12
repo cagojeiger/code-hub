@@ -45,8 +45,8 @@ PENDING(0) → ARCHIVED(5) → STANDBY(10) → RUNNING(20)
 |-------------|------|------|
 | Observer | 리소스 관측 → conditions | 10s |
 | WC | 상태 수렴 (Judge+Control) | 10s |
-| TTL Manager | 비활성 워크스페이스 강등 | 60s |
-| Archive GC | orphan archive 정리 | 1h |
+| TTL Runner | 비활성 워크스페이스 강등 | 60s |
+| GC Runner | orphan archive 정리 | 1h |
 | EventListener | CDC (PG → Redis) | 실시간 |
 
 ## 문서별 역할

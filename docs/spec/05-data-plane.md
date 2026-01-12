@@ -13,7 +13,7 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 | InstanceController | Container 생성/삭제 |
 | StorageProvider | Volume/Archive 관리 |
 | Storage Job | Volume↔Archive 데이터 이동 |
-| Archive GC | orphan archive 정리 |
+| GC Runner | orphan archive 정리 |
 
 ---
 
@@ -286,7 +286,7 @@ sha256:{hex_string}
 
 ---
 
-## Archive GC
+## GC Runner
 
 > orphan archive를 정리하는 컴포넌트. 계약 #9 준수.
 

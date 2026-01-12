@@ -200,7 +200,7 @@
 | deleted_at | Soft Delete 시각 |
 | last_access_at | 마지막 접속 시각 |
 
-> **desired_state 단일 소유자**: TTL Manager/Proxy(Auto-wake)는 내부 서비스 레이어를 통해 API 호출
+> **desired_state 단일 소유자**: TTL Runner/Proxy(Auto-wake)는 내부 서비스 레이어를 통해 API 호출
 >
 > **TTL 설정**: 워크스페이스별 TTL 컬럼은 제거됨. 환경변수 기반 TtlConfig 사용 (TTL_STANDBY_SECONDS, TTL_ARCHIVE_SECONDS)
 
@@ -245,7 +245,7 @@ is_terminal = error_reason in TERMINAL_REASONS or error_count >= MAX_RETRY
 
 | 인덱스 | 용도 | 조건 |
 |--------|------|------|
-| idx_workspaces_ttl_check | TTL Manager 폴링 | `phase IN (RUNNING, STANDBY) AND operation = NONE` |
+| idx_workspaces_ttl_check | TTL Runner 폴링 | `phase IN (RUNNING, STANDBY) AND operation = NONE` |
 | idx_workspaces_reconcile | Reconciler 대상 조회 | `phase != desired_state OR operation != NONE` |
 | idx_workspaces_operation | 진행 중 작업 조회 | `operation != NONE` |
 | idx_workspaces_user_running | 사용자별 RUNNING 제한 | `owner_user_id, phase = RUNNING` |

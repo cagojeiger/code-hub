@@ -20,8 +20,8 @@ flowchart TB
         subgraph Coordinator["Coordinator Process<br/>(Leader Election)"]
             EL["EventListener<br/>(실시간)"]
             WC["WorkspaceController<br/>(10s)"]
-            TTL["TTL Manager<br/>(1m)"]
-            GC["Archive GC<br/>(1h)"]
+            TTL["TTL Runner<br/>(1m)"]
+            GC["GC Runner<br/>(1h)"]
         end
 
         DB["Database (PostgreSQL)"]
@@ -73,7 +73,7 @@ flowchart TB
 | 2 | [02-states.md](./02-states.md) | 상태 모델 + 전이 규칙 |
 | 3 | [03-schema.md](./03-schema.md) | DB 스키마 + 컬럼 소유권 |
 | 4 | [04-control-plane.md](./04-control-plane.md) | Coordinator, WorkspaceController, TTL, Events, Error, Limits |
-| 5 | [05-data-plane.md](./05-data-plane.md) | Instance, Storage, Storage Job, Archive GC |
+| 5 | [05-data-plane.md](./05-data-plane.md) | Instance, Storage, Storage Job, GC Runner |
 
 ---
 
@@ -102,7 +102,7 @@ flowchart TB
 |------|------|------|
 | Coordinator | - | 리더 선출, 프로세스 관리 |
 | WorkspaceController | 10s | 리소스 관측 + phase 계산 + 상태 수렴 |
-| TTL Manager | 1m | TTL → desired_state 변경 |
+| TTL Runner | 1m | TTL → desired_state 변경 |
 | Events | 실시간 | CDC 기반 SSE 이벤트 |
 | Activity | - | WebSocket 기반 활동 감지 |
 | Error Policy | - | ERROR 상태, 재시도 정책 |
@@ -115,7 +115,7 @@ flowchart TB
 | InstanceController | Container 생성/삭제 |
 | StorageProvider | Volume/Archive 관리 |
 | Storage Job | Volume↔Archive 데이터 이동 |
-| Archive GC | orphan archive 정리 |
+| GC Runner | orphan archive 정리 |
 
 ---
 
