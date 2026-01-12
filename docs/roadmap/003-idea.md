@@ -2,7 +2,34 @@
 
 - **Status**: Idea
 - **Created**: 2025-01-12
-- **Target Version**: 0.3.0
+
+---
+
+## 버전 전략
+
+```
+v0.2.0 (현재)
+    │
+    │  Control Plane이 Docker 직접 호출
+    │
+    ▼
+v0.2.1
+    │
+    │  Control Plane + Docker Agent (Agent API 기반 리팩토링)
+    │  - docker-compose로 함께 배포
+    │  - Agent API 계약 확정
+    │
+    ▼
+v0.3.0
+    │
+    │  K8s Agent 추가 (Control Plane 수정 없이!)
+    │  - Agent API 계약 그대로 사용
+    │  - K8s Runtime만 구현
+    │
+    ▼
+```
+
+**핵심 원칙**: v0.2.1에서 Agent API 계약을 확정하고, v0.3.0에서는 Control Plane 수정 없이 K8s Agent만 추가한다.
 
 ---
 
@@ -232,25 +259,51 @@ Control Plane ──► FRP Server ◄── Agent (outbound tunnel)
 
 ## 8. 마일스톤
 
-### M1: Runtime Agent 기반 + Docker Runtime
+### v0.2.1: Control Plane + Docker Agent
 
+**목표**: Agent API 계약 확정 + Docker 환경 배포
+
+#### Phase 1: Agent API 설계
 - [ ] Runtime Agent API 인터페이스 정의
+- [ ] OpenAPI 스펙 작성
+- [ ] API 계약 문서화
+
+#### Phase 2: 인프라 변경
 - [ ] agents 테이블 추가
 - [ ] workspaces.agent_id 컬럼 추가
+- [ ] DB 마이그레이션
+
+#### Phase 3: Agent 구현
 - [ ] codehub-agent 패키지 생성
 - [ ] Docker Runtime 구현 (기존 코드 이전)
+- [ ] Agent Health 엔드포인트
+
+#### Phase 4: Control Plane 리팩토링
 - [ ] Control Plane → Agent HTTP Client 구현
+- [ ] 기존 직접 호출 코드 제거
 - [ ] Agent 등록/관리 API
-- [ ] Health Check 구현
 
-### M2: K8s Runtime
+#### Phase 5: 배포
+- [ ] docker-compose 업데이트 (Control Plane + Docker Agent)
+- [ ] E2E 테스트
+- [ ] 문서화
 
+---
+
+### v0.3.0: K8s Agent
+
+**목표**: Control Plane 수정 없이 K8s 지원 추가
+
+#### Phase 1: K8s Runtime 구현
 - [ ] K8s Runtime 구현 (Pod, PVC 관리)
-- [ ] K8s 배포 매니페스트
+- [ ] K8s용 StorageClass/PVC 설정
+
+#### Phase 2: 배포
+- [ ] K8s 배포 매니페스트 (Helm Chart)
+- [ ] Agent Deployment/Service
+
+#### Phase 3: 테스트
 - [ ] E2E 테스트 (minikube/kind)
-
-### M3: 통합 테스트
-
 - [ ] Docker + K8s 혼합 환경 테스트
 - [ ] 장애 복구 시나리오 테스트
 - [ ] 문서화
