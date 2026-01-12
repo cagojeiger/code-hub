@@ -137,50 +137,8 @@ class WorkspaceController(CoordinatorBase):
 
                 # Stage 3: Execute 병렬 (Docker/S3 - DB 미사용!)
                 exec_start = time.monotonic()
-
-                async def execute_one(
-                    ws: Workspace, action: PlanAction
-                ) -> tuple[Workspace, PlanAction]:
-                    if self._needs_execute(action, ws):
-                        try:
-                            # with_retry handles transient errors with exponential backoff
-                            await asyncio.wait_for(
-                                with_retry(
-                                    lambda ws=ws, action=action: self._execute(ws, action),
-                                    max_retries=3,
-                                    base_delay=1.0,
-                                    max_delay=30.0,
-                                    circuit_breaker="external",
-                                ),
-                                timeout=self.OPERATION_TIMEOUT,
-                            )
-                        except asyncio.TimeoutError:
-                            logger.error(
-                                "Operation timeout",
-                                extra={
-                                    "event": LogEvent.OPERATION_TIMEOUT,
-                                    "ws_id": ws.id,
-                                    "operation": action.operation.value,
-                                    "error_class": "timeout",
-                                    "timeout_s": self.OPERATION_TIMEOUT,
-                                },
-                            )
-                        except Exception as exc:
-                            error_class = classify_error(exc)
-                            logger.exception(
-                                "Operation failed",
-                                extra={
-                                    "event": LogEvent.OPERATION_FAILED,
-                                    "ws_id": ws.id,
-                                    "operation": action.operation.value,
-                                    "error_class": error_class,
-                                    "retryable": error_class == "transient",
-                                },
-                            )
-                    return (ws, action)
-
                 results = await asyncio.gather(
-                    *[execute_one(ws, action) for ws, action in plans],
+                    *[self._execute_one(ws, action) for ws, action in plans],
                     return_exceptions=False,  # 개별 예외 처리됨
                 )
                 exec_duration = time.monotonic() - exec_start
@@ -275,6 +233,52 @@ class WorkspaceController(CoordinatorBase):
         wc_planner.needs_execute()에 위임합니다.
         """
         return needs_execute(action, Operation(ws.operation))
+
+    async def _execute_one(
+        self, ws: Workspace, action: PlanAction
+    ) -> tuple[Workspace, PlanAction]:
+        """Execute single workspace operation with retry and error handling.
+
+        Early return 패턴으로 실행 불필요 시 즉시 리턴합니다.
+        """
+        if not self._needs_execute(action, ws):
+            return (ws, action)
+
+        try:
+            await asyncio.wait_for(
+                with_retry(
+                    lambda ws=ws, action=action: self._execute(ws, action),
+                    max_retries=3,
+                    base_delay=1.0,
+                    max_delay=30.0,
+                    circuit_breaker="external",
+                ),
+                timeout=self.OPERATION_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "Operation timeout",
+                extra={
+                    "event": LogEvent.OPERATION_TIMEOUT,
+                    "ws_id": ws.id,
+                    "operation": action.operation.value,
+                    "error_class": "timeout",
+                    "timeout_s": self.OPERATION_TIMEOUT,
+                },
+            )
+        except Exception as exc:
+            error_class = classify_error(exc)
+            logger.exception(
+                "Operation failed",
+                extra={
+                    "event": LogEvent.OPERATION_FAILED,
+                    "ws_id": ws.id,
+                    "operation": action.operation.value,
+                    "error_class": error_class,
+                    "retryable": error_class == "transient",
+                },
+            )
+        return (ws, action)
 
     async def _execute(self, ws: Workspace, action: PlanAction) -> None:
         """Actuator 호출.
