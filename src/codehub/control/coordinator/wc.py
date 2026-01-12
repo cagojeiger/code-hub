@@ -22,6 +22,12 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
 from codehub.app.logging import clear_trace_context, set_trace_id
+from codehub.app.metrics.collector import (
+    WC_CAS_FAILURES_TOTAL,
+    WC_EXECUTE_DURATION,
+    WC_OPERATION_DURATION,
+    WC_STAGE_DURATION,
+)
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
     CoordinatorBase,
@@ -85,116 +91,140 @@ class WorkspaceController(CoordinatorBase):
         self._prev_state: tuple[int, int] | None = None
         self._last_heartbeat: float = 0.0
 
-    async def tick(self) -> None:
+    async def reconcile(self) -> None:
         """Reconcile loop: Load → Judge → Plan → Execute → Persist.
 
         Hybrid execution strategy (ADR-012):
         - DB operations: Sequential (asyncpg single connection limit)
         - External operations (Docker/S3): Parallel for performance
+
+        Metrics strategy:
+        - Always record metrics (even when idle) for continuous graphs
+        - Record operation duration on both success and failure
         """
-        # Generate tick-scoped trace_id for log correlation
-        tick_id = str(uuid4())[:8]
-        set_trace_id(tick_id)
+        # Generate reconcile-scoped trace_id for log correlation
+        reconcile_id = str(uuid4())[:8]
+        set_trace_id(reconcile_id)
 
         try:
-            tick_start = time.monotonic()
+            reconcile_start = time.monotonic()
 
-            # Stage 1: Load (DB)
+            # Stage 1: Load (DB) - always measured
             load_start = time.monotonic()
             workspaces = await self._load_for_reconcile()
-            load_ms = (time.monotonic() - load_start) * 1000
+            load_duration = time.monotonic() - load_start
+            load_ms = load_duration * 1000
+            WC_STAGE_DURATION.labels(stage="load").observe(load_duration)
 
-            if not workspaces:
-                return  # No reconciliation needed - skip logging for idle state
+            # Initialize metrics variables for pass-through structure
+            plan_duration = 0.0
+            plan_ms = 0.0
+            exec_duration = 0.0
+            exec_ms = 0.0
+            persist_duration = 0.0
+            persist_ms = 0.0
+            action_counts: Counter[str] = Counter()
 
-            # Stage 2: Judge + Plan (CPU)
-            plan_start = time.monotonic()
-            plans: list[tuple[Workspace, PlanAction]] = []
-            for ws in workspaces:
-                action = self._judge_and_plan(ws)
-                plans.append((ws, action))
-            plan_ms = (time.monotonic() - plan_start) * 1000
+            if workspaces:
+                # Stage 2: Judge + Plan (CPU)
+                plan_start = time.monotonic()
+                plans: list[tuple[Workspace, PlanAction]] = []
+                for ws in workspaces:
+                    action = self._judge_and_plan(ws)
+                    plans.append((ws, action))
+                plan_duration = time.monotonic() - plan_start
+                plan_ms = plan_duration * 1000
 
-            # Stage 3: Execute 병렬 (Docker/S3 - DB 미사용!)
-            exec_start = time.monotonic()
+                # Stage 3: Execute 병렬 (Docker/S3 - DB 미사용!)
+                exec_start = time.monotonic()
 
-            async def execute_one(
-                ws: Workspace, action: PlanAction
-            ) -> tuple[Workspace, PlanAction]:
-                if self._needs_execute(action, ws):
+                async def execute_one(
+                    ws: Workspace, action: PlanAction
+                ) -> tuple[Workspace, PlanAction]:
+                    if self._needs_execute(action, ws):
+                        try:
+                            # with_retry handles transient errors with exponential backoff
+                            await asyncio.wait_for(
+                                with_retry(
+                                    lambda ws=ws, action=action: self._execute(ws, action),
+                                    max_retries=3,
+                                    base_delay=1.0,
+                                    max_delay=30.0,
+                                    circuit_breaker="external",
+                                ),
+                                timeout=self.OPERATION_TIMEOUT,
+                            )
+                        except asyncio.TimeoutError:
+                            logger.error(
+                                "Operation timeout",
+                                extra={
+                                    "event": LogEvent.OPERATION_TIMEOUT,
+                                    "ws_id": ws.id,
+                                    "operation": action.operation.value,
+                                    "error_class": "timeout",
+                                    "timeout_s": self.OPERATION_TIMEOUT,
+                                },
+                            )
+                        except Exception as exc:
+                            error_class = classify_error(exc)
+                            logger.exception(
+                                "Operation failed",
+                                extra={
+                                    "event": LogEvent.OPERATION_FAILED,
+                                    "ws_id": ws.id,
+                                    "operation": action.operation.value,
+                                    "error_class": error_class,
+                                    "retryable": error_class == "transient",
+                                },
+                            )
+                    return (ws, action)
+
+                results = await asyncio.gather(
+                    *[execute_one(ws, action) for ws, action in plans],
+                    return_exceptions=False,  # 개별 예외 처리됨
+                )
+                exec_duration = time.monotonic() - exec_start
+                exec_ms = exec_duration * 1000
+
+                # Stage 4: Persist 순차 (DB - ADR-012 준수)
+                persist_start = time.monotonic()
+                for ws, action in results:
                     try:
-                        # with_retry handles transient errors with exponential backoff
-                        await asyncio.wait_for(
-                            with_retry(
-                                lambda ws=ws, action=action: self._execute(ws, action),
-                                max_retries=3,
-                                base_delay=1.0,
-                                max_delay=30.0,
-                                circuit_breaker="external",
-                            ),
-                            timeout=self.OPERATION_TIMEOUT,
-                        )
-                    except asyncio.TimeoutError:
-                        logger.error(
-                            "Operation timeout",
-                            extra={
-                                "event": LogEvent.OPERATION_TIMEOUT,
-                                "ws_id": ws.id,
-                                "operation": action.operation.value,
-                                "error_class": "timeout",
-                                "timeout_s": self.OPERATION_TIMEOUT,
-                            },
-                        )
-                    except Exception as exc:
-                        error_class = classify_error(exc)
+                        await self._persist(ws, action)
+                        if action.operation != Operation.NONE:
+                            action_counts[action.operation.value] += 1
+                    except Exception:
                         logger.exception(
-                            "Operation failed",
+                            "Failed to persist",
                             extra={
                                 "event": LogEvent.OPERATION_FAILED,
                                 "ws_id": ws.id,
                                 "operation": action.operation.value,
-                                "error_class": error_class,
-                                "retryable": error_class == "transient",
+                                "error_class": "transient",
                             },
                         )
-                return (ws, action)
+                persist_duration = time.monotonic() - persist_start
+                persist_ms = persist_duration * 1000
 
-            results = await asyncio.gather(
-                *[execute_one(ws, action) for ws, action in plans],
-                return_exceptions=False,  # 개별 예외 처리됨
-            )
-            exec_ms = (time.monotonic() - exec_start) * 1000
+            # Always record stage duration metrics (for continuous graphs)
+            WC_STAGE_DURATION.labels(stage="plan").observe(plan_duration)
+            WC_EXECUTE_DURATION.observe(exec_duration)
+            WC_STAGE_DURATION.labels(stage="persist").observe(persist_duration)
 
-            # Stage 4: Persist 순차 (DB - ADR-012 준수)
-            persist_start = time.monotonic()
-            action_counts: Counter[str] = Counter()
-            for ws, action in results:
-                try:
-                    await self._persist(ws, action)
-                    if action.operation != Operation.NONE:
-                        action_counts[action.operation.value] += 1
-                except Exception:
-                    logger.exception(
-                        "Failed to persist",
-                        extra={
-                            "event": LogEvent.OPERATION_FAILED,
-                            "ws_id": ws.id,
-                            "operation": action.operation.value,
-                            "error_class": "transient",
-                        },
-                    )
-            persist_ms = (time.monotonic() - persist_start) * 1000
+            # Reconcile summary for logging (metrics removed - logs are sufficient)
+            processed_count = len(workspaces)
+            changed_count = sum(action_counts.values())
 
             # Log reconcile result only when state changes OR hourly heartbeat
-            duration_ms = (time.monotonic() - tick_start) * 1000
-            current_state = (len(workspaces), sum(action_counts.values()))
+            duration_ms = (time.monotonic() - reconcile_start) * 1000
+            current_state = (processed_count, changed_count)
             now = time.monotonic()
 
             log_extra = {
                 "event": LogEvent.RECONCILE_COMPLETE,
-                "tick_id": tick_id,
-                "processed": len(workspaces),
-                "changed": sum(action_counts.values()),
+                "reconcile_id": reconcile_id,
+                "processed": processed_count,
+                "changed": changed_count,
                 "actions": dict(action_counts) if action_counts else {},
                 "duration_ms": duration_ms,
                 "load_ms": load_ms,
@@ -218,10 +248,10 @@ class WorkspaceController(CoordinatorBase):
                     "Slow reconcile detected",
                     extra={
                         "event": LogEvent.RECONCILE_SLOW,
-                        "tick_id": tick_id,
+                        "reconcile_id": reconcile_id,
                         "duration_ms": duration_ms,
                         "threshold_ms": _logging_config.slow_threshold_ms,
-                        "processed": len(workspaces),
+                        "processed": processed_count,
                         "load_ms": load_ms,
                         "plan_ms": plan_ms,
                         "exec_ms": exec_ms,
@@ -253,39 +283,44 @@ class WorkspaceController(CoordinatorBase):
         - ARCHIVING: archive() → delete_volume()
         - DELETING: delete() → delete_volume()
         """
-        match action.operation:
-            case Operation.PROVISIONING:
-                await self._sp.provision(ws.id)
+        start = time.perf_counter()
+        try:
+            match action.operation:
+                case Operation.PROVISIONING:
+                    await self._sp.provision(ws.id)
 
-            case Operation.RESTORING:
-                if ws.archive_key:
-                    await self._sp.restore(ws.id, ws.archive_key)
-                    action.restore_marker = ws.archive_key  # 완료 확인용 marker
+                case Operation.RESTORING:
+                    if ws.archive_key:
+                        await self._sp.restore(ws.id, ws.archive_key)
+                        action.restore_marker = ws.archive_key  # 완료 확인용 marker
 
-            case Operation.STARTING:
-                await self._ic.start(ws.id, ws.image_ref)
+                case Operation.STARTING:
+                    await self._ic.start(ws.id, ws.image_ref)
 
-            case Operation.STOPPING:
-                await self._ic.delete(ws.id)
+                case Operation.STOPPING:
+                    await self._ic.delete(ws.id)
 
-            case Operation.ARCHIVING:
-                # 3단계 operation: archive → delete container → delete_volume
-                # 컨테이너 삭제 추가: Exited 컨테이너도 볼륨 참조하므로 먼저 삭제 필요
-                op_id = action.op_id or ws.op_id or str(uuid4())
-                archive_key = await self._sp.archive(ws.id, op_id)
-                action.archive_key = archive_key
-                await self._ic.delete(ws.id)  # Exited 컨테이너 정리 (idempotent)
-                await self._sp.delete_volume(ws.id)
+                case Operation.ARCHIVING:
+                    # 3단계 operation: archive → delete container → delete_volume
+                    # 컨테이너 삭제 추가: Exited 컨테이너도 볼륨 참조하므로 먼저 삭제 필요
+                    op_id = action.op_id or ws.op_id or str(uuid4())
+                    archive_key = await self._sp.archive(ws.id, op_id)
+                    action.archive_key = archive_key
+                    await self._ic.delete(ws.id)  # Exited 컨테이너 정리 (idempotent)
+                    await self._sp.delete_volume(ws.id)
 
-            case Operation.CREATE_EMPTY_ARCHIVE:
-                op_id = action.op_id or ws.op_id or str(uuid4())
-                archive_key = await self._sp.create_empty_archive(ws.id, op_id)
-                action.archive_key = archive_key
+                case Operation.CREATE_EMPTY_ARCHIVE:
+                    op_id = action.op_id or ws.op_id or str(uuid4())
+                    archive_key = await self._sp.create_empty_archive(ws.id, op_id)
+                    action.archive_key = archive_key
 
-            case Operation.DELETING:
-                # 2단계 operation: delete container → delete_volume (계약 #8)
-                await self._ic.delete(ws.id)
-                await self._sp.delete_volume(ws.id)
+                case Operation.DELETING:
+                    # 2단계 operation: delete container → delete_volume (계약 #8)
+                    await self._ic.delete(ws.id)
+                    await self._sp.delete_volume(ws.id)
+        finally:
+            duration = time.perf_counter() - start
+            WC_OPERATION_DURATION.labels(operation=action.operation.name).observe(duration)
 
     async def _persist(self, ws: Workspace, action: PlanAction) -> None:
         """CAS 패턴으로 DB 저장.
@@ -341,6 +376,7 @@ class WorkspaceController(CoordinatorBase):
         await self._conn.commit()
 
         if not success:
+            WC_CAS_FAILURES_TOTAL.inc()
             logger.debug(
                 "CAS failed, will retry next tick",
                 extra={"ws_id": ws.id, "expected_op": ws_op.value},

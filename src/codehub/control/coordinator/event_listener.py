@@ -28,6 +28,14 @@ from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from codehub.app.config import get_settings
+from codehub.app.metrics.collector import (
+    EVENT_ERRORS_TOTAL,
+    EVENT_LISTENER_IS_LEADER,
+    EVENT_NOTIFY_RECEIVED_TOTAL,
+    EVENT_QUEUE_SIZE,
+    EVENT_SSE_PUBLISHED_TOTAL,
+    EVENT_WAKE_PUBLISHED_TOTAL,
+)
 from codehub.core.logging_schema import LogEvent
 from codehub.infra.pg_leader import SQLAlchemyLeaderElection
 from codehub.infra.redis_pubsub import ChannelPublisher
@@ -133,6 +141,7 @@ class EventListener:
             if not self._running:
                 return
 
+            EVENT_LISTENER_IS_LEADER.set(1)
             logger.info(
                 "Acquired leadership",
                 extra={"event": LogEvent.LEADERSHIP_ACQUIRED},
@@ -183,9 +192,15 @@ class EventListener:
         """Queue consumer worker - SELECT queries and Redis publish."""
         while True:
             try:
+                # Update queue size metric before processing
+                EVENT_QUEUE_SIZE.set(self._event_queue.qsize())
+
                 channel, payload = await self._event_queue.get()
                 await self._dispatch(channel, payload)
                 self._event_queue.task_done()
+
+                # Update queue size after processing
+                EVENT_QUEUE_SIZE.set(self._event_queue.qsize())
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -193,6 +208,7 @@ class EventListener:
 
     async def _close_connections(self) -> None:
         """Close all connections."""
+        EVENT_LISTENER_IS_LEADER.set(0)
         if self._notify_conn:
             await self._notify_conn.close()
             self._notify_conn = None
@@ -206,6 +222,9 @@ class EventListener:
 
     async def _dispatch(self, channel: str, payload: str) -> None:
         """Dispatch event to appropriate handler."""
+        # Record NOTIFY received metric
+        EVENT_NOTIFY_RECEIVED_TOTAL.labels(channel=channel).inc()
+
         try:
             if channel == self.CHANNEL_SSE:
                 await self._handle_sse(payload)
@@ -246,6 +265,7 @@ class EventListener:
             # Publish full workspace data (including deleted_at for soft deletes)
             channel = f"{_channel_config.sse_prefix}:{user_id}"
             await self._publisher.publish(channel, json.dumps(workspace_data))
+            EVENT_SSE_PUBLISHED_TOTAL.inc()
             logger.info(
                 "SSE published",
                 extra={
@@ -256,11 +276,13 @@ class EventListener:
                 },
             )
         except json.JSONDecodeError as e:
+            EVENT_ERRORS_TOTAL.labels(operation="sse").inc()
             logger.warning(
                 "Invalid SSE payload",
                 extra={"event": LogEvent.SSE_RECEIVED, "payload": payload, "error": str(e)},
             )
         except Exception as e:
+            EVENT_ERRORS_TOTAL.labels(operation="sse").inc()
             logger.exception("SSE error: %s", e)
 
     async def _fetch_workspace(self, workspace_id: str) -> dict | None:
@@ -305,22 +327,25 @@ class EventListener:
     async def _handle_wake(self) -> None:
         """Handle wake event - PUBLISH to wake channels.
 
-        Publishes to both OB and WC channels in parallel (1 RTT).
+        Publishes to both Observer and WC channels in parallel (1 RTT).
         """
         try:
-            ob_channel = f"{_channel_config.wake_prefix}:ob"
+            observer_channel = f"{_channel_config.wake_prefix}:observer"
             wc_channel = f"{_channel_config.wake_prefix}:wc"
-            ob_count, wc_count = await asyncio.gather(
-                self._publisher.publish(ob_channel),
+            observer_count, wc_count = await asyncio.gather(
+                self._publisher.publish(observer_channel),
                 self._publisher.publish(wc_channel),
             )
+            EVENT_WAKE_PUBLISHED_TOTAL.labels(target="observer").inc()
+            EVENT_WAKE_PUBLISHED_TOTAL.labels(target="wc").inc()
             logger.info(
                 "Wake published",
                 extra={
                     "event": LogEvent.WAKE_PUBLISHED,
-                    "ob_count": ob_count,
+                    "observer_count": observer_count,
                     "wc_count": wc_count,
                 },
             )
         except Exception as e:
+            EVENT_ERRORS_TOTAL.labels(operation="wake").inc()
             logger.exception("Wake error: %s", e)

@@ -7,9 +7,8 @@ from codehub.control.coordinator.base import (
     LeaderElection,
 )
 from codehub.control.coordinator.event_listener import EventListener
-from codehub.control.coordinator.gc import ArchiveGC
 from codehub.control.coordinator.observer import ObserverCoordinator
-from codehub.control.coordinator.ttl import TTLManager
+from codehub.control.coordinator.scheduler import Scheduler
 from codehub.control.coordinator.wc import WorkspaceController
 from codehub.infra.redis_pubsub import ChannelPublisher
 
@@ -21,7 +20,6 @@ __all__ = [
     "EventListener",
     "LeaderElection",
     "ObserverCoordinator",
+    "Scheduler",
     "WorkspaceController",
-    "TTLManager",
-    "ArchiveGC",
 ]

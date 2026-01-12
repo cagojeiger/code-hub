@@ -23,6 +23,7 @@ from typing import TypeVar
 import httpx
 from botocore.exceptions import ClientError
 
+from codehub.app.metrics.collector import EXTERNAL_CALL_ERRORS_TOTAL
 from codehub.core.circuit_breaker import CircuitOpenError, get_circuit_breaker
 from codehub.core.logging_schema import LogEvent
 
@@ -209,10 +210,12 @@ async def with_retry(
             return await coro_factory()
         except CircuitOpenError:
             # Circuit is open - fail immediately without retry
+            EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="circuit_open").inc()
             raise
         except Exception as exc:
             last_exc = exc
             error_class = classify_error(exc)
+            EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type=error_class).inc()
 
             # Non-retryable errors: fail immediately
             if error_class == "permanent":

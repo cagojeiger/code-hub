@@ -2,7 +2,7 @@
 
 Algorithm:
 1. 3개 API (containers, volumes, archives) 병렬 호출 with timeout
-2. 하나라도 실패 → tick skip (상태 일관성 보장)
+2. 하나라도 실패 → reconcile skip (상태 일관성 보장)
 3. 전체 성공 → DB 기준 모든 workspace 업데이트
    - 리소스 있음 → conditions에 상태 기록
    - 리소스 없음 → null로 덮어씀 (삭제 감지 위해 필수)
@@ -19,6 +19,15 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
+from codehub.app.metrics.collector import (
+    OBSERVER_API_DURATION,
+    OBSERVER_ARCHIVES,
+    OBSERVER_CONTAINERS,
+    OBSERVER_OBSERVE_DURATION,
+    OBSERVER_STAGE_DURATION,
+    OBSERVER_VOLUMES,
+    OBSERVER_WORKSPACES,
+)
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
     CoordinatorBase,
@@ -45,9 +54,13 @@ class BulkObserver:
         self._timeout_s = _settings.observer.timeout_s
 
     async def _safe[T](self, coro: Coroutine[None, None, list[T]], name: str) -> list[T] | None:
+        start = time.monotonic()
         try:
-            return await asyncio.wait_for(coro, timeout=self._timeout_s)
+            result = await asyncio.wait_for(coro, timeout=self._timeout_s)
+            OBSERVER_API_DURATION.labels(api=name).observe(time.monotonic() - start)
+            return result
         except asyncio.TimeoutError:
+            OBSERVER_API_DURATION.labels(api=name).observe(time.monotonic() - start)
             logger.warning(
                 "Operation timeout",
                 extra={
@@ -58,6 +71,7 @@ class BulkObserver:
             )
             return None
         except Exception as exc:
+            OBSERVER_API_DURATION.labels(api=name).observe(time.monotonic() - start)
             logger.exception(
                 "Operation failed",
                 extra={
@@ -92,7 +106,7 @@ class ObserverCoordinator(CoordinatorBase):
     """Observer - conditions, observed_at 컬럼 소유."""
 
     COORDINATOR_TYPE = CoordinatorType.OBSERVER
-    WAKE_TARGET = "ob"
+    WAKE_TARGET = "observer"
 
     def __init__(
         self,
@@ -110,18 +124,25 @@ class ObserverCoordinator(CoordinatorBase):
         # Track previous container IDs to detect disappeared containers
         self._prev_container_ids: set[str] | None = None
 
-    async def tick(self) -> None:
-        tick_start = time.monotonic()
+    async def reconcile(self) -> None:
+        reconcile_start = time.monotonic()
+
+        # Stage 1: Load workspace IDs from DB
+        load_start = time.monotonic()
         ws_ids = await self._load_workspace_ids()
+        OBSERVER_STAGE_DURATION.labels(stage="load").observe(time.monotonic() - load_start)
         if not ws_ids:
             return
 
+        # Stage 2: Observe resources (parallel API calls)
+        observe_start = time.monotonic()
         containers, volumes, archives = await self._observer.observe_all()
+        OBSERVER_OBSERVE_DURATION.observe(time.monotonic() - observe_start)
 
-        # 하나라도 실패 → skip (상태 일관성 보장, 다음 tick에서 재시도)
+        # 하나라도 실패 → skip (상태 일관성 보장, 다음 reconcile에서 재시도)
         if any(x is None for x in [containers, volumes, archives]):
             logger.warning(
-                "Observation failed, skipping tick",
+                "Observation failed, skipping reconcile",
                 extra={"event": LogEvent.OPERATION_FAILED},
             )
             return
@@ -150,10 +171,19 @@ class ObserverCoordinator(CoordinatorBase):
                     )
         self._prev_container_ids = current_container_ids
 
+        # Stage 3: Bulk update conditions in DB
+        update_start = time.monotonic()
         count = await self._bulk_update_conditions(ws_ids, containers, volumes, archives)
         await self._conn.commit()
+        OBSERVER_STAGE_DURATION.labels(stage="update").observe(time.monotonic() - update_start)
 
-        duration_ms = (time.monotonic() - tick_start) * 1000
+        # Update metrics
+        OBSERVER_WORKSPACES.set(count)
+        OBSERVER_CONTAINERS.set(len(containers))
+        OBSERVER_VOLUMES.set(len(volumes))
+        OBSERVER_ARCHIVES.set(len(archives))
+
+        duration_ms = (time.monotonic() - reconcile_start) * 1000
 
         # Log only when state changes OR 1-hour heartbeat (reduces noise from ~86k/day)
         current_state = (count, len(containers), len(volumes), len(archives))

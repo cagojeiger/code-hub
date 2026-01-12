@@ -1,4 +1,4 @@
-"""Tests for TTLManager.
+"""Tests for TTLRunner functionality.
 
 Reference: docs/architecture_v2/ttl-manager.md
 """
@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from codehub.control.coordinator.ttl import TTLManager
+from codehub.control.coordinator.scheduler_ttl import TTLRunner
 from codehub.infra.redis_kv import ActivityStore
 from codehub.infra.redis_pubsub import ChannelPublisher
 
@@ -19,25 +19,6 @@ def mock_conn() -> AsyncMock:
     conn.execute = AsyncMock()
     conn.commit = AsyncMock()
     return conn
-
-
-@pytest.fixture
-def mock_leader() -> AsyncMock:
-    """Mock LeaderElection."""
-    leader = AsyncMock()
-    leader.is_leader = True
-    leader.try_acquire = AsyncMock(return_value=True)
-    return leader
-
-
-@pytest.fixture
-def mock_subscriber() -> AsyncMock:
-    """Mock ChannelSubscriber."""
-    subscriber = AsyncMock()
-    subscriber.subscribe = AsyncMock()
-    subscriber.unsubscribe = AsyncMock()
-    subscriber.get_message = AsyncMock(return_value=None)
-    return subscriber
 
 
 @pytest.fixture
@@ -58,27 +39,25 @@ def mock_publisher() -> AsyncMock:
 
 
 @pytest.fixture
-def ttl_manager(
+def runner(
     mock_conn: AsyncMock,
-    mock_leader: AsyncMock,
-    mock_subscriber: AsyncMock,
     mock_activity: AsyncMock,
     mock_publisher: AsyncMock,
-) -> TTLManager:
-    """Create TTLManager with mocked dependencies."""
-    return TTLManager(mock_conn, mock_leader, mock_subscriber, mock_activity, mock_publisher)
+) -> TTLRunner:
+    """Create TTLRunner with mocked dependencies."""
+    return TTLRunner(mock_conn, mock_activity, mock_publisher)
 
 
-class TestTTLManagerConfig:
-    """TTLManager configuration tests."""
+class TestTTLRunnerConfig:
+    """TTLRunner configuration tests."""
 
-    def test_idle_interval(self, ttl_manager: TTLManager):
-        """IDLE_INTERVAL is 60 seconds."""
-        assert ttl_manager.IDLE_INTERVAL == 60.0
+    def test_standby_ttl_default(self, runner: TTLRunner):
+        """standby_ttl is loaded from settings."""
+        assert runner._standby_ttl > 0
 
-    def test_active_interval(self, ttl_manager: TTLManager):
-        """ACTIVE_INTERVAL is 60 seconds (always same for TTL)."""
-        assert ttl_manager.ACTIVE_INTERVAL == 60.0
+    def test_archive_ttl_default(self, runner: TTLRunner):
+        """archive_ttl is loaded from settings."""
+        assert runner._archive_ttl > 0
 
 
 class TestSyncToDb:
@@ -86,19 +65,19 @@ class TestSyncToDb:
 
     async def test_empty_redis(
         self,
-        ttl_manager: TTLManager,
+        runner: TTLRunner,
         mock_activity: AsyncMock,
     ):
         """Returns 0 when no activities in Redis."""
         mock_activity.scan_all.return_value = {}
 
-        count = await ttl_manager._sync_to_db()
+        count = await runner._sync_to_db()
 
         assert count == 0
 
     async def test_syncs_activities(
         self,
-        ttl_manager: TTLManager,
+        runner: TTLRunner,
         mock_conn: AsyncMock,
         mock_activity: AsyncMock,
     ):
@@ -114,7 +93,7 @@ class TestSyncToDb:
         mock_result.fetchall.return_value = [("ws-1",), ("ws-2",)]
         mock_conn.execute.return_value = mock_result
 
-        count = await ttl_manager._sync_to_db()
+        count = await runner._sync_to_db()
 
         assert count == 2
         # Should execute 1 bulk UPDATE statement (not N individual updates)
@@ -124,7 +103,7 @@ class TestSyncToDb:
 
     async def test_partial_update_only_deletes_updated_ids(
         self,
-        ttl_manager: TTLManager,
+        runner: TTLRunner,
         mock_conn: AsyncMock,
         mock_activity: AsyncMock,
     ):
@@ -145,7 +124,7 @@ class TestSyncToDb:
         mock_result.fetchall.return_value = [("ws-1",), ("ws-2",)]
         mock_conn.execute.return_value = mock_result
 
-        count = await ttl_manager._sync_to_db()
+        count = await runner._sync_to_db()
 
         assert count == 2
         # Should only delete successfully updated IDs (not ws-3)
@@ -157,7 +136,7 @@ class TestCheckStandbyTtl:
 
     async def test_no_expired_workspaces(
         self,
-        ttl_manager: TTLManager,
+        runner: TTLRunner,
         mock_conn: AsyncMock,
     ):
         """Returns 0 when no workspaces expired."""
@@ -166,13 +145,13 @@ class TestCheckStandbyTtl:
         mock_result.fetchall.return_value = []
         mock_conn.execute.return_value = mock_result
 
-        count = await ttl_manager._check_standby_ttl()
+        count = await runner._check_standby_ttl()
 
         assert count == 0
 
     async def test_expired_workspaces(
         self,
-        ttl_manager: TTLManager,
+        runner: TTLRunner,
         mock_conn: AsyncMock,
     ):
         """Updates desired_state using single UPDATE + RETURNING."""
@@ -181,7 +160,7 @@ class TestCheckStandbyTtl:
         update_result.fetchall.return_value = [("ws-1",), ("ws-2",)]
         mock_conn.execute.return_value = update_result
 
-        count = await ttl_manager._check_standby_ttl()
+        count = await runner._check_standby_ttl()
 
         assert count == 2
         # Only 1 UPDATE statement (not 1 SELECT + N UPDATEs)
@@ -193,7 +172,7 @@ class TestCheckArchiveTtl:
 
     async def test_no_expired_workspaces(
         self,
-        ttl_manager: TTLManager,
+        runner: TTLRunner,
         mock_conn: AsyncMock,
     ):
         """Returns 0 when no workspaces expired."""
@@ -201,13 +180,13 @@ class TestCheckArchiveTtl:
         mock_result.fetchall.return_value = []
         mock_conn.execute.return_value = mock_result
 
-        count = await ttl_manager._check_archive_ttl()
+        count = await runner._check_archive_ttl()
 
         assert count == 0
 
     async def test_expired_workspaces(
         self,
-        ttl_manager: TTLManager,
+        runner: TTLRunner,
         mock_conn: AsyncMock,
     ):
         """Updates desired_state using single UPDATE + RETURNING."""
@@ -216,45 +195,45 @@ class TestCheckArchiveTtl:
         update_result.fetchall.return_value = [("ws-1",)]
         mock_conn.execute.return_value = update_result
 
-        count = await ttl_manager._check_archive_ttl()
+        count = await runner._check_archive_ttl()
 
         assert count == 1
         # Only 1 UPDATE statement (not 1 SELECT + 1 UPDATE)
         assert mock_conn.execute.call_count == 1
 
 
-class TestTick:
-    """tick() tests."""
+class TestRun:
+    """run() tests."""
 
-    async def test_tick_no_expired(
+    async def test_run_no_expired(
         self,
-        ttl_manager: TTLManager,
+        runner: TTLRunner,
         mock_conn: AsyncMock,
         mock_publisher: AsyncMock,
         mock_activity: AsyncMock,
     ):
-        """tick() does not wake WC when no expired workspaces."""
+        """run() does not wake WC when no expired workspaces."""
         # Mock empty results for all queries
         mock_result = MagicMock()
         mock_result.fetchall.return_value = []
         mock_conn.execute.return_value = mock_result
         mock_activity.scan_all.return_value = {}
 
-        await ttl_manager.tick()
+        await runner.run()
 
         # Should not wake WC
         mock_publisher.publish.assert_not_called()
         # Should commit
         mock_conn.commit.assert_called_once()
 
-    async def test_tick_with_standby_expired(
+    async def test_run_with_standby_expired(
         self,
-        ttl_manager: TTLManager,
+        runner: TTLRunner,
         mock_conn: AsyncMock,
         mock_publisher: AsyncMock,
         mock_activity: AsyncMock,
     ):
-        """tick() wakes WC when standby_ttl expired."""
+        """run() wakes WC when standby_ttl expired."""
         # Mock: standby UPDATE returns expired workspaces, archive returns none
         standby_result = MagicMock()
         standby_result.fetchall.return_value = [("ws-1",)]
@@ -266,19 +245,19 @@ class TestTick:
         mock_conn.execute.side_effect = [standby_result, archive_result]
         mock_activity.scan_all.return_value = {}
 
-        await ttl_manager.tick()
+        await runner.run()
 
         # Should wake WC
         mock_publisher.publish.assert_called_once()
 
-    async def test_tick_with_archive_expired(
+    async def test_run_with_archive_expired(
         self,
-        ttl_manager: TTLManager,
+        runner: TTLRunner,
         mock_conn: AsyncMock,
         mock_publisher: AsyncMock,
         mock_activity: AsyncMock,
     ):
-        """tick() wakes WC when archive_ttl expired."""
+        """run() wakes WC when archive_ttl expired."""
         # Mock: standby returns none, archive returns expired workspaces
         standby_result = MagicMock()
         standby_result.fetchall.return_value = []
@@ -290,7 +269,7 @@ class TestTick:
         mock_conn.execute.side_effect = [standby_result, archive_result]
         mock_activity.scan_all.return_value = {}
 
-        await ttl_manager.tick()
+        await runner.run()
 
         # Should wake WC
         mock_publisher.publish.assert_called_once()

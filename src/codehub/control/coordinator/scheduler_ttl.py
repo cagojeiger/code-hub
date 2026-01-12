@@ -1,28 +1,20 @@
-"""TTLManager - 비활성 워크스페이스 desired_state 강등.
+"""TTL Runner - TTL 만료 체크 및 상태 전환.
 
-TTL Manager는 두 가지 TTL을 관리:
-1. standby_ttl: RUNNING → STANDBY (last_access_at 기준)
-2. archive_ttl: STANDBY → ARCHIVED (phase_changed_at 기준)
-
-Optimized with bulk operations:
-- Single UPDATE + RETURNING instead of SELECT + N UPDATEs
-- PostgreSQL unnest for bulk activity sync
-
-Reference: docs/architecture_v2/ttl-manager.md
+RUNNING → STANDBY: standby_ttl 초과 시
+STANDBY → ARCHIVED: archive_ttl 초과 시
 """
 
 import logging
+import time
 from datetime import datetime, timezone
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
-from codehub.control.coordinator.base import (
-    ChannelSubscriber,
-    CoordinatorBase,
-    CoordinatorType,
-    LeaderElection,
+from codehub.app.metrics.collector import (
+    TTL_EXPIRATIONS_TOTAL,
+    TTL_SYNC_DURATION,
 )
 from codehub.core.domain.workspace import DesiredState, Operation, Phase
 from codehub.core.logging_schema import LogEvent
@@ -31,89 +23,76 @@ from codehub.infra.redis_pubsub import ChannelPublisher
 
 logger = logging.getLogger(__name__)
 
-# Module-level settings cache (consistent with base.py pattern)
+# Module-level settings cache
 _settings = get_settings()
 _channel_config = _settings.redis_channel
 
 
-class TTLManager(CoordinatorBase):
-    """비활성 워크스페이스 desired_state 강등.
-
-    tick()에서 세 가지 작업 (모두 O(1) DB 왕복):
-    1. _sync_to_db(): Redis → DB 동기화 (unnest bulk UPDATE)
-    2. _check_standby_ttl(): RUNNING → STANDBY (single UPDATE + RETURNING)
-    3. _check_archive_ttl(): STANDBY → ARCHIVED (single UPDATE + RETURNING)
-    """
-
-    COORDINATOR_TYPE = CoordinatorType.TTL
-
-    # TTL Manager uses fixed interval from config (always same idle/active)
-    IDLE_INTERVAL = _settings.coordinator.ttl_interval
-    ACTIVE_INTERVAL = _settings.coordinator.ttl_interval
+class TTLRunner:
+    """TTL 만료 체크 및 상태 전환."""
 
     def __init__(
         self,
         conn: AsyncConnection,
-        leader: LeaderElection,
-        subscriber: ChannelSubscriber,
-        activity_store: ActivityStore,
+        activity: ActivityStore,
         publisher: ChannelPublisher,
     ) -> None:
-        super().__init__(conn, leader, subscriber)
-        self._activity = activity_store
+        self._conn = conn
+        self._activity = activity
         self._publisher = publisher
-
-        # Use module-level cached settings
         self._standby_ttl = _settings.ttl.standby_seconds
         self._archive_ttl = _settings.ttl.archive_seconds
 
-    async def tick(self) -> None:
-        """TTL check loop - all bulk operations."""
-        # 1. Redis → DB 동기화
-        await self._sync_to_db()
+    async def run(self) -> None:
+        """TTL 체크 실행."""
+        try:
+            # 1. Redis → DB 동기화
+            await self._sync_to_db()
 
-        # 2. standby_ttl 체크 (RUNNING → STANDBY)
-        standby_expired = await self._check_standby_ttl()
+            # 2. standby_ttl 체크 (RUNNING → STANDBY)
+            standby_expired = await self._check_standby_ttl()
+            TTL_EXPIRATIONS_TOTAL.labels(transition="running_to_standby").inc(standby_expired)
 
-        # 3. archive_ttl 체크 (STANDBY → ARCHIVED)
-        archive_expired = await self._check_archive_ttl()
+            # 3. archive_ttl 체크 (STANDBY → ARCHIVED)
+            archive_expired = await self._check_archive_ttl()
+            TTL_EXPIRATIONS_TOTAL.labels(transition="standby_to_archived").inc(archive_expired)
 
-        # WC 깨우기 (expired 있으면)
-        if standby_expired or archive_expired:
-            wc_channel = f"{_channel_config.wake_prefix}:wc"
-            await self._publisher.publish(wc_channel)
-            logger.info(
-                "TTL expired",
-                extra={
-                    "event": LogEvent.STATE_CHANGED,
-                    "standby_expired": standby_expired,
-                    "archive_expired": archive_expired,
-                },
-            )
+            # WC 깨우기 (expired 있으면)
+            if standby_expired or archive_expired:
+                wc_channel = f"{_channel_config.wake_prefix}:wc"
+                await self._publisher.publish(wc_channel)
+                logger.info(
+                    "TTL expired",
+                    extra={
+                        "event": LogEvent.STATE_CHANGED,
+                        "standby_expired": standby_expired,
+                        "archive_expired": archive_expired,
+                    },
+                )
 
-        await self._conn.commit()
+            await self._conn.commit()
+        except Exception as e:
+            logger.exception("TTL check failed: %s", e)
+            raise
 
     async def _sync_to_db(self) -> int:
-        """Sync Redis last_access:* to DB last_access_at.
-
-        Uses PostgreSQL unnest for O(1) bulk update regardless of N workspaces.
-
-        Returns:
-            Number of workspaces synced.
-        """
+        """Sync Redis last_access:* to DB last_access_at."""
+        # 1. Redis scan
+        redis_start = time.monotonic()
         activities = await self._activity.scan_all()
+        TTL_SYNC_DURATION.labels(target="redis").observe(time.monotonic() - redis_start)
+
         if not activities:
+            TTL_SYNC_DURATION.labels(target="db").observe(0)  # No activities to sync
             return 0
 
-        # Prepare arrays for PostgreSQL unnest
         ws_ids = list(activities.keys())
         timestamps = [
             datetime.fromtimestamp(ts, tz=timezone.utc) for ts in activities.values()
         ]
 
-        # Single bulk UPDATE using PostgreSQL unnest
-        # Note: Use CAST() instead of :: to avoid conflict with SQLAlchemy named params
-        # RETURNING w.id: Only delete Redis keys for successfully updated workspaces
+        # 2. DB bulk update
+        db_start = time.monotonic()
         result = await self._conn.execute(
             text("""
                 UPDATE workspaces AS w
@@ -124,8 +103,8 @@ class TTLManager(CoordinatorBase):
             """),
             {"ids": ws_ids, "timestamps": timestamps},
         )
+        TTL_SYNC_DURATION.labels(target="db").observe(time.monotonic() - db_start)
 
-        # Only delete Redis keys for successfully updated workspaces
         updated_ids = [row[0] for row in result.fetchall()]
         if updated_ids:
             await self._activity.delete(updated_ids)
@@ -134,17 +113,7 @@ class TTLManager(CoordinatorBase):
         return len(updated_ids)
 
     async def _check_standby_ttl(self) -> int:
-        """Check standby_ttl for RUNNING workspaces.
-
-        Uses single UPDATE + RETURNING instead of SELECT + N UPDATEs.
-        Complexity: O(1) DB round-trips.
-
-        Condition: NOW() - last_access_at > standby_ttl (from config)
-
-        Returns:
-            Number of workspaces transitioned.
-        """
-        # Single UPDATE with RETURNING - no separate SELECT needed
+        """Check standby_ttl for RUNNING workspaces."""
         result = await self._conn.execute(
             text("""
                 UPDATE workspaces
@@ -177,17 +146,7 @@ class TTLManager(CoordinatorBase):
         return len(updated_ids)
 
     async def _check_archive_ttl(self) -> int:
-        """Check archive_ttl for STANDBY workspaces.
-
-        Uses single UPDATE + RETURNING instead of SELECT + N UPDATEs.
-        Complexity: O(1) DB round-trips.
-
-        Condition: NOW() - phase_changed_at > archive_ttl (from config)
-
-        Returns:
-            Number of workspaces transitioned.
-        """
-        # Single UPDATE with RETURNING - no separate SELECT needed
+        """Check archive_ttl for STANDBY workspaces."""
         result = await self._conn.execute(
             text("""
                 UPDATE workspaces

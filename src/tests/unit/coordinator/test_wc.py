@@ -479,7 +479,7 @@ class TestTickParallel:
         # _load_for_reconcile가 빈 리스트 반환하도록 mock
         wc._load_for_reconcile = AsyncMock(return_value=[])
 
-        await wc.tick()
+        await wc.reconcile()
 
         wc._load_for_reconcile.assert_called_once()
 
@@ -515,7 +515,7 @@ class TestTickParallel:
         wc._persist = mock_persist
 
         # 에러가 발생해도 다른 ws는 처리됨
-        await wc.tick()
+        await wc.reconcile()
 
         # 3개 workspace 모두 execute 시도됨 (병렬, 재시도 가능)
         # with_retry가 unknown 에러를 재시도하므로 호출 횟수 > 3
@@ -650,7 +650,7 @@ class TestTickLogging:
 
         # 첫 번째 tick - 상태 초기화, 로그 발생
         with caplog.at_level(logging.INFO, logger="codehub.control.coordinator.wc"):
-            await wc.tick()
+            await wc.reconcile()
 
         first_tick_logs = [r for r in caplog.records if r.levelno == logging.INFO]
         assert len(first_tick_logs) == 1  # 첫 tick은 로그 발생
@@ -658,7 +658,7 @@ class TestTickLogging:
 
         # 두 번째 tick - 상태 동일, 로그 없음
         with caplog.at_level(logging.INFO, logger="codehub.control.coordinator.wc"):
-            await wc.tick()
+            await wc.reconcile()
 
         second_tick_logs = [r for r in caplog.records if r.levelno == logging.INFO]
         assert len(second_tick_logs) == 0  # 상태 변화 없으면 로그 없음
@@ -684,7 +684,7 @@ class TestTickLogging:
         wc._persist = AsyncMock()
 
         with caplog.at_level(logging.INFO, logger="codehub.control.coordinator.wc"):
-            await wc.tick()
+            await wc.reconcile()
         caplog.clear()
 
         # 두 번째 tick: changed 발생 (새 ws 추가됨 = processed 변화)
@@ -700,7 +700,7 @@ class TestTickLogging:
         wc._load_for_reconcile = AsyncMock(return_value=[ws1, ws2])
 
         with caplog.at_level(logging.INFO, logger="codehub.control.coordinator.wc"):
-            await wc.tick()
+            await wc.reconcile()
 
         # processed가 1 -> 2로 변경되었으므로 로그 발생
         tick_logs = [r for r in caplog.records if r.levelno == logging.INFO]
@@ -733,7 +733,7 @@ class TestTickLogging:
         monkeypatch.setattr(time, "monotonic", lambda: mock_time)
 
         with caplog.at_level(logging.INFO, logger="codehub.control.coordinator.wc"):
-            await wc.tick()
+            await wc.reconcile()
         caplog.clear()
 
         # 두 번째 tick (1시간 후)
@@ -741,7 +741,7 @@ class TestTickLogging:
         monkeypatch.setattr(time, "monotonic", lambda: mock_time)
 
         with caplog.at_level(logging.INFO, logger="codehub.control.coordinator.wc"):
-            await wc.tick()
+            await wc.reconcile()
 
         heartbeat_logs = [r for r in caplog.records if r.levelno == logging.INFO]
         assert len(heartbeat_logs) == 1

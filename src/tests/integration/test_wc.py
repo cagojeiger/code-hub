@@ -16,7 +16,7 @@ from codehub.core.domain.workspace import Phase, Operation, DesiredState
 
 
 class TestWCReconcile:
-    """WorkspaceController.tick() integration test with real DB."""
+    """WorkspaceController.reconcile() integration test with real DB."""
 
     @pytest.fixture
     async def test_user(self, test_db_engine: AsyncEngine) -> User:
@@ -76,7 +76,7 @@ class TestWCReconcile:
         # Act: Run tick
         async with test_db_engine.connect() as conn:
             wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
-            await wc.tick()
+            await wc.reconcile()
 
         # Assert: Check DB state
         async with AsyncSession(test_db_engine) as session:
@@ -132,7 +132,7 @@ class TestWCReconcile:
 
         async with test_db_engine.connect() as conn:
             wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
-            await wc.tick()
+            await wc.reconcile()
 
         async with AsyncSession(test_db_engine) as session:
             result = await session.execute(
@@ -190,7 +190,7 @@ class TestWCReconcile:
 
         async with test_db_engine.connect() as conn:
             wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
-            await wc.tick()
+            await wc.reconcile()
 
         async with AsyncSession(test_db_engine) as session:
             result = await session.execute(
@@ -247,7 +247,7 @@ class TestWCReconcile:
 
         async with test_db_engine.connect() as conn:
             wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
-            await wc.tick()
+            await wc.reconcile()
 
         # No operations should be called
         mock_ic.start.assert_not_called()
@@ -289,7 +289,7 @@ class TestWCReconcile:
 
         async with test_db_engine.connect() as conn:
             wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
-            await wc.tick()
+            await wc.reconcile()
 
         async with AsyncSession(test_db_engine) as session:
             result = await session.execute(
@@ -343,7 +343,7 @@ class TestWCReconcile:
 
         async with test_db_engine.connect() as conn:
             wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
-            await wc.tick()
+            await wc.reconcile()
 
         async with AsyncSession(test_db_engine) as session:
             result = await session.execute(
@@ -425,7 +425,7 @@ class TestPhaseChangedAt:
         # Run tick - phase should change from STANDBY to RUNNING
         async with test_db_engine.connect() as conn:
             wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
-            await wc.tick()
+            await wc.reconcile()
 
         # Check phase_changed_at was set
         async with AsyncSession(test_db_engine) as session:
@@ -488,7 +488,7 @@ class TestPhaseChangedAt:
         # Run tick - phase should stay RUNNING (already converged)
         async with test_db_engine.connect() as conn:
             wc = WorkspaceController(conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
-            await wc.tick()
+            await wc.reconcile()
 
         # Check phase_changed_at was NOT modified
         async with AsyncSession(test_db_engine) as session:
