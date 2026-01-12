@@ -24,11 +24,8 @@ from codehub.app.config import get_settings
 from codehub.app.logging import clear_trace_context, set_trace_id
 from codehub.app.metrics.collector import (
     WC_CAS_FAILURES_TOTAL,
-    WC_EXECUTE_DURATION,
-    WC_LOAD_DURATION,
     WC_OPERATION_DURATION,
-    WC_PERSIST_DURATION,
-    WC_PLAN_DURATION,
+    WC_STAGE_DURATION,
 )
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
@@ -116,7 +113,7 @@ class WorkspaceController(CoordinatorBase):
             workspaces = await self._load_for_reconcile()
             load_duration = time.monotonic() - load_start
             load_ms = load_duration * 1000
-            WC_LOAD_DURATION.observe(load_duration)
+            WC_STAGE_DURATION.labels(stage="load").observe(load_duration)
 
             # Initialize metrics variables for pass-through structure
             plan_duration = 0.0
@@ -209,9 +206,9 @@ class WorkspaceController(CoordinatorBase):
                 persist_ms = persist_duration * 1000
 
             # Always record stage duration metrics (for continuous graphs)
-            WC_PLAN_DURATION.observe(plan_duration)
-            WC_EXECUTE_DURATION.observe(exec_duration)
-            WC_PERSIST_DURATION.observe(persist_duration)
+            WC_STAGE_DURATION.labels(stage="plan").observe(plan_duration)
+            WC_STAGE_DURATION.labels(stage="execute").observe(exec_duration)
+            WC_STAGE_DURATION.labels(stage="persist").observe(persist_duration)
 
             # Reconcile summary for logging (metrics removed - logs are sufficient)
             processed_count = len(workspaces)

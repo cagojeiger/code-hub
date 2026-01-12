@@ -170,22 +170,11 @@ OBSERVER_ARCHIVES = Gauge(
     multiprocess_mode="livesum",
 )
 
-# Observer operation durations
-OBSERVER_LOAD_DURATION = Histogram(
-    "codehub_observer_load_duration_seconds",
-    "Duration to load workspace IDs from DB",
-    buckets=_BUCKETS_DURATION,
-)
-
-OBSERVER_OBSERVE_DURATION = Histogram(
-    "codehub_observer_observe_duration_seconds",
-    "Duration of parallel API observation (containers, volumes, archives)",
-    buckets=_BUCKETS_DURATION,
-)
-
-OBSERVER_UPDATE_DURATION = Histogram(
-    "codehub_observer_update_duration_seconds",
-    "Duration of bulk workspace conditions update",
+# Observer stage durations (load, observe, update)
+OBSERVER_STAGE_DURATION = Histogram(
+    "codehub_observer_stage_duration_seconds",
+    "Duration of observer stages",
+    ["stage"],  # load, observe, update
     buckets=_BUCKETS_DURATION,
 )
 
@@ -199,22 +188,11 @@ OBSERVER_API_DURATION = Histogram(
 # =============================================================================
 # WorkspaceController Metrics
 # =============================================================================
-# WC stage durations (like Observer)
-WC_LOAD_DURATION = Histogram(
-    "codehub_wc_load_duration_seconds",
-    "Duration to load workspaces from DB",
-    buckets=_BUCKETS_DURATION,
-)
-
-WC_PLAN_DURATION = Histogram(
-    "codehub_wc_plan_duration_seconds",
-    "Duration of judge + plan computation",
-    buckets=_BUCKETS_DURATION,
-)
-
-WC_EXECUTE_DURATION = Histogram(
-    "codehub_wc_execute_duration_seconds",
-    "Duration of parallel execution (Docker/S3)",
+# WC stage durations (load, plan, execute, persist)
+WC_STAGE_DURATION = Histogram(
+    "codehub_wc_stage_duration_seconds",
+    "Duration of WC stages",
+    ["stage"],  # load, plan, execute, persist
     buckets=_BUCKETS_DURATION,
 )
 
@@ -223,12 +201,6 @@ WC_OPERATION_DURATION = Histogram(
     "codehub_wc_operation_duration_seconds",
     "Duration of WC operations",
     ["operation"],  # STARTING, STOPPING, PROVISIONING, DELETING, CREATE_EMPTY_ARCHIVE, ARCHIVING, RESTORING
-    buckets=_BUCKETS_DURATION,
-)
-
-WC_PERSIST_DURATION = Histogram(
-    "codehub_wc_persist_duration_seconds",
-    "Duration of CAS persist to DB",
     buckets=_BUCKETS_DURATION,
 )
 
@@ -249,15 +221,10 @@ TTL_EXPIRATIONS_TOTAL = Counter(
     ["transition"],  # running_to_standby, standby_to_archived
 )
 
-TTL_SYNC_REDIS_DURATION = Histogram(
-    "codehub_ttl_sync_redis_duration_seconds",
-    "Duration to scan activities from Redis",
-    buckets=_BUCKETS_DURATION,
-)
-
-TTL_SYNC_DB_DURATION = Histogram(
-    "codehub_ttl_sync_db_duration_seconds",
-    "Duration to bulk update activities to DB",
+TTL_SYNC_DURATION = Histogram(
+    "codehub_ttl_sync_duration_seconds",
+    "Duration of TTL sync operations",
+    ["target"],  # redis, db
     buckets=_BUCKETS_DURATION,
 )
 
@@ -387,6 +354,14 @@ def _init_metrics() -> None:
     # WC Operations (may never happen if no state changes)
     for op in ["STARTING", "STOPPING", "PROVISIONING", "DELETING", "CREATE_EMPTY_ARCHIVE", "ARCHIVING", "RESTORING"]:
         WC_OPERATION_DURATION.labels(operation=op)
+
+    # Stage durations (labeled histograms)
+    for stage in ["load", "observe", "update"]:
+        OBSERVER_STAGE_DURATION.labels(stage=stage)
+    for stage in ["load", "plan", "execute", "persist"]:
+        WC_STAGE_DURATION.labels(stage=stage)
+    for target in ["redis", "db"]:
+        TTL_SYNC_DURATION.labels(target=target)
 
 
 _init_metrics()

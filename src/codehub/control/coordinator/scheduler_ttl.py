@@ -14,8 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from codehub.app.config import get_settings
 from codehub.app.metrics.collector import (
     TTL_EXPIRATIONS_TOTAL,
-    TTL_SYNC_DB_DURATION,
-    TTL_SYNC_REDIS_DURATION,
+    TTL_SYNC_DURATION,
 )
 from codehub.core.domain.workspace import DesiredState, Operation, Phase
 from codehub.core.logging_schema import LogEvent
@@ -87,10 +86,10 @@ class TTLRunner:
         # 1. Redis scan
         redis_start = time.monotonic()
         activities = await self._activity.scan_all()
-        TTL_SYNC_REDIS_DURATION.observe(time.monotonic() - redis_start)
+        TTL_SYNC_DURATION.labels(target="redis").observe(time.monotonic() - redis_start)
 
         if not activities:
-            TTL_SYNC_DB_DURATION.observe(0)  # No activities to sync
+            TTL_SYNC_DURATION.labels(target="db").observe(0)  # No activities to sync
             return 0
 
         ws_ids = list(activities.keys())
@@ -110,7 +109,7 @@ class TTLRunner:
             """),
             {"ids": ws_ids, "timestamps": timestamps},
         )
-        TTL_SYNC_DB_DURATION.observe(time.monotonic() - db_start)
+        TTL_SYNC_DURATION.labels(target="db").observe(time.monotonic() - db_start)
 
         updated_ids = [row[0] for row in result.fetchall()]
         if updated_ids:

@@ -23,9 +23,7 @@ from codehub.app.metrics.collector import (
     OBSERVER_API_DURATION,
     OBSERVER_ARCHIVES,
     OBSERVER_CONTAINERS,
-    OBSERVER_LOAD_DURATION,
-    OBSERVER_OBSERVE_DURATION,
-    OBSERVER_UPDATE_DURATION,
+    OBSERVER_STAGE_DURATION,
     OBSERVER_VOLUMES,
     OBSERVER_WORKSPACES,
 )
@@ -131,14 +129,14 @@ class ObserverCoordinator(CoordinatorBase):
         # Stage 1: Load workspace IDs from DB
         load_start = time.monotonic()
         ws_ids = await self._load_workspace_ids()
-        OBSERVER_LOAD_DURATION.observe(time.monotonic() - load_start)
+        OBSERVER_STAGE_DURATION.labels(stage="load").observe(time.monotonic() - load_start)
         if not ws_ids:
             return
 
         # Stage 2: Observe resources (parallel API calls)
         observe_start = time.monotonic()
         containers, volumes, archives = await self._observer.observe_all()
-        OBSERVER_OBSERVE_DURATION.observe(time.monotonic() - observe_start)
+        OBSERVER_STAGE_DURATION.labels(stage="observe").observe(time.monotonic() - observe_start)
 
         # 하나라도 실패 → skip (상태 일관성 보장, 다음 reconcile에서 재시도)
         if any(x is None for x in [containers, volumes, archives]):
@@ -176,7 +174,7 @@ class ObserverCoordinator(CoordinatorBase):
         update_start = time.monotonic()
         count = await self._bulk_update_conditions(ws_ids, containers, volumes, archives)
         await self._conn.commit()
-        OBSERVER_UPDATE_DURATION.observe(time.monotonic() - update_start)
+        OBSERVER_STAGE_DURATION.labels(stage="update").observe(time.monotonic() - update_start)
 
         # Update metrics
         OBSERVER_WORKSPACES.set(count)
