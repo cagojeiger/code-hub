@@ -23,6 +23,12 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codehub.app.config import get_settings
+from codehub.app.metrics.collector import (
+    SSE_ACTIVE_CONNECTIONS,
+    SSE_DEDUP_SKIPPED_TOTAL,
+    SSE_ERRORS_TOTAL,
+    SSE_MESSAGES_TOTAL,
+)
 from codehub.app.proxy.auth import get_user_id_from_session
 from codehub.core.logging_schema import LogEvent
 from codehub.infra import get_redis, get_session
@@ -37,6 +43,57 @@ DbSession = Annotated[AsyncSession, Depends(get_session)]
 _settings = get_settings()
 _sse_config = _settings.sse
 _channel_config = _settings.redis_channel
+
+
+def _process_payload(
+    payload: str,
+    last_sent_state: dict[str, tuple],
+    user_id: str,
+) -> tuple[str | None, dict[str, tuple]]:
+    """Process SSE payload with early return pattern.
+
+    Returns:
+        (event_to_yield, updated_state): event_to_yield is None if skipped.
+    """
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError as e:
+        SSE_ERRORS_TOTAL.labels(error_type="json_decode").inc()
+        logger.warning(
+            "Invalid JSON in message",
+            extra={
+                "event": LogEvent.SSE_RECEIVED,
+                "user_id": user_id,
+                "error": str(e),
+            },
+        )
+        return None, last_sent_state
+
+    workspace_id = data.get("id")
+
+    # Deleted workspace - always send, remove from dedup cache
+    if data.get("deleted_at"):
+        last_sent_state.pop(workspace_id, None)
+        return f"event: workspace\ndata: {payload}\n\n", last_sent_state
+
+    # Build current state for deduplication
+    current_state = (
+        data.get("phase"),
+        data.get("operation"),
+        data.get("error_reason"),
+        data.get("name"),
+        data.get("description"),
+        data.get("memo"),
+    )
+
+    # Duplicate check - skip if same as last sent
+    if last_sent_state.get(workspace_id) == current_state:
+        SSE_DEDUP_SKIPPED_TOTAL.inc()
+        return None, last_sent_state
+
+    # Update state and return event
+    last_sent_state[workspace_id] = current_state
+    return f"event: workspace\ndata: {payload}\n\n", last_sent_state
 
 
 async def _event_generator(
@@ -55,9 +112,6 @@ async def _event_generator(
     """
     subscriber = ChannelSubscriber(get_redis())
     channel = f"{_channel_config.sse_prefix}:{user_id}"
-
-    # Deduplication: track last sent state per workspace
-    # Key: workspace_id, Value: (phase, operation, error_reason, name, desc, memo)
     last_sent_state: dict[str, tuple] = {}
 
     logger.info(
@@ -69,22 +123,26 @@ async def _event_generator(
         },
     )
 
+    SSE_ACTIVE_CONNECTIONS.inc()
     try:
         await subscriber.subscribe(channel)
 
         loop = asyncio.get_running_loop()
         last_heartbeat = loop.time()
 
-        # Send initial connection event to establish the stream
+        # Send initial connection event
         yield "event: connected\ndata: {}\n\n"
+        SSE_MESSAGES_TOTAL.labels(event_type="connected").inc()
 
         while True:
             if await request.is_disconnected():
                 break
 
+            # Get message from Redis
             try:
                 payload = await subscriber.get_message(timeout=1.0)
             except Exception as e:
+                SSE_ERRORS_TOTAL.labels(error_type="redis_read").inc()
                 logger.warning(
                     "Redis read error",
                     extra={
@@ -96,6 +154,7 @@ async def _event_generator(
                 await asyncio.sleep(1)
                 continue
 
+            # Process payload if received
             if payload is not None:
                 logger.debug(
                     "Received message",
@@ -104,46 +163,22 @@ async def _event_generator(
                         "user_id": user_id,
                     },
                 )
-                try:
-                    data = json.loads(payload)
-                    workspace_id = data.get("id")
+                event, last_sent_state = _process_payload(payload, last_sent_state, user_id)
+                if event is not None:
+                    yield event
+                    SSE_MESSAGES_TOTAL.labels(event_type="workspace").inc()
 
-                    if data.get("deleted_at"):
-                        last_sent_state.pop(workspace_id, None)
-                        yield f"event: workspace\ndata: {payload}\n\n"
-                    else:
-                        current_state = (
-                            data.get("phase"),
-                            data.get("operation"),
-                            data.get("error_reason"),
-                            data.get("name"),
-                            data.get("description"),
-                            data.get("memo"),
-                        )
-                        if last_sent_state.get(workspace_id) == current_state:
-                            continue
-
-                        last_sent_state[workspace_id] = current_state
-                        yield f"event: workspace\ndata: {payload}\n\n"
-
-                except json.JSONDecodeError as e:
-                    logger.warning(
-                        "Invalid JSON in message",
-                        extra={
-                            "event": LogEvent.SSE_RECEIVED,
-                            "user_id": user_id,
-                            "error": str(e),
-                        },
-                    )
-
+            # Heartbeat check
             now = loop.time()
             if now - last_heartbeat >= _sse_config.heartbeat_interval:
                 yield "event: heartbeat\ndata: {}\n\n"
+                SSE_MESSAGES_TOTAL.labels(event_type="heartbeat").inc()
                 last_heartbeat = now
 
     except asyncio.CancelledError:
         pass
     finally:
+        SSE_ACTIVE_CONNECTIONS.dec()
         await subscriber.unsubscribe()
         logger.info(
             "User disconnected",

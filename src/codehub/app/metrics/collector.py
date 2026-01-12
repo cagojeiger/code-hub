@@ -309,6 +309,34 @@ EVENT_LISTENER_IS_LEADER = Gauge(
 )
 
 # =============================================================================
+# SSE (Server-Sent Events) Metrics
+# =============================================================================
+# Track SSE endpoint connections and message delivery
+
+SSE_ACTIVE_CONNECTIONS = Gauge(
+    "codehub_sse_active_connections",
+    "Currently active SSE connections",
+    multiprocess_mode="livesum",
+)
+
+SSE_MESSAGES_TOTAL = Counter(
+    "codehub_sse_messages_total",
+    "Total SSE messages sent",
+    ["event_type"],  # workspace, heartbeat, connected
+)
+
+SSE_ERRORS_TOTAL = Counter(
+    "codehub_sse_errors_total",
+    "Total SSE errors",
+    ["error_type"],  # redis_read, json_decode
+)
+
+SSE_DEDUP_SKIPPED_TOTAL = Counter(
+    "codehub_sse_dedup_skipped_total",
+    "Total SSE messages skipped due to deduplication",
+)
+
+# =============================================================================
 # Circuit Breaker Metrics
 # =============================================================================
 # Track circuit breaker state and external service health
@@ -382,6 +410,13 @@ def _init_metrics() -> None:
     WS_ERRORS.labels(error_type="connection_failed")
     WS_ERRORS.labels(error_type="connection_closed")
     WS_ERRORS.labels(error_type="relay_error")
+
+    # SSE Metrics
+    SSE_MESSAGES_TOTAL.labels(event_type="workspace")
+    SSE_MESSAGES_TOTAL.labels(event_type="heartbeat")
+    SSE_MESSAGES_TOTAL.labels(event_type="connected")
+    SSE_ERRORS_TOTAL.labels(error_type="redis_read")
+    SSE_ERRORS_TOTAL.labels(error_type="json_decode")
 
     # WC Operations (may never happen if no state changes)
     for op in ["STARTING", "STOPPING", "PROVISIONING", "DELETING", "CREATE_EMPTY_ARCHIVE", "ARCHIVING", "RESTORING"]:
