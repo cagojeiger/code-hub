@@ -10,7 +10,6 @@ Process Tasks:
 
 import asyncio
 import logging
-from typing import Callable
 
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -34,6 +33,36 @@ from codehub.infra.redis_pubsub import ChannelPublisher, ChannelSubscriber
 logger = logging.getLogger(__name__)
 
 
+async def _run_coordinator(
+    engine: AsyncEngine,
+    redis_client: redis.Redis,
+    coordinator_cls: type,
+    *args,
+) -> None:
+    """Create and run a coordinator with leader election.
+
+    Uses coordinator_cls.COORDINATOR_TYPE to create LeaderElection.
+    Uses Redis PUB/SUB for wake notifications (broadcasting to all coordinators).
+    """
+    async with engine.connect() as conn:
+        leader = SQLAlchemyLeaderElection(conn, coordinator_cls.COORDINATOR_TYPE)
+        subscriber = ChannelSubscriber(redis_client)
+        coordinator = coordinator_cls(conn, leader, subscriber, *args)
+        await coordinator.run()
+
+
+async def _run_event_listener(redis_client: redis.Redis) -> None:
+    """Run EventListener.
+
+    Uses asyncpg connection for PG LISTEN support.
+    Uses PostgreSQL Advisory Lock for leader election (only 1 instance writes).
+    """
+    settings = get_settings()
+    db_url = settings.database.url.replace("+asyncpg", "")
+    listener = EventListener(db_url, redis_client)
+    await listener.run()
+
+
 async def run_control_plane(engine: AsyncEngine, redis_client: redis.Redis) -> None:
     """컨트롤 플레인 전체 실행.
 
@@ -49,40 +78,15 @@ async def run_control_plane(engine: AsyncEngine, redis_client: redis.Redis) -> N
     publisher = ChannelPublisher(redis_client)
     activity_store = get_activity_store()
 
-    def make_coordinator_runner(coordinator_cls: type, *args) -> Callable:
-        """Factory for coordinator runner coroutines.
-
-        Uses coordinator_cls.COORDINATOR_TYPE to create LeaderElection.
-        Uses Redis PUB/SUB for wake notifications (broadcasting to all coordinators).
-        """
-        async def runner() -> None:
-            async with engine.connect() as conn:
-                leader = SQLAlchemyLeaderElection(conn, coordinator_cls.COORDINATOR_TYPE)
-                subscriber = ChannelSubscriber(redis_client)
-                coordinator = coordinator_cls(conn, leader, subscriber, *args)
-                await coordinator.run()
-        return runner
-
-    async def event_listener_runner() -> None:
-        """Run EventListener.
-
-        Uses asyncpg connection for PG LISTEN support.
-        Uses PostgreSQL Advisory Lock for leader election (only 1 instance writes).
-        """
-        settings = get_settings()
-        db_url = settings.database.url.replace("+asyncpg", "")
-        listener = EventListener(db_url, redis_client)
-        await listener.run()
-
     try:
         await asyncio.gather(
             # Coordinators (리더십 필요)
-            make_coordinator_runner(ObserverCoordinator, ic, sp)(),
-            make_coordinator_runner(WorkspaceController, ic, sp)(),
-            event_listener_runner(),
-            make_coordinator_runner(
-                Scheduler, activity_store, publisher, sp, ic
-            )(),
+            _run_coordinator(engine, redis_client, ObserverCoordinator, ic, sp),
+            _run_coordinator(engine, redis_client, WorkspaceController, ic, sp),
+            _run_event_listener(redis_client),
+            _run_coordinator(
+                engine, redis_client, Scheduler, activity_store, publisher, sp, ic
+            ),
 
             # Process Tasks (리더십 불필요 - 각 프로세스에서 독립 실행)
             flush_activity_buffer(),
