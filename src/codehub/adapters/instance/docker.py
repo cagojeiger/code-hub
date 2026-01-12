@@ -76,11 +76,16 @@ class DockerInstanceController(InstanceController):
                 return
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 404:
-                    # Container disappeared between inspect and start, recreate it
+                    # Container disappeared between inspect and start
                     logger.warning(
-                        "Container disappeared, will recreate",
-                        extra={"event": LogEvent.CONTAINER_DISAPPEARED, "container": container_name},
+                        "Container disappeared, removing before recreate",
+                        extra={
+                            "event": LogEvent.CONTAINER_DISAPPEARED,
+                            "container": container_name,
+                        },
                     )
+                    # Remove stale container before recreating
+                    await self._containers.remove(container_name)
                 else:
                     raise
 

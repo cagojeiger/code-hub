@@ -65,7 +65,7 @@ class TestDockerInstanceController:
         mock_containers: AsyncMock,
         mock_images: AsyncMock,
     ):
-        """Start 404 시 컨테이너 재생성."""
+        """Start 404 시 컨테이너 삭제 후 재생성."""
         # inspect는 컨테이너 존재 반환
         mock_containers.inspect.return_value = {"Id": "abc123"}
 
@@ -81,7 +81,8 @@ class TestDockerInstanceController:
 
         await controller.start("ws-1", "ubuntu:22.04")
 
-        # create가 호출되어야 함 (재생성)
+        # remove → create → start 순서로 호출
+        mock_containers.remove.assert_called_once()
         mock_containers.create.assert_called_once()
         mock_images.ensure.assert_called_once()
         # start는 2번 호출 (첫 번째 실패, 두 번째 성공)
