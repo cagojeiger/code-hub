@@ -32,6 +32,17 @@ from .client import WS_HOP_BY_HOP_HEADERS, filter_headers, get_http_client
 
 logger = logging.getLogger(__name__)
 
+
+async def _stream_http_response(
+    upstream_response: httpx.Response,
+) -> AsyncGenerator[bytes, None]:
+    """Stream response chunks from upstream and ensure cleanup."""
+    try:
+        async for chunk in upstream_response.aiter_raw():
+            yield chunk
+    finally:
+        await upstream_response.aclose()
+
 _proxy_config = get_settings().proxy
 _activity_buffer = get_activity_buffer()
 
@@ -102,15 +113,8 @@ async def proxy_http_to_upstream(
         upstream_response = await http_client.send(upstream_request, stream=True)
         response_headers = filter_headers(dict(upstream_response.headers))
 
-        async def stream_response() -> AsyncGenerator[bytes]:
-            try:
-                async for chunk in upstream_response.aiter_raw():
-                    yield chunk
-            finally:
-                await upstream_response.aclose()
-
         return StreamingResponse(
-            stream_response(),
+            _stream_http_response(upstream_response),
             status_code=upstream_response.status_code,
             headers=response_headers,
         )
