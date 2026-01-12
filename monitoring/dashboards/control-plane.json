@@ -1774,7 +1774,8 @@
           "options": {
             "legend": {
               "calcs": [
-                "mean"
+                "mean",
+                "max"
               ],
               "displayMode": "table",
               "placement": "right",
@@ -1793,9 +1794,27 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[5m])))",
+              "legendFormat": "load p50",
+              "refId": "A_p50"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
               "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[5m])))",
               "legendFormat": "load p95",
               "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_load_duration_seconds_bucket[5m])))",
+              "legendFormat": "load p99",
+              "refId": "A_p99"
             },
             {
               "datasource": {
@@ -1820,9 +1839,27 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_observer_observe_duration_seconds_bucket[5m])))",
+              "legendFormat": "observe p50",
+              "refId": "B_p50"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
               "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_observer_observe_duration_seconds_bucket[5m])))",
               "legendFormat": "observe p95",
               "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_observe_duration_seconds_bucket[5m])))",
+              "legendFormat": "observe p99",
+              "refId": "B_p99"
             },
             {
               "datasource": {
@@ -1847,9 +1884,27 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_observer_update_duration_seconds_bucket[5m])))",
+              "legendFormat": "update p50",
+              "refId": "C_p50"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
               "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_observer_update_duration_seconds_bucket[5m])))",
               "legendFormat": "update p95",
               "refId": "C"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_observer_update_duration_seconds_bucket[5m])))",
+              "legendFormat": "update p99",
+              "refId": "C_p99"
             },
             {
               "datasource": {
@@ -1944,7 +1999,8 @@
           "options": {
             "legend": {
               "calcs": [
-                "mean"
+                "mean",
+                "max"
               ],
               "displayMode": "table",
               "placement": "right",
@@ -1963,9 +2019,27 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
+              "expr": "histogram_quantile(0.50, sum by (le, api) (rate(codehub_observer_api_duration_seconds_bucket[5m])))",
+              "legendFormat": "{{ api }} p50",
+              "refId": "A_p50"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
               "expr": "histogram_quantile(0.95, sum by (le, api) (rate(codehub_observer_api_duration_seconds_bucket[5m])))",
               "legendFormat": "{{ api }} p95",
               "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le, api) (rate(codehub_observer_api_duration_seconds_bucket[5m])))",
+              "legendFormat": "{{ api }} p99",
+              "refId": "A_p99"
             },
             {
               "datasource": {
@@ -2074,7 +2148,8 @@
           "options": {
             "legend": {
               "calcs": [
-                "mean"
+                "mean",
+                "max"
               ],
               "displayMode": "table",
               "placement": "right",
@@ -2093,9 +2168,27 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_wc_load_duration_seconds_bucket[5m])))",
+              "legendFormat": "load p50",
+              "refId": "A_p50"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
               "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_wc_load_duration_seconds_bucket[5m])))",
               "legendFormat": "load p95",
               "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_load_duration_seconds_bucket[5m])))",
+              "legendFormat": "load p99",
+              "refId": "A_p99"
             },
             {
               "datasource": {
@@ -2120,9 +2213,27 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_wc_plan_duration_seconds_bucket[5m])))",
+              "legendFormat": "plan p50",
+              "refId": "B_p50"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
               "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_wc_plan_duration_seconds_bucket[5m])))",
               "legendFormat": "plan p95",
               "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_plan_duration_seconds_bucket[5m])))",
+              "legendFormat": "plan p99",
+              "refId": "B_p99"
             },
             {
               "datasource": {
@@ -2147,9 +2258,27 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[5m])))",
+              "legendFormat": "execute p50",
+              "refId": "C_p50"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
               "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[5m])))",
               "legendFormat": "execute p95",
               "refId": "C"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_execute_duration_seconds_bucket[5m])))",
+              "legendFormat": "execute p99",
+              "refId": "C_p99"
             },
             {
               "datasource": {
@@ -2174,9 +2303,27 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_wc_persist_duration_seconds_bucket[5m])))",
+              "legendFormat": "persist p50",
+              "refId": "D_p50"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
               "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_wc_persist_duration_seconds_bucket[5m])))",
               "legendFormat": "persist p95",
               "refId": "D"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_wc_persist_duration_seconds_bucket[5m])))",
+              "legendFormat": "persist p99",
+              "refId": "D_p99"
             },
             {
               "datasource": {
@@ -2272,7 +2419,8 @@
           "options": {
             "legend": {
               "calcs": [
-                "mean"
+                "mean",
+                "max"
               ],
               "displayMode": "table",
               "placement": "right",
@@ -2291,9 +2439,27 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
+              "expr": "histogram_quantile(0.50, sum by (le, operation) (rate(codehub_wc_operation_duration_seconds_bucket[5m])))",
+              "legendFormat": "{{ operation }} p50",
+              "refId": "A_p50"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
               "expr": "histogram_quantile(0.95, sum by (le, operation) (rate(codehub_wc_operation_duration_seconds_bucket[5m])))",
               "legendFormat": "{{ operation }} p95",
               "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le, operation) (rate(codehub_wc_operation_duration_seconds_bucket[5m])))",
+              "legendFormat": "{{ operation }} p99",
+              "refId": "A_p99"
             },
             {
               "datasource": {
@@ -2493,7 +2659,8 @@
           "options": {
             "legend": {
               "calcs": [
-                "mean"
+                "mean",
+                "max"
               ],
               "displayMode": "table",
               "placement": "right",
@@ -2512,9 +2679,27 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_ttl_sync_redis_duration_seconds_bucket[5m])))",
+              "legendFormat": "Redis p50",
+              "refId": "A_p50"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
               "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_ttl_sync_redis_duration_seconds_bucket[5m])))",
               "legendFormat": "Redis p95",
               "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_ttl_sync_redis_duration_seconds_bucket[5m])))",
+              "legendFormat": "Redis p99",
+              "refId": "A_p99"
             },
             {
               "datasource": {
@@ -2539,9 +2724,27 @@
                 "type": "prometheus",
                 "uid": "PBFA97CFB590B2093"
               },
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(codehub_ttl_sync_db_duration_seconds_bucket[5m])))",
+              "legendFormat": "DB p50",
+              "refId": "B_p50"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
               "expr": "histogram_quantile(0.95, sum by (le) (rate(codehub_ttl_sync_db_duration_seconds_bucket[5m])))",
               "legendFormat": "DB p95",
               "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "PBFA97CFB590B2093"
+              },
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(codehub_ttl_sync_db_duration_seconds_bucket[5m])))",
+              "legendFormat": "DB p99",
+              "refId": "B_p99"
             },
             {
               "datasource": {
