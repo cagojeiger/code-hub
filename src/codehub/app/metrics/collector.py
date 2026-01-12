@@ -11,12 +11,12 @@ from prometheus_client import Counter, Gauge, Histogram
 # Bucket count: 10-14 (labeled histograms should be conservative)
 # Scale: logarithmic with SLO boundaries (200ms, 1s, 5s)
 
-# FAST: DB queries, CPU computation, Redis operations (0.5ms ~ 5s)
-# Log scale: ratio ≈ 2.15
+# FAST: DB queries, CPU computation, Redis operations (0.1ms ~ 5s)
+# Log scale: ratio ≈ 2.47
 _BUCKETS_FAST = (
-    0.0005, 0.001, 0.002, 0.005, 0.01,
-    0.02, 0.05, 0.1, 0.2, 0.5,
-    1, 2, 5,
+    0.0001, 0.00025, 0.0006, 0.0015, 0.004,
+    0.009, 0.022, 0.055, 0.14, 0.34,
+    0.83, 2, 5,
 )  # 13 buckets
 
 # MEDIUM: API calls, external services, reconcile cycles (5ms ~ 60s)
