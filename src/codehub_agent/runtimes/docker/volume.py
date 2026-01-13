@@ -7,9 +7,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from codehub_agent.api.errors import VolumeInUseError
 from codehub_agent.infra import VolumeAPI, VolumeConfig
-from codehub_agent.infra.docker import VolumeInUseError as InfraVolumeInUseError
 
 if TYPE_CHECKING:
     from codehub_agent.config import AgentConfig
@@ -65,11 +63,8 @@ class VolumeManager:
     async def delete(self, workspace_id: str) -> None:
         """Raises VolumeInUseError if volume is in use."""
         name = self._naming.volume_name(workspace_id)
-        try:
-            await self._api.remove(name)
-            logger.info("Deleted volume: %s", name)
-        except InfraVolumeInUseError:
-            raise VolumeInUseError(f"Volume {name} is in use by a container")
+        await self._api.remove(name)
+        logger.info("Deleted volume: %s", name)
 
     async def exists(self, workspace_id: str) -> VolumeStatus:
         name = self._naming.volume_name(workspace_id)

@@ -10,17 +10,12 @@ import logging
 import httpx
 from pydantic import BaseModel
 
+from codehub_agent.api.errors import VolumeInUseError
 from codehub_agent.config import get_agent_config
 
 logger = logging.getLogger(__name__)
 
 _agent_config = get_agent_config()
-
-
-class VolumeInUseError(Exception):
-    """Raised when trying to remove a volume that is in use."""
-
-    pass
 
 
 # =============================================================================
