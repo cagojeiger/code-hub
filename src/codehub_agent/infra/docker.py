@@ -4,6 +4,7 @@ Provides async Docker API access for containers and volumes.
 Supports both Unix socket and TCP connections.
 """
 
+import json
 import logging
 
 import httpx
@@ -104,24 +105,25 @@ class DockerClient:
     """Async Docker API client."""
 
     def __init__(self, docker_host: str | None = None) -> None:
-        self._host = docker_host or _agent_config.docker_host
+        self._host = docker_host or _agent_config.docker.host
         self._client: httpx.AsyncClient | None = None
 
     def _create_client(self) -> httpx.AsyncClient:
         """Create a new HTTP client."""
+        timeout = _agent_config.docker.api_timeout
         if self._host.startswith("unix://"):
             socket_path = self._host.replace("unix://", "")
             transport = httpx.AsyncHTTPTransport(uds=socket_path)
             return httpx.AsyncClient(
                 transport=transport,
                 base_url="http://localhost",
-                timeout=_agent_config.api_timeout,
+                timeout=timeout,
             )
         else:
             base_url = self._host
             if base_url.startswith("tcp://"):
                 base_url = base_url.replace("tcp://", "http://")
-            return httpx.AsyncClient(base_url=base_url, timeout=_agent_config.api_timeout)
+            return httpx.AsyncClient(base_url=base_url, timeout=timeout)
 
     async def get(self) -> httpx.AsyncClient:
         """Get or create the HTTP client."""
@@ -172,8 +174,6 @@ class ContainerAPI:
         client = await self._docker.get()
         params: dict = {"all": "true"}
         if filters:
-            import json
-
             params["filters"] = json.dumps(filters)
         resp = await client.get("/containers/json", params=params)
         resp.raise_for_status()
@@ -233,11 +233,13 @@ class ContainerAPI:
     async def wait(self, name: str, timeout: int | None = None) -> int:
         """Wait for container to exit and return exit code."""
         if timeout is None:
-            timeout = _agent_config.container_wait_timeout
+            timeout = _agent_config.docker.container_wait_timeout
         client = await self._docker.get()
+        # Add buffer to HTTP timeout beyond container wait timeout
+        http_timeout = timeout + _agent_config.docker.timeout_buffer
         resp = await client.post(
             f"/containers/{name}/wait",
-            timeout=timeout + 10,
+            timeout=http_timeout,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -270,8 +272,6 @@ class VolumeAPI:
         client = await self._docker.get()
         params: dict = {}
         if filters:
-            import json
-
             params["filters"] = json.dumps(filters)
         resp = await client.get("/volumes", params=params)
         resp.raise_for_status()
