@@ -1,16 +1,10 @@
 """Health check endpoint."""
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+
+from codehub_agent.api.v1.schemas import HealthResponse
 
 router = APIRouter(tags=["health"])
-
-
-class HealthResponse(BaseModel):
-    """Health check response."""
-
-    status: str
-    version: str = "0.2.1"
 
 
 @router.get("/health", response_model=HealthResponse)

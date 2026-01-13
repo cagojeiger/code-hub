@@ -4,32 +4,15 @@ import logging
 
 import httpx
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
-from codehub_agent.config import get_agent_config
+from codehub_agent.config import AgentConfig, get_agent_config
+from codehub_agent.api.v1.schemas import GCRequest, GCResponse, ProtectedItem
 
 router = APIRouter(prefix="/storage", tags=["storage"])
 logger = logging.getLogger(__name__)
 
-
-class ProtectedItem(BaseModel):
-    """Protected archive item."""
-
-    workspace_id: str
-    op_id: str
-
-
-class GCRequest(BaseModel):
-    """GC request with protected items."""
-
-    protected: list[ProtectedItem]
-
-
-class GCResponse(BaseModel):
-    """GC result response."""
-
-    deleted_count: int
-    deleted_keys: list[str]
+# Re-export for backward compatibility
+__all__ = ["router", "ProtectedItem", "GCRequest", "GCResponse"]
 
 
 def _build_archive_key(cluster_id: str, workspace_id: str, op_id: str) -> str:
@@ -37,7 +20,7 @@ def _build_archive_key(cluster_id: str, workspace_id: str, op_id: str) -> str:
     return f"{cluster_id}/{workspace_id}/{op_id}/home.tar.zst"
 
 
-async def _list_s3_objects(config, prefix: str) -> list[str]:
+async def _list_s3_objects(config: AgentConfig, prefix: str) -> list[str]:
     """List S3 objects with given prefix."""
     # Use simple HTTP client to list objects
     async with httpx.AsyncClient() as client:
@@ -47,12 +30,14 @@ async def _list_s3_objects(config, prefix: str) -> list[str]:
         # MinIO/S3 requires signing, but for simplicity use boto3-like approach
         # For now, this is a placeholder - real implementation would use aioboto3
         logger.warning("S3 GC listing not fully implemented - requires S3 client")
+        _ = client, url, params  # Suppress unused variable warnings
         return []
 
 
-async def _delete_s3_object(config, key: str) -> bool:
+async def _delete_s3_object(config: AgentConfig, key: str) -> bool:
     """Delete S3 object."""
     logger.warning("S3 GC delete not fully implemented - requires S3 client")
+    _ = config, key  # Suppress unused variable warnings
     return False
 
 

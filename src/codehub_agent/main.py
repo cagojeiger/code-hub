@@ -2,19 +2,22 @@
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Callable
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from codehub_agent import __version__
-from codehub_agent.api import (
+from codehub_agent.api.v1 import (
     health_router,
     instances_router,
     jobs_router,
     storage_router,
     volumes_router,
 )
+from codehub_agent.api.errors import AgentError
 from codehub_agent.config import get_agent_config
 from codehub_agent.infra import close_docker
 
@@ -57,9 +60,21 @@ app.add_middleware(
 )
 
 
+# Error handler for AgentError
+@app.exception_handler(AgentError)
+async def agent_error_handler(request: Request, exc: AgentError) -> JSONResponse:
+    """Handle AgentError exceptions."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=exc.to_response().model_dump(),
+    )
+
+
 # API key authentication middleware
 @app.middleware("http")
-async def api_key_middleware(request: Request, call_next) -> Response:
+async def api_key_middleware(
+    request: Request, call_next: Callable[[Request], Response]
+) -> Response:
     """Validate API key for non-health endpoints."""
     config = get_agent_config()
 
@@ -82,11 +97,14 @@ async def api_key_middleware(request: Request, call_next) -> Response:
 
 
 # Register routers
+# /health endpoint without prefix (for health checks)
 app.include_router(health_router)
-app.include_router(instances_router)
-app.include_router(volumes_router)
-app.include_router(jobs_router)
-app.include_router(storage_router)
+
+# API v1 endpoints with /api/v1 prefix
+app.include_router(instances_router, prefix="/api/v1")
+app.include_router(volumes_router, prefix="/api/v1")
+app.include_router(jobs_router, prefix="/api/v1")
+app.include_router(storage_router, prefix="/api/v1")
 
 
 def main() -> None:
