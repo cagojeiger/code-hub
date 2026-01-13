@@ -10,10 +10,15 @@ class ResourceNaming:
         self._prefix = config.resource_prefix
         self._cluster_id = config.cluster_id
         self._s3_bucket = config.s3_bucket
+        self._archive_suffix = config.runtime.archive_suffix
 
     @property
     def prefix(self) -> str:
         return self._prefix
+
+    @property
+    def archive_suffix(self) -> str:
+        return self._archive_suffix
 
     def container_name(self, workspace_id: str) -> str:
         return f"{self._prefix}{workspace_id}"
@@ -22,7 +27,7 @@ class ResourceNaming:
         return f"{self._prefix}{workspace_id}-home"
 
     def archive_s3_key(self, workspace_id: str, op_id: str) -> str:
-        return f"{self._prefix}{workspace_id}/{op_id}/home.tar.zst"
+        return f"{self._prefix}{workspace_id}/{op_id}/{self._archive_suffix}"
 
     def archive_s3_url(self, workspace_id: str, op_id: str) -> str:
         key = self.archive_s3_key(workspace_id, op_id)

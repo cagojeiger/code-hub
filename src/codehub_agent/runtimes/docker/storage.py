@@ -64,10 +64,11 @@ class StorageManager:
         Uses resource_prefix to match archive_s3_key() output format.
         """
         resource_prefix = self._naming.prefix
+        archive_suffix = re.escape(self._naming.archive_suffix)
         all_keys = await self._s3.list_objects(resource_prefix)
 
         archives: dict[str, ArchiveInfo] = {}
-        pattern = re.compile(rf"^{re.escape(resource_prefix)}([^/]+)/([^/]+)/home\.tar\.zst$")
+        pattern = re.compile(rf"^{re.escape(resource_prefix)}([^/]+)/([^/]+)/{archive_suffix}$")
 
         for key in all_keys:
             match = pattern.match(key)
