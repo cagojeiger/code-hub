@@ -46,8 +46,11 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[project.scripts]
+codehub-agent = "codehub_agent.main:main"
+
 [tool.hatch.build.targets.wheel]
-packages = ["codehub"]
+packages = ["codehub", "codehub_agent"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

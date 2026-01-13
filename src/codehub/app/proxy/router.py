@@ -8,7 +8,8 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocket
 
-from codehub.adapters.instance.docker import DockerInstanceController
+from codehub.agent.client import AgentClient, AgentConfig
+from codehub.app.config import get_settings
 from codehub.core.errors import (
     ForbiddenError,
     UnauthorizedError,
@@ -36,7 +37,14 @@ _instance_controller: InstanceController | None = None
 def get_instance_controller() -> InstanceController:
     global _instance_controller
     if _instance_controller is None:
-        _instance_controller = DockerInstanceController()
+        settings = get_settings()
+        config = AgentConfig(
+            endpoint=settings.agent.endpoint,
+            api_key=settings.agent.api_key,
+            timeout=settings.agent.timeout,
+            job_timeout=settings.agent.job_timeout,
+        )
+        _instance_controller = AgentClient(config)
     return _instance_controller
 
 

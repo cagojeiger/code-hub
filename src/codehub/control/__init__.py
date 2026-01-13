@@ -15,8 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 import redis.asyncio as redis
 
-from codehub.adapters.instance import DockerInstanceController
-from codehub.adapters.storage import S3StorageProvider
+from codehub.agent.client import AgentClient, AgentConfig
 from codehub.app.config import get_settings
 from codehub.control.coordinator import (
     EventListener,
@@ -70,9 +69,17 @@ async def run_control_plane(engine: AsyncEngine, redis_client: redis.Redis) -> N
         engine: SQLAlchemy AsyncEngine
         redis_client: Redis client
     """
-    # Adapters (thread-safe, can be shared)
-    ic = DockerInstanceController()
-    sp = S3StorageProvider()
+    # Agent client (replaces DockerInstanceController + S3StorageProvider)
+    settings = get_settings()
+    agent_config = AgentConfig(
+        endpoint=settings.agent.endpoint,
+        api_key=settings.agent.api_key,
+        timeout=settings.agent.timeout,
+        job_timeout=settings.agent.job_timeout,
+    )
+    agent = AgentClient(agent_config)
+    ic = agent  # InstanceController interface
+    sp = agent  # StorageProvider interface
 
     # Redis wrappers
     publisher = ChannelPublisher(redis_client)
@@ -100,5 +107,4 @@ async def run_control_plane(engine: AsyncEngine, redis_client: redis.Redis) -> N
             extra={"event": LogEvent.APP_STOPPED, "error": str(e)},
         )
     finally:
-        await ic.close()
-        await sp.close()
+        await agent.close()
