@@ -54,10 +54,8 @@ class StorageManager:
         all_keys = await self._s3.list_objects(f"{cluster_id}/")
         keys_to_delete = [key for key in all_keys if key not in protected_keys]
 
-        deleted_keys = []
-        for key in keys_to_delete:
-            if await self._s3.delete_object(key):
-                deleted_keys.append(key)
+        # Use batch delete for better performance
+        deleted_keys = await self._s3.delete_objects(keys_to_delete)
 
         logger.info("GC completed: deleted %d archives", len(deleted_keys))
         return len(deleted_keys), deleted_keys

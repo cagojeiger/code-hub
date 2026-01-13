@@ -4,7 +4,7 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
-from aiobotocore.session import get_session
+from aiobotocore.session import AioSession, get_session
 from types_aiobotocore_s3 import S3Client
 
 from codehub_agent.config import AgentConfig, get_agent_config
@@ -13,15 +13,16 @@ logger = logging.getLogger(__name__)
 
 
 class S3Operations:
-    """S3 operations with dependency injection."""
+    """S3 operations with session reuse for connection efficiency."""
 
-    def __init__(self, config: AgentConfig) -> None:
+    def __init__(self, config: AgentConfig, session: AioSession | None = None) -> None:
         self._config = config
+        # Reuse session for connection pooling via aiohttp connector
+        self._session = session or get_session()
 
     @asynccontextmanager
     async def client(self) -> AsyncGenerator[S3Client, None]:
-        session = get_session()
-        async with session.create_client(
+        async with self._session.create_client(
             "s3",
             endpoint_url=self._config.s3_endpoint,
             aws_access_key_id=self._config.s3_access_key,
@@ -60,6 +61,38 @@ class S3Operations:
         except Exception as e:
             logger.warning("Failed to delete S3 object %s: %s", key, e)
             return False
+
+    async def delete_objects(self, keys: list[str]) -> list[str]:
+        """Delete multiple objects in batch. Returns list of successfully deleted keys."""
+        if not keys:
+            return []
+
+        deleted_keys: list[str] = []
+        # S3 delete_objects supports up to 1000 keys per request
+        batch_size = 1000
+
+        async with self.client() as s3:
+            for i in range(0, len(keys), batch_size):
+                batch = keys[i : i + batch_size]
+                try:
+                    response = await s3.delete_objects(
+                        Bucket=self._config.s3_bucket,
+                        Delete={"Objects": [{"Key": key} for key in batch]},
+                    )
+                    # Collect successfully deleted keys
+                    for deleted in response.get("Deleted", []):
+                        deleted_keys.append(deleted["Key"])
+                    # Log errors if any
+                    for error in response.get("Errors", []):
+                        logger.warning(
+                            "Failed to delete S3 object %s: %s",
+                            error.get("Key"),
+                            error.get("Message"),
+                        )
+                except Exception as e:
+                    logger.warning("Batch delete failed for %d objects: %s", len(batch), e)
+
+        return deleted_keys
 
     async def object_exists(self, key: str) -> bool:
         try:

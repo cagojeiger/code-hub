@@ -13,10 +13,6 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from codehub_agent import __version__
 from codehub_agent.api.v1 import (
     health_router,
-    instances_router,
-    jobs_router,
-    storage_router,
-    volumes_router,
     workspaces_router,
 )
 from codehub_agent.api.errors import AgentError
@@ -116,10 +112,6 @@ async def metrics() -> Response:
 
 
 # API v1 endpoints with /api/v1 prefix
-app.include_router(instances_router, prefix="/api/v1")
-app.include_router(volumes_router, prefix="/api/v1")
-app.include_router(jobs_router, prefix="/api/v1")
-app.include_router(storage_router, prefix="/api/v1")
 app.include_router(workspaces_router, prefix="/api/v1")
 
 

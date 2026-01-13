@@ -5,6 +5,8 @@ It provides a single endpoint (observe) that returns complete workspace state,
 combining container, volume, and archive information.
 """
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
@@ -139,10 +141,12 @@ async def observe(
     - Volume status (exists)
     - Archive status (exists, archive_key)
     """
-    # Get all data in parallel-like manner
-    containers = await runtime.instances.list_all()
-    volumes = await runtime.volumes.list_all()
-    archives = await runtime.storage.list_archives()
+    # Get all data in parallel
+    containers, volumes, archives = await asyncio.gather(
+        runtime.instances.list_all(),
+        runtime.volumes.list_all(),
+        runtime.storage.list_archives(),
+    )
 
     # Index by workspace_id for fast lookup
     container_map: dict[str, dict] = {c["workspace_id"]: c for c in containers}
