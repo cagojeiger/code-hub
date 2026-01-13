@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from codehub_agent.api.dependencies import get_runtime
+from codehub_agent.metrics import AGENT_CONTAINERS_TOTAL, AGENT_VOLUMES_TOTAL
 from codehub_agent.runtimes import DockerRuntime
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
@@ -147,6 +148,10 @@ async def observe(
         runtime.volumes.list_all(),
         runtime.storage.list_archives(),
     )
+
+    # Update metrics
+    AGENT_CONTAINERS_TOTAL.set(len(containers))
+    AGENT_VOLUMES_TOTAL.set(len(volumes))
 
     # Index by workspace_id for fast lookup
     container_map: dict[str, dict] = {c["workspace_id"]: c for c in containers}
