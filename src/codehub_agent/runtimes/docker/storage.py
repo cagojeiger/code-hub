@@ -45,13 +45,11 @@ class StorageManager:
         protected: list[tuple[str, str]],
     ) -> tuple[int, list[str]]:
         """Delete archives not in the protected list."""
-        cluster_id = self._config.cluster_id
-
         protected_keys = {
             self._naming.archive_s3_key(ws_id, op_id) for ws_id, op_id in protected
         }
 
-        all_keys = await self._s3.list_objects(f"{cluster_id}/")
+        all_keys = await self._s3.list_objects(self._naming.prefix)
         keys_to_delete = [key for key in all_keys if key not in protected_keys]
 
         # Use batch delete for better performance
@@ -61,12 +59,15 @@ class StorageManager:
         return len(deleted_keys), deleted_keys
 
     async def list_archives(self, prefix: str = "") -> list[ArchiveInfo]:
-        """List archives in S3 for this cluster."""
-        cluster_id = self._config.cluster_id
-        all_keys = await self._s3.list_objects(f"{cluster_id}/")
+        """List archives in S3 matching resource prefix.
+
+        Uses resource_prefix to match archive_s3_key() output format.
+        """
+        resource_prefix = self._naming.prefix
+        all_keys = await self._s3.list_objects(resource_prefix)
 
         archives: dict[str, ArchiveInfo] = {}
-        pattern = re.compile(rf"^{re.escape(cluster_id)}/([^/]+)/([^/]+)/home\.tar\.zst$")
+        pattern = re.compile(rf"^{re.escape(resource_prefix)}([^/]+)/([^/]+)/home\.tar\.zst$")
 
         for key in all_keys:
             match = pattern.match(key)
@@ -85,8 +86,8 @@ class StorageManager:
         return list(archives.values())
 
     async def list_all_archive_keys(self, prefix: str = "") -> set[str]:
-        cluster_id = self._config.cluster_id
-        all_keys = await self._s3.list_objects(f"{cluster_id}/")
+        """List all archive keys matching resource prefix."""
+        all_keys = await self._s3.list_objects(self._naming.prefix)
         return set(all_keys)
 
     async def delete_archive(self, archive_key: str) -> bool:

@@ -17,7 +17,7 @@ from codehub_agent.api.v1 import (
 )
 from codehub_agent.api.errors import AgentError
 from codehub_agent.config import get_agent_config
-from codehub_agent.infra import close_docker
+from codehub_agent.infra import close_docker, ContainerAPI
 
 # Import metrics to ensure they are registered
 import codehub_agent.metrics  # noqa: F401
@@ -30,6 +30,26 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def cleanup_orphaned_job_containers() -> None:
+    """Startup cleanup for orphaned job containers.
+
+    Job containers (codehub-job-*) may be left behind if the agent
+    restarts while jobs are running. These orphaned containers block
+    volume deletion, causing ARCHIVING operations to fail.
+    """
+    logger.info("Cleaning up orphaned job containers...")
+    api = ContainerAPI()
+    try:
+        containers = await api.list(filters={"name": ["codehub-job-"]})
+        for container in containers:
+            name = container["Names"][0].lstrip("/")
+            logger.info("Removing orphaned job container: %s", name)
+            await api.remove(name, force=True)
+        logger.info("Cleanup complete: removed %d job containers", len(containers))
+    except Exception as e:
+        logger.warning("Failed to cleanup job containers: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
@@ -39,6 +59,10 @@ async def lifespan(app: FastAPI):
         __version__,
         config.cluster_id,
     )
+
+    # Cleanup orphaned job containers from previous runs
+    await cleanup_orphaned_job_containers()
+
     yield
     logger.info("Shutting down CodeHub Agent")
     await close_docker()
