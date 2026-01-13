@@ -1,8 +1,4 @@
-"""Resource naming utilities for Docker runtime.
-
-Centralizes naming conventions for Docker containers, volumes, and S3 keys.
-Eliminates duplicate naming logic across managers.
-"""
+"""Resource naming utilities for Docker runtime."""
 
 from codehub_agent.config import AgentConfig
 
@@ -17,37 +13,27 @@ class ResourceNaming:
 
     @property
     def prefix(self) -> str:
-        """Get resource prefix."""
         return self._prefix
 
     def container_name(self, workspace_id: str) -> str:
-        """Generate container name for workspace."""
         return f"{self._prefix}{workspace_id}"
 
     def volume_name(self, workspace_id: str) -> str:
-        """Generate volume name for workspace."""
         return f"{self._prefix}{workspace_id}-home"
 
     def archive_s3_key(self, workspace_id: str, op_id: str) -> str:
-        """Generate S3 key for archive."""
         return f"{self._cluster_id}/{workspace_id}/{op_id}/home.tar.zst"
 
     def archive_s3_url(self, workspace_id: str, op_id: str) -> str:
-        """Generate full S3 URL for archive."""
         key = self.archive_s3_key(workspace_id, op_id)
         return f"s3://{self._s3_bucket}/{key}"
 
     def workspace_id_from_container(self, container_name: str) -> str | None:
-        """Extract workspace_id from container name."""
         if not container_name.startswith(self._prefix):
             return None
         return container_name[len(self._prefix) :]
 
     def workspace_id_from_volume(self, volume_name: str) -> str | None:
-        """Extract workspace_id from volume name.
-
-        Returns None if volume name doesn't match expected pattern.
-        """
         suffix = "-home"
         if not volume_name.startswith(self._prefix) or not volume_name.endswith(suffix):
             return None

@@ -12,12 +12,9 @@ from codehub_agent.infra.docker import (
     get_docker_client,
 )
 from codehub_agent.infra.s3 import (
+    S3Operations,
     close_s3,
-    delete_object,
-    get_s3_client,
     init_s3,
-    list_objects,
-    object_exists,
 )
 
 __all__ = [
@@ -32,10 +29,7 @@ __all__ = [
     "close_docker",
     "get_docker_client",
     # S3
+    "S3Operations",
     "init_s3",
     "close_s3",
-    "get_s3_client",
-    "list_objects",
-    "delete_object",
-    "object_exists",
 ]

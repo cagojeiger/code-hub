@@ -1,6 +1,7 @@
 """Docker runtime for Agent."""
 
 from codehub_agent.config import AgentConfig, get_agent_config
+from codehub_agent.infra import S3Operations
 from codehub_agent.runtimes.docker.instance import InstanceManager
 from codehub_agent.runtimes.docker.job import JobRunner
 from codehub_agent.runtimes.docker.naming import ResourceNaming
@@ -14,11 +15,12 @@ class DockerRuntime:
     def __init__(self, config: AgentConfig | None = None) -> None:
         self._config = config or get_agent_config()
         self._naming = ResourceNaming(self._config)
+        self._s3 = S3Operations(self._config)
 
         self.instances = InstanceManager(self._config, self._naming)
         self.volumes = VolumeManager(self._config, self._naming)
         self.jobs = JobRunner(self._config, self._naming)
-        self.storage = StorageManager(self._config, self._naming)
+        self.storage = StorageManager(self._config, self._naming, self._s3)
 
 
 __all__ = [

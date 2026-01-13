@@ -21,15 +21,11 @@ logger = logging.getLogger(__name__)
 
 
 class JobResult(BaseModel):
-    """Job execution result."""
-
     exit_code: int
     logs: str
 
 
 class JobType(str, Enum):
-    """Job type enumeration."""
-
     ARCHIVE = "archive"
     RESTORE = "restore"
 
@@ -50,7 +46,6 @@ class JobRunner:
         self._timeout = timeout or self._config.job_timeout
 
     async def _force_cleanup(self, container_name: str) -> None:
-        """Force stop and remove container."""
         try:
             await self._containers.stop(container_name, timeout=5)
         except Exception:
@@ -66,16 +61,6 @@ class JobRunner:
         workspace_id: str,
         op_id: str,
     ) -> JobResult:
-        """Run a job (archive or restore).
-
-        Args:
-            job_type: Type of job to run (archive or restore).
-            workspace_id: Workspace identifier.
-            op_id: Operation identifier for S3 path.
-
-        Returns:
-            JobResult with exit code and logs.
-        """
         job_id = uuid.uuid4().hex[:8]
         helper_name = f"codehub-job-{job_type.value}-{job_id}"
         volume_name = self._naming.volume_name(workspace_id)
@@ -142,9 +127,9 @@ class JobRunner:
                 )
 
     async def run_archive(self, workspace_id: str, op_id: str) -> JobResult:
-        """Run archive job (Volume -> S3)."""
+        """Volume -> S3."""
         return await self._run_job(JobType.ARCHIVE, workspace_id, op_id)
 
     async def run_restore(self, workspace_id: str, op_id: str) -> JobResult:
-        """Run restore job (S3 -> Volume)."""
+        """S3 -> Volume."""
         return await self._run_job(JobType.RESTORE, workspace_id, op_id)
