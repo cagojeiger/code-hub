@@ -62,6 +62,11 @@ def mock_agent_config() -> MagicMock:
     config.s3_internal_endpoint = "http://minio:9000"
     config.s3_access_key = "test-access-key"
     config.s3_secret_key = "test-secret-key"
+
+    # Sub-config for runtime settings
+    config.runtime = MagicMock()
+    config.runtime.archive_suffix = "home.tar.zst"
+
     return config
 
 
