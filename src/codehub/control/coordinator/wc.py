@@ -292,8 +292,9 @@ class WorkspaceController(CoordinatorBase):
 
                 case Operation.RESTORING:
                     if ws.archive_key:
-                        await self._runtime.restore(ws.id, ws.archive_key)
-                        action.restore_marker = ws.archive_key  # 완료 확인용 marker
+                        # Agent returns restore_marker for crash recovery verification
+                        restore_marker = await self._runtime.restore(ws.id, ws.archive_key)
+                        action.restore_marker = restore_marker
 
                 case Operation.STARTING:
                     await self._runtime.start(ws.id, ws.image_ref)

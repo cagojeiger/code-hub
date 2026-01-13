@@ -92,6 +92,14 @@ class RestoreRequest(BaseModel):
     archive_key: str
 
 
+class RestoreResponse(BaseModel):
+    """Restore operation response with restore_marker."""
+
+    status: str
+    workspace_id: str
+    restore_marker: str
+
+
 class StartRequest(BaseModel):
     """Start request with optional image."""
 
@@ -230,10 +238,8 @@ async def stop(
     workspace_id: str,
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
-    """Stop workspace container."""
-    # Stop but don't remove the container
-    container_name = runtime._naming.container_name(workspace_id)
-    await runtime.instances._containers.stop(container_name)
+    """Stop workspace container (delete container, keep volume)."""
+    await runtime.instances.delete(workspace_id)
     return OperationResponse(status="stopped", workspace_id=workspace_id)
 
 
@@ -279,23 +285,23 @@ async def archive(
     )
 
 
-@router.post("/{workspace_id}/restore", response_model=OperationResponse)
+@router.post("/{workspace_id}/restore", response_model=RestoreResponse)
 async def restore(
     workspace_id: str,
     request: RestoreRequest,
     runtime: DockerRuntime = Depends(get_runtime),
-) -> OperationResponse:
-    """Restore workspace from S3 archive."""
-    # Extract op_id from archive_key
-    # Format: cluster_id/workspace_id/op_id/home.tar.zst
-    parts = request.archive_key.split("/")
-    if len(parts) >= 3:
-        op_id = parts[2]
-    else:
-        op_id = parts[-2] if len(parts) >= 2 else "unknown"
+) -> RestoreResponse:
+    """Restore workspace from S3 archive.
 
-    await runtime.jobs.run_restore(workspace_id, op_id)
-    return OperationResponse(status="restored", workspace_id=workspace_id)
+    Per spec L229: Job receives full archive_key directly (no parsing).
+    Returns restore_marker for crash recovery verification.
+    """
+    await runtime.jobs.run_restore(workspace_id, request.archive_key)
+    return RestoreResponse(
+        status="restored",
+        workspace_id=workspace_id,
+        restore_marker=request.archive_key,
+    )
 
 
 @router.delete("/archives", response_model=DeleteArchiveResponse)

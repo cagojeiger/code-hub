@@ -218,7 +218,7 @@ class WorkspaceRuntime(ABC):
         ...
 
     @abstractmethod
-    async def restore(self, workspace_id: str, archive_key: str) -> None:
+    async def restore(self, workspace_id: str, archive_key: str) -> str:
         """Restore workspace from S3 archive.
 
         Downloads and extracts the archive to the workspace volume.
@@ -226,6 +226,9 @@ class WorkspaceRuntime(ABC):
         Args:
             workspace_id: Workspace identifier
             archive_key: Full archive key from S3
+
+        Returns:
+            restore_marker: Proof of which archive was restored (for crash recovery)
         """
         ...
 

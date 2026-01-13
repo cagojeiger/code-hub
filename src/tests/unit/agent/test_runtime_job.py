@@ -56,11 +56,13 @@ class TestJobRunner:
         runner: JobRunner,
         mock_container_api: AsyncMock,
     ) -> None:
-        """Test run_restore creates and runs restore job."""
+        """Test run_restore creates and runs restore job with archive_key."""
         mock_container_api.wait.return_value = 0
         mock_container_api.logs.return_value = b"Restore completed"
 
-        result = await runner.run_restore("ws1", "op123")
+        # Per spec L229: Job receives archive_key directly (not op_id)
+        archive_key = "codehub-ws1/op123/home.tar.zst"
+        result = await runner.run_restore("ws1", archive_key)
 
         assert result.exit_code == 0
         assert result.logs == "Restore completed"
@@ -71,6 +73,11 @@ class TestJobRunner:
         assert "restore" in call_args.cmd[-1]
         # Restore should NOT have read-only mount
         assert not any("ro" in bind for bind in call_args.host_config.binds)
+
+        # Verify ARCHIVE_URL is constructed from archive_key
+        env_dict = {e.split("=")[0]: e.split("=", 1)[1] for e in call_args.env}
+        assert "ARCHIVE_URL" in env_dict
+        assert archive_key in env_dict["ARCHIVE_URL"]
 
     async def test_run_job_nonzero_exit(
         self,
