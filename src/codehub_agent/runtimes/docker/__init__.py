@@ -22,6 +22,13 @@ class DockerRuntime:
         self.jobs = JobRunner(self._config, self._naming)
         self.storage = StorageManager(self._config, self._naming, self._s3)
 
+    def get_archive_key(self, workspace_id: str, op_id: str) -> str:
+        """Get the S3 key for an archive.
+
+        Public method to avoid direct access to _naming.
+        """
+        return self._naming.archive_s3_key(workspace_id, op_id)
+
 
 __all__ = [
     "DockerRuntime",

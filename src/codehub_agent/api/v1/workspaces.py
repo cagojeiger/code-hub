@@ -277,7 +277,7 @@ async def archive(
 ) -> ArchiveResponse:
     """Archive workspace to S3."""
     await runtime.jobs.run_archive(workspace_id, request.op_id)
-    archive_key = runtime._naming.archive_s3_key(workspace_id, request.op_id)
+    archive_key = runtime.get_archive_key(workspace_id, request.op_id)
     return ArchiveResponse(
         status="archived",
         workspace_id=workspace_id,
