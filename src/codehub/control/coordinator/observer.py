@@ -1,9 +1,9 @@
 """Observer Coordinator - 리소스 관측 → conditions DB 저장.
 
 Algorithm:
-1. 3개 API (containers, volumes, archives) 병렬 호출 with timeout
-2. 하나라도 실패 → reconcile skip (상태 일관성 보장)
-3. 전체 성공 → DB 기준 모든 workspace 업데이트
+1. WorkspaceRuntime.observe() 호출 (Agent가 3개 리소스 통합)
+2. 실패 → reconcile skip (상태 일관성 보장)
+3. 성공 → DB 기준 모든 workspace 업데이트
    - 리소스 있음 → conditions에 상태 기록
    - 리소스 없음 → null로 덮어씀 (삭제 감지 위해 필수)
 """
@@ -13,20 +13,20 @@ import json
 import logging
 import time
 from datetime import UTC, datetime
-from typing import Coroutine
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from codehub.app.config import get_settings
 from codehub.app.metrics.collector import (
-    OBSERVER_API_DURATION,
     OBSERVER_ARCHIVES,
     OBSERVER_CONTAINERS,
     OBSERVER_OBSERVE_DURATION,
     OBSERVER_STAGE_DURATION,
     OBSERVER_VOLUMES,
     OBSERVER_WORKSPACES,
+    RUNTIME_OBSERVE_DURATION,
+    WORKSPACES_BY_STATE,
 )
 from codehub.control.coordinator.base import (
     ChannelSubscriber,
@@ -34,72 +34,13 @@ from codehub.control.coordinator.base import (
     CoordinatorType,
     LeaderElection,
 )
-from codehub.core.interfaces.instance import ContainerInfo, InstanceController
-from codehub.core.interfaces.storage import ArchiveInfo, StorageProvider, VolumeInfo
+from codehub.core.interfaces.runtime import WorkspaceRuntime, WorkspaceState
 from codehub.core.logging_schema import LogEvent
 from codehub.core.models import Workspace
 
 logger = logging.getLogger(__name__)
 _settings = get_settings()
 _logging_config = _settings.logging
-
-
-class BulkObserver:
-    """3개 API 병렬 호출로 리소스 관측."""
-
-    def __init__(self, ic: InstanceController, sp: StorageProvider) -> None:
-        self._ic = ic
-        self._sp = sp
-        self._prefix = _settings.runtime.resource_prefix
-        self._timeout_s = _settings.observer.timeout_s
-
-    async def _safe[T](self, coro: Coroutine[None, None, list[T]], name: str) -> list[T] | None:
-        start = time.monotonic()
-        try:
-            result = await asyncio.wait_for(coro, timeout=self._timeout_s)
-            OBSERVER_API_DURATION.labels(api=name).observe(time.monotonic() - start)
-            return result
-        except asyncio.TimeoutError:
-            OBSERVER_API_DURATION.labels(api=name).observe(time.monotonic() - start)
-            logger.warning(
-                "Operation timeout",
-                extra={
-                    "event": LogEvent.OPERATION_TIMEOUT,
-                    "operation": name,
-                    "timeout_s": self._timeout_s,
-                },
-            )
-            return None
-        except Exception as exc:
-            OBSERVER_API_DURATION.labels(api=name).observe(time.monotonic() - start)
-            logger.exception(
-                "Operation failed",
-                extra={
-                    "event": LogEvent.OPERATION_FAILED,
-                    "operation": name,
-                    "error_type": type(exc).__name__,
-                    "error": str(exc),
-                },
-            )
-            return None
-
-    async def observe_all(self) -> tuple[
-        dict[str, ContainerInfo] | None,
-        dict[str, VolumeInfo] | None,
-        dict[str, ArchiveInfo] | None,
-    ]:
-        results = await asyncio.gather(
-            self._safe(self._ic.list_all(self._prefix), "containers"),
-            self._safe(self._sp.list_volumes(self._prefix), "volumes"),
-            self._safe(self._sp.list_archives(self._prefix), "archives"),
-        )
-
-        c_list, v_list, a_list = results
-        containers = {c.workspace_id: c for c in c_list} if c_list is not None else None
-        volumes = {v.workspace_id: v for v in v_list} if v_list is not None else None
-        archives = {a.workspace_id: a for a in a_list} if a_list is not None else None
-
-        return containers, volumes, archives
 
 
 class ObserverCoordinator(CoordinatorBase):
@@ -113,16 +54,55 @@ class ObserverCoordinator(CoordinatorBase):
         conn: AsyncConnection,
         leader: LeaderElection,
         subscriber: ChannelSubscriber,
-        ic: InstanceController,
-        sp: StorageProvider,
+        runtime: WorkspaceRuntime,
     ) -> None:
         super().__init__(conn, leader, subscriber)
-        self._observer = BulkObserver(ic, sp)
+        self._runtime = runtime
+        self._timeout_s = _settings.observer.timeout_s
         # Track previous state to log only on changes (reduces noise)
         self._prev_state: tuple[int, int, int, int] | None = None
         self._last_heartbeat: float = 0.0
         # Track previous container IDs to detect disappeared containers
         self._prev_container_ids: set[str] | None = None
+
+    async def _observe_with_timeout(self) -> list[WorkspaceState] | None:
+        """Call runtime.observe() with timeout."""
+        start = time.monotonic()
+        try:
+            result = await asyncio.wait_for(
+                self._runtime.observe(), timeout=self._timeout_s
+            )
+            duration = time.monotonic() - start
+            OBSERVER_OBSERVE_DURATION.observe(duration)  # Legacy
+            RUNTIME_OBSERVE_DURATION.observe(duration)   # New
+            return result
+        except asyncio.TimeoutError:
+            duration = time.monotonic() - start
+            OBSERVER_OBSERVE_DURATION.observe(duration)  # Legacy
+            RUNTIME_OBSERVE_DURATION.observe(duration)   # New
+            logger.warning(
+                "Observe timeout",
+                extra={
+                    "event": LogEvent.OPERATION_TIMEOUT,
+                    "operation": "observe",
+                    "timeout_s": self._timeout_s,
+                },
+            )
+            return None
+        except Exception as exc:
+            duration = time.monotonic() - start
+            OBSERVER_OBSERVE_DURATION.observe(duration)  # Legacy
+            RUNTIME_OBSERVE_DURATION.observe(duration)   # New
+            logger.exception(
+                "Observe failed",
+                extra={
+                    "event": LogEvent.OPERATION_FAILED,
+                    "operation": "observe",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
+            )
+            return None
 
     async def reconcile(self) -> None:
         reconcile_start = time.monotonic()
@@ -134,21 +114,22 @@ class ObserverCoordinator(CoordinatorBase):
         if not ws_ids:
             return
 
-        # Stage 2: Observe resources (parallel API calls)
-        observe_start = time.monotonic()
-        containers, volumes, archives = await self._observer.observe_all()
-        OBSERVER_OBSERVE_DURATION.observe(time.monotonic() - observe_start)
-
-        # 하나라도 실패 → skip (상태 일관성 보장, 다음 reconcile에서 재시도)
-        if any(x is None for x in [containers, volumes, archives]):
+        # Stage 2: Observe resources via WorkspaceRuntime (single API call)
+        workspace_states = await self._observe_with_timeout()
+        if workspace_states is None:
             logger.warning(
                 "Observation failed, skipping reconcile",
                 extra={"event": LogEvent.OPERATION_FAILED},
             )
             return
 
+        # Index workspace states by workspace_id
+        states_map: dict[str, WorkspaceState] = {
+            ws.workspace_id: ws for ws in workspace_states
+        }
+
         # Orphan 경고 (DB에 없는데 리소스 있음 → GC 대상)
-        observed_ws_ids = set(containers) | set(volumes) | set(archives)
+        observed_ws_ids = set(states_map.keys())
         for ws_id in observed_ws_ids - ws_ids:
             logger.warning(
                 "Orphan detected",
@@ -156,7 +137,10 @@ class ObserverCoordinator(CoordinatorBase):
             )
 
         # Detect disappeared containers (critical for OOM/crash diagnosis)
-        current_container_ids = set(containers.keys())
+        current_container_ids = {
+            ws_id for ws_id, state in states_map.items()
+            if state.container and state.container.running
+        }
         if self._prev_container_ids is not None:
             disappeared = self._prev_container_ids - current_container_ids
             for ws_id in disappeared:
@@ -171,22 +155,50 @@ class ObserverCoordinator(CoordinatorBase):
                     )
         self._prev_container_ids = current_container_ids
 
+        # Count resources for metrics (legacy)
+        container_count = sum(
+            1 for state in workspace_states if state.container is not None
+        )
+        volume_count = sum(
+            1 for state in workspace_states if state.volume is not None
+        )
+        archive_count = sum(
+            1 for state in workspace_states if state.archive is not None
+        )
+
+        # Calculate workspace states for new metrics
+        state_counts = {
+            "running": 0,
+            "unhealthy": 0,
+            "stopped": 0,
+            "archived": 0,
+            "provisioning": 0,
+            "unknown": 0,
+        }
+        for state in workspace_states:
+            ws_state = self._determine_workspace_state(state)
+            state_counts[ws_state] += 1
+
         # Stage 3: Bulk update conditions in DB
         update_start = time.monotonic()
-        count = await self._bulk_update_conditions(ws_ids, containers, volumes, archives)
+        count = await self._bulk_update_conditions_v2(ws_ids, states_map)
         await self._conn.commit()
         OBSERVER_STAGE_DURATION.labels(stage="update").observe(time.monotonic() - update_start)
 
-        # Update metrics
+        # Update legacy metrics (deprecated)
         OBSERVER_WORKSPACES.set(count)
-        OBSERVER_CONTAINERS.set(len(containers))
-        OBSERVER_VOLUMES.set(len(volumes))
-        OBSERVER_ARCHIVES.set(len(archives))
+        OBSERVER_CONTAINERS.set(container_count)
+        OBSERVER_VOLUMES.set(volume_count)
+        OBSERVER_ARCHIVES.set(archive_count)
+
+        # Update new workspace-centric metrics
+        for state_name, state_count in state_counts.items():
+            WORKSPACES_BY_STATE.labels(state=state_name).set(state_count)
 
         duration_ms = (time.monotonic() - reconcile_start) * 1000
 
         # Log only when state changes OR 1-hour heartbeat (reduces noise from ~86k/day)
-        current_state = (count, len(containers), len(volumes), len(archives))
+        current_state = (count, container_count, volume_count, archive_count)
         now = time.monotonic()
 
         # 1시간마다 heartbeat (변화 없어도 "살아있음" 확인)
@@ -196,9 +208,9 @@ class ObserverCoordinator(CoordinatorBase):
                 extra={
                     "event": LogEvent.OBSERVATION_COMPLETE,
                     "workspaces": count,
-                    "containers": len(containers),
-                    "volumes": len(volumes),
-                    "archives": len(archives),
+                    "containers": container_count,
+                    "volumes": volume_count,
+                    "archives": archive_count,
                     "duration_ms": duration_ms,
                 },
             )
@@ -210,9 +222,9 @@ class ObserverCoordinator(CoordinatorBase):
                 extra={
                     "event": LogEvent.OBSERVATION_COMPLETE,
                     "workspaces": count,
-                    "containers": len(containers),
-                    "volumes": len(volumes),
-                    "archives": len(archives),
+                    "containers": container_count,
+                    "volumes": volume_count,
+                    "archives": archive_count,
                     "duration_ms": duration_ms,
                 },
             )
@@ -236,25 +248,39 @@ class ObserverCoordinator(CoordinatorBase):
         )
         return {str(row[0]) for row in result.fetchall()}
 
-    async def _bulk_update_conditions(
+    async def _bulk_update_conditions_v2(
         self,
         ws_ids: set[str],
-        containers: dict[str, ContainerInfo],
-        volumes: dict[str, VolumeInfo],
-        archives: dict[str, ArchiveInfo],
+        states_map: dict[str, WorkspaceState],
     ) -> int:
-        """O(1) round-trip bulk UPDATE."""
+        """O(1) round-trip bulk UPDATE using WorkspaceState."""
         now = datetime.now(UTC)
         ws_id_list = list(ws_ids)
 
         conditions_list = []
         for ws_id in ws_id_list:
-            c, v, a = containers.get(ws_id), volumes.get(ws_id), archives.get(ws_id)
-            conditions_list.append({
-                "container": c.model_dump() if c else None,
-                "volume": v.model_dump() if v else None,
-                "archive": a.model_dump() if a else None,
-            })
+            state = states_map.get(ws_id)
+            if state:
+                conditions_list.append({
+                    "container": (
+                        {"running": state.container.running, "healthy": state.container.healthy}
+                        if state.container else None
+                    ),
+                    "volume": (
+                        {"exists": state.volume.exists}
+                        if state.volume else None
+                    ),
+                    "archive": (
+                        {"exists": state.archive.exists, "archive_key": state.archive.archive_key}
+                        if state.archive else None
+                    ),
+                })
+            else:
+                conditions_list.append({
+                    "container": None,
+                    "volume": None,
+                    "archive": None,
+                })
 
         result = await self._conn.execute(
             text("""
@@ -275,3 +301,36 @@ class ObserverCoordinator(CoordinatorBase):
             },
         )
         return len(result.fetchall())
+
+    def _determine_workspace_state(self, state: WorkspaceState) -> str:
+        """Determine workspace state from WorkspaceState for metrics.
+
+        States:
+          - running: container running and healthy
+          - unhealthy: container running but not healthy
+          - stopped: container not running, volume exists
+          - archived: no container, no volume, archive exists
+          - provisioning: volume exists, no container
+          - unknown: no resources detected
+        """
+        has_container = state.container is not None
+        has_volume = state.volume is not None and state.volume.exists
+        has_archive = state.archive is not None and state.archive.exists
+
+        if has_container:
+            if state.container.running:
+                if state.container.healthy:
+                    return "running"
+                return "unhealthy"
+            # Container exists but not running
+            if has_volume:
+                return "stopped"
+
+        if has_volume:
+            # Volume exists but no container
+            return "provisioning"
+
+        if has_archive:
+            return "archived"
+
+        return "unknown"

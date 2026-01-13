@@ -22,7 +22,7 @@ class ResourceNaming:
         return f"{self._prefix}{workspace_id}-home"
 
     def archive_s3_key(self, workspace_id: str, op_id: str) -> str:
-        return f"{self._cluster_id}/{workspace_id}/{op_id}/home.tar.zst"
+        return f"{self._prefix}{workspace_id}/{op_id}/home.tar.zst"
 
     def archive_s3_url(self, workspace_id: str, op_id: str) -> str:
         key = self.archive_s3_key(workspace_id, op_id)

@@ -16,7 +16,7 @@ from codehub.core.errors import (
     UpstreamUnavailableError,
     WorkspaceNotFoundError,
 )
-from codehub.core.interfaces import InstanceController
+from codehub.core.interfaces.runtime import WorkspaceRuntime
 from codehub.infra import get_session
 
 from .activity import get_activity_buffer
@@ -31,12 +31,12 @@ router = APIRouter(tags=["proxy"])
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 
-_instance_controller: InstanceController | None = None
+_runtime: WorkspaceRuntime | None = None
 
 
-def get_instance_controller() -> InstanceController:
-    global _instance_controller
-    if _instance_controller is None:
+def get_runtime() -> WorkspaceRuntime:
+    global _runtime
+    if _runtime is None:
         settings = get_settings()
         config = AgentConfig(
             endpoint=settings.agent.endpoint,
@@ -44,11 +44,11 @@ def get_instance_controller() -> InstanceController:
             timeout=settings.agent.timeout,
             job_timeout=settings.agent.job_timeout,
         )
-        _instance_controller = AgentClient(config)
-    return _instance_controller
+        _runtime = AgentClient(config)
+    return _runtime
 
 
-Instance = Annotated[InstanceController, Depends(get_instance_controller)]
+Runtime = Annotated[WorkspaceRuntime, Depends(get_runtime)]
 
 
 @router.get("/w/{workspace_id}")
@@ -70,7 +70,7 @@ async def proxy_http(
     path: str,
     request: Request,
     db: DbSession,
-    instance: Instance,
+    runtime: Runtime,
     session: Annotated[str | None, Cookie(alias="session")] = None,
 ) -> StreamingResponse | RedirectResponse:
     """Proxy HTTP requests to workspace container."""
@@ -83,7 +83,7 @@ async def proxy_http(
 
     _activity_buffer.record(workspace_id)
 
-    upstream = await instance.resolve_upstream(workspace_id)
+    upstream = await runtime.get_upstream(workspace_id)
     if upstream is None:
         raise UpstreamUnavailableError()
 
@@ -96,7 +96,7 @@ async def proxy_websocket(
     workspace_id: str,
     path: str,
     db: DbSession,
-    instance: Instance,
+    runtime: Runtime,
 ) -> None:
     """Proxy WebSocket connections to workspace container."""
     session_cookie = websocket.cookies.get("session")
@@ -123,7 +123,7 @@ async def proxy_websocket(
 
     _activity_buffer.record(workspace_id)
 
-    upstream = await instance.resolve_upstream(workspace_id)
+    upstream = await runtime.get_upstream(workspace_id)
     if upstream is None:
         await websocket.close(code=1011, reason="Upstream unavailable")
         return

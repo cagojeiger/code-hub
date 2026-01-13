@@ -5,6 +5,7 @@ from codehub_agent.api.v1.instances import router as instances_router
 from codehub_agent.api.v1.jobs import router as jobs_router
 from codehub_agent.api.v1.storage import router as storage_router
 from codehub_agent.api.v1.volumes import router as volumes_router
+from codehub_agent.api.v1.workspaces import router as workspaces_router
 
 __all__ = [
     "health_router",
@@ -12,4 +13,5 @@ __all__ = [
     "jobs_router",
     "storage_router",
     "volumes_router",
+    "workspaces_router",
 ]

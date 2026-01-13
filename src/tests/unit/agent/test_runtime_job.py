@@ -139,7 +139,7 @@ class TestJobRunner:
         """Test archive URL is correctly formatted."""
         url = mock_naming.archive_s3_url("ws1", "op123")
 
-        assert url == "s3://test-bucket/test-cluster/ws1/op123/home.tar.zst"
+        assert url == "s3://test-bucket/codehub-ws1/op123/home.tar.zst"
 
     async def test_volume_name_format(
         self,

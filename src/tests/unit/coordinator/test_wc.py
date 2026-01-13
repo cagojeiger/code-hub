@@ -23,34 +23,21 @@ from codehub.core.domain.workspace import (
     Operation,
     Phase,
 )
-from codehub.core.interfaces.instance import InstanceController
-from codehub.core.interfaces.storage import StorageProvider
+from codehub.core.interfaces.runtime import WorkspaceRuntime
 from codehub.core.models import Workspace
 
 
 @pytest.fixture
-def mock_ic() -> AsyncMock:
-    """Mock InstanceController."""
-    ic = AsyncMock(spec=InstanceController)
-    ic.start = AsyncMock()
-    ic.delete = AsyncMock()
-    ic.is_running = AsyncMock(return_value=False)
-    ic.list_all = AsyncMock(return_value=[])
-    return ic
-
-
-@pytest.fixture
-def mock_sp() -> AsyncMock:
-    """Mock StorageProvider."""
-    sp = AsyncMock(spec=StorageProvider)
-    sp.provision = AsyncMock()
-    sp.restore = AsyncMock(return_value="ws-1/op-1/home.tar.zst")
-    sp.archive = AsyncMock(return_value="ws-1/op-1/home.tar.zst")
-    sp.delete_volume = AsyncMock()
-    sp.create_empty_archive = AsyncMock(return_value="ws-1/op-1/home.tar.zst")
-    sp.list_volumes = AsyncMock(return_value=[])
-    sp.list_archives = AsyncMock(return_value=[])
-    return sp
+def mock_runtime() -> AsyncMock:
+    """Mock WorkspaceRuntime."""
+    runtime = AsyncMock(spec=WorkspaceRuntime)
+    runtime.provision = AsyncMock()
+    runtime.start = AsyncMock()
+    runtime.stop = AsyncMock()
+    runtime.delete = AsyncMock()
+    runtime.archive = AsyncMock(return_value="ws-1/op-1/home.tar.zst")
+    runtime.restore = AsyncMock()
+    return runtime
 
 
 @pytest.fixture
@@ -324,56 +311,50 @@ class TestExecute:
         mock_conn: AsyncMock,
         mock_leader: AsyncMock,
         mock_subscriber: AsyncMock,
-        mock_ic: AsyncMock,
-        mock_sp: AsyncMock,
+        mock_runtime: AsyncMock,
     ) -> WorkspaceController:
-        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
+        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_runtime)
 
-    async def test_provisioning(self, wc: WorkspaceController, mock_sp: AsyncMock):
-        """PROVISIONING → sp.provision()."""
+    async def test_provisioning(self, wc: WorkspaceController, mock_runtime: AsyncMock):
+        """PROVISIONING → runtime.provision()."""
         ws = make_workspace()
         action = PlanAction(operation=Operation.PROVISIONING, phase=Phase.PENDING)
 
         await wc._execute(ws, action)
 
-        mock_sp.provision.assert_called_once_with(ws.id)
+        mock_runtime.provision.assert_called_once_with(ws.id)
 
-    async def test_starting(self, wc: WorkspaceController, mock_ic: AsyncMock):
-        """STARTING → ic.start()."""
+    async def test_starting(self, wc: WorkspaceController, mock_runtime: AsyncMock):
+        """STARTING → runtime.start()."""
         ws = make_workspace()
         action = PlanAction(operation=Operation.STARTING, phase=Phase.STANDBY)
 
         await wc._execute(ws, action)
 
-        mock_ic.start.assert_called_once_with(ws.id, ws.image_ref)
+        mock_runtime.start.assert_called_once_with(ws.id, ws.image_ref)
 
-    async def test_stopping(self, wc: WorkspaceController, mock_ic: AsyncMock):
-        """STOPPING → ic.delete()."""
+    async def test_stopping(self, wc: WorkspaceController, mock_runtime: AsyncMock):
+        """STOPPING → runtime.stop()."""
         ws = make_workspace()
         action = PlanAction(operation=Operation.STOPPING, phase=Phase.RUNNING)
 
         await wc._execute(ws, action)
 
-        mock_ic.delete.assert_called_once_with(ws.id)
+        mock_runtime.stop.assert_called_once_with(ws.id)
 
-    async def test_archiving(
-        self, wc: WorkspaceController, mock_ic: AsyncMock, mock_sp: AsyncMock
-    ):
-        """ARCHIVING → sp.archive() + ic.delete() + sp.delete_volume()."""
+    async def test_archiving(self, wc: WorkspaceController, mock_runtime: AsyncMock):
+        """ARCHIVING → runtime.archive() + runtime.delete()."""
         ws = make_workspace()
         action = PlanAction(operation=Operation.ARCHIVING, phase=Phase.STANDBY, op_id="op-1")
 
         await wc._execute(ws, action)
 
-        mock_sp.archive.assert_called_once_with(ws.id, "op-1")
-        mock_ic.delete.assert_called_once_with(ws.id)  # Exited 컨테이너 정리
-        mock_sp.delete_volume.assert_called_once_with(ws.id)
+        mock_runtime.archive.assert_called_once_with(ws.id, "op-1")
+        mock_runtime.delete.assert_called_once_with(ws.id)
         assert action.archive_key == "ws-1/op-1/home.tar.zst"
 
-    async def test_archiving_call_order(
-        self, wc: WorkspaceController, mock_ic: AsyncMock, mock_sp: AsyncMock
-    ):
-        """ARCHIVING: archive → delete → delete_volume 순서 확인."""
+    async def test_archiving_call_order(self, wc: WorkspaceController, mock_runtime: AsyncMock):
+        """ARCHIVING: archive → delete 순서 확인."""
         call_order: list[str] = []
 
         async def track_archive(*args):
@@ -383,31 +364,27 @@ class TestExecute:
         async def track_delete(*args):
             call_order.append("delete")
 
-        async def track_delete_volume(*args):
-            call_order.append("delete_volume")
-
-        mock_sp.archive.side_effect = track_archive
-        mock_ic.delete.side_effect = track_delete
-        mock_sp.delete_volume.side_effect = track_delete_volume
+        mock_runtime.archive.side_effect = track_archive
+        mock_runtime.delete.side_effect = track_delete
 
         ws = make_workspace()
         action = PlanAction(operation=Operation.ARCHIVING, phase=Phase.STANDBY, op_id="op-1")
 
         await wc._execute(ws, action)
 
-        assert call_order == ["archive", "delete", "delete_volume"]
+        assert call_order == ["archive", "delete"]
 
-    async def test_restoring(self, wc: WorkspaceController, mock_sp: AsyncMock):
-        """RESTORING → sp.restore()."""
+    async def test_restoring(self, wc: WorkspaceController, mock_runtime: AsyncMock):
+        """RESTORING → runtime.restore()."""
         ws = make_workspace(archive_key="ws-1/op-1/home.tar.zst")
         action = PlanAction(operation=Operation.RESTORING, phase=Phase.ARCHIVED)
 
         await wc._execute(ws, action)
 
-        mock_sp.restore.assert_called_once_with(ws.id, ws.archive_key)
+        mock_runtime.restore.assert_called_once_with(ws.id, ws.archive_key)
 
-    async def test_create_empty_archive(self, wc: WorkspaceController, mock_sp: AsyncMock):
-        """CREATE_EMPTY_ARCHIVE → sp.create_empty_archive()."""
+    async def test_create_empty_archive(self, wc: WorkspaceController, mock_runtime: AsyncMock):
+        """CREATE_EMPTY_ARCHIVE → runtime.archive()."""
         ws = make_workspace()
         action = PlanAction(
             operation=Operation.CREATE_EMPTY_ARCHIVE, phase=Phase.PENDING, op_id="op-1"
@@ -415,18 +392,17 @@ class TestExecute:
 
         await wc._execute(ws, action)
 
-        mock_sp.create_empty_archive.assert_called_once_with(ws.id, "op-1")
+        mock_runtime.archive.assert_called_once_with(ws.id, "op-1")
         assert action.archive_key == "ws-1/op-1/home.tar.zst"
 
-    async def test_deleting(self, wc: WorkspaceController, mock_ic: AsyncMock, mock_sp: AsyncMock):
-        """DELETING → ic.delete() + sp.delete_volume()."""
+    async def test_deleting(self, wc: WorkspaceController, mock_runtime: AsyncMock):
+        """DELETING → runtime.delete()."""
         ws = make_workspace()
         action = PlanAction(operation=Operation.DELETING, phase=Phase.DELETING)
 
         await wc._execute(ws, action)
 
-        mock_ic.delete.assert_called_once_with(ws.id)
-        mock_sp.delete_volume.assert_called_once_with(ws.id)
+        mock_runtime.delete.assert_called_once_with(ws.id)
 
 
 class TestPhaseFromDesired:
@@ -448,33 +424,15 @@ class TestPhaseFromDesired:
 class TestTickParallel:
     """tick() 병렬 처리 테스트."""
 
-    @pytest.fixture
-    def mock_ic(self) -> AsyncMock:
-        ic = AsyncMock(spec=InstanceController)
-        ic.start = AsyncMock()
-        ic.delete = AsyncMock()
-        return ic
-
-    @pytest.fixture
-    def mock_sp(self) -> AsyncMock:
-        sp = AsyncMock(spec=StorageProvider)
-        sp.provision = AsyncMock()
-        sp.restore = AsyncMock()
-        sp.archive = AsyncMock(return_value="ws-1/op-1/home.tar.zst")
-        sp.create_empty_archive = AsyncMock(return_value="ws-1/op-1/home.tar.zst")
-        sp.delete_volume = AsyncMock()
-        return sp
-
     async def test_multiple_workspaces_parallel(
         self,
         mock_conn: AsyncMock,
         mock_leader: AsyncMock,
         mock_subscriber: AsyncMock,
-        mock_ic: AsyncMock,
-        mock_sp: AsyncMock,
+        mock_runtime: AsyncMock,
     ):
         """여러 ws 동시 처리."""
-        wc = WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
+        wc = WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_runtime)
 
         # _load_for_reconcile가 빈 리스트 반환하도록 mock
         wc._load_for_reconcile = AsyncMock(return_value=[])
@@ -488,11 +446,10 @@ class TestTickParallel:
         mock_conn: AsyncMock,
         mock_leader: AsyncMock,
         mock_subscriber: AsyncMock,
-        mock_ic: AsyncMock,
-        mock_sp: AsyncMock,
+        mock_runtime: AsyncMock,
     ):
         """한 ws Execute 실패해도 나머지 계속 처리됨."""
-        wc = WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
+        wc = WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_runtime)
 
         # PENDING -> RUNNING 워크스페이스 (PROVISIONING 필요)
         ws1 = make_workspace(id="ws-1", phase=Phase.PENDING, desired_state=DesiredState.RUNNING)
@@ -533,10 +490,9 @@ class TestCasUpdate:
         mock_conn: AsyncMock,
         mock_leader: AsyncMock,
         mock_subscriber: AsyncMock,
-        mock_ic: AsyncMock,
-        mock_sp: AsyncMock,
+        mock_runtime: AsyncMock,
     ) -> WorkspaceController:
-        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
+        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_runtime)
 
     async def test_cas_success_when_operation_matches(
         self,
@@ -622,10 +578,9 @@ class TestTickLogging:
         mock_conn: AsyncMock,
         mock_leader: AsyncMock,
         mock_subscriber: AsyncMock,
-        mock_ic: AsyncMock,
-        mock_sp: AsyncMock,
+        mock_runtime: AsyncMock,
     ) -> WorkspaceController:
-        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_ic, mock_sp)
+        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_runtime)
 
     async def test_no_log_when_state_unchanged(
         self,

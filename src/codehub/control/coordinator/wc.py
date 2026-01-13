@@ -45,8 +45,7 @@ from codehub.core.domain.workspace import (
     Operation,
     Phase,
 )
-from codehub.core.interfaces.instance import InstanceController
-from codehub.core.interfaces.storage import StorageProvider
+from codehub.core.interfaces.runtime import WorkspaceRuntime
 from codehub.core.models import Workspace
 from codehub.core.logging_schema import LogEvent
 from codehub.core.retryable import classify_error, with_retry
@@ -81,12 +80,10 @@ class WorkspaceController(CoordinatorBase):
         conn: AsyncConnection,
         leader: LeaderElection,
         subscriber: ChannelSubscriber,
-        ic: InstanceController,
-        sp: StorageProvider,
+        runtime: WorkspaceRuntime,
     ) -> None:
         super().__init__(conn, leader, subscriber)
-        self._ic = ic
-        self._sp = sp
+        self._runtime = runtime
         # Track previous state to log only on changes (reduces noise)
         self._prev_state: tuple[int, int] | None = None
         self._last_heartbeat: float = 0.0
@@ -284,44 +281,41 @@ class WorkspaceController(CoordinatorBase):
         """Actuator 호출.
 
         계약 #8: 순서 보장
-        - ARCHIVING: archive() → delete_volume()
-        - DELETING: delete() → delete_volume()
+        - ARCHIVING: archive() → delete()
+        - DELETING: delete()
         """
         start = time.perf_counter()
         try:
             match action.operation:
                 case Operation.PROVISIONING:
-                    await self._sp.provision(ws.id)
+                    await self._runtime.provision(ws.id)
 
                 case Operation.RESTORING:
                     if ws.archive_key:
-                        await self._sp.restore(ws.id, ws.archive_key)
+                        await self._runtime.restore(ws.id, ws.archive_key)
                         action.restore_marker = ws.archive_key  # 완료 확인용 marker
 
                 case Operation.STARTING:
-                    await self._ic.start(ws.id, ws.image_ref)
+                    await self._runtime.start(ws.id, ws.image_ref)
 
                 case Operation.STOPPING:
-                    await self._ic.delete(ws.id)
+                    await self._runtime.stop(ws.id)
 
                 case Operation.ARCHIVING:
-                    # 3단계 operation: archive → delete container → delete_volume
-                    # 컨테이너 삭제 추가: Exited 컨테이너도 볼륨 참조하므로 먼저 삭제 필요
+                    # 2단계 operation: archive → delete (Agent가 volume 정리 포함)
                     op_id = action.op_id or ws.op_id or str(uuid4())
-                    archive_key = await self._sp.archive(ws.id, op_id)
+                    archive_key = await self._runtime.archive(ws.id, op_id)
                     action.archive_key = archive_key
-                    await self._ic.delete(ws.id)  # Exited 컨테이너 정리 (idempotent)
-                    await self._sp.delete_volume(ws.id)
+                    await self._runtime.delete(ws.id)  # Container + Volume 삭제
 
                 case Operation.CREATE_EMPTY_ARCHIVE:
                     op_id = action.op_id or ws.op_id or str(uuid4())
-                    archive_key = await self._sp.create_empty_archive(ws.id, op_id)
+                    archive_key = await self._runtime.archive(ws.id, op_id)
                     action.archive_key = archive_key
 
                 case Operation.DELETING:
-                    # 2단계 operation: delete container → delete_volume (계약 #8)
-                    await self._ic.delete(ws.id)
-                    await self._sp.delete_volume(ws.id)
+                    # Container + Volume 삭제 (Agent가 처리)
+                    await self._runtime.delete(ws.id)
         finally:
             duration = time.perf_counter() - start
             WC_OPERATION_DURATION.labels(operation=action.operation.name).observe(duration)

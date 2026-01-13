@@ -8,6 +8,7 @@ import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from codehub_agent import __version__
 from codehub_agent.api.v1 import (
@@ -16,10 +17,14 @@ from codehub_agent.api.v1 import (
     jobs_router,
     storage_router,
     volumes_router,
+    workspaces_router,
 )
 from codehub_agent.api.errors import AgentError
 from codehub_agent.config import get_agent_config
 from codehub_agent.infra import close_docker
+
+# Import metrics to ensure they are registered
+import codehub_agent.metrics  # noqa: F401
 
 # Configure logging
 logging.basicConfig(
@@ -78,8 +83,8 @@ async def api_key_middleware(
     """Validate API key for non-health endpoints."""
     config = get_agent_config()
 
-    # Skip auth for health endpoint
-    if request.url.path == "/health":
+    # Skip auth for health and metrics endpoints
+    if request.url.path in ("/health", "/metrics"):
         return await call_next(request)
 
     # If API key is configured, validate it
@@ -100,11 +105,22 @@ async def api_key_middleware(
 # /health endpoint without prefix (for health checks)
 app.include_router(health_router)
 
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics() -> Response:
+    """Expose Prometheus metrics."""
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST,
+    )
+
+
 # API v1 endpoints with /api/v1 prefix
 app.include_router(instances_router, prefix="/api/v1")
 app.include_router(volumes_router, prefix="/api/v1")
 app.include_router(jobs_router, prefix="/api/v1")
 app.include_router(storage_router, prefix="/api/v1")
+app.include_router(workspaces_router, prefix="/api/v1")
 
 
 def main() -> None:

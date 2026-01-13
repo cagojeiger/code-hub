@@ -6,6 +6,10 @@ Coordinator 분류:
 
 Process Tasks:
 - flush_activity_buffer → 각 워커 프로세스에서 독립 실행
+
+Architecture:
+- WorkspaceRuntime: 유일한 런타임 인터페이스 (Domain-Driven Design)
+- AgentClient: WorkspaceRuntime 구현체 (Agent 서비스와 HTTP 통신)
 """
 
 import asyncio
@@ -68,8 +72,12 @@ async def run_control_plane(engine: AsyncEngine, redis_client: redis.Redis) -> N
     Args:
         engine: SQLAlchemy AsyncEngine
         redis_client: Redis client
+
+    Architecture:
+        - WorkspaceRuntime: 유일한 런타임 인터페이스
+        - AgentClient: WorkspaceRuntime 구현체
     """
-    # Agent client (replaces DockerInstanceController + S3StorageProvider)
+    # WorkspaceRuntime (Domain-Driven Single Interface)
     settings = get_settings()
     agent_config = AgentConfig(
         endpoint=settings.agent.endpoint,
@@ -77,9 +85,7 @@ async def run_control_plane(engine: AsyncEngine, redis_client: redis.Redis) -> N
         timeout=settings.agent.timeout,
         job_timeout=settings.agent.job_timeout,
     )
-    agent = AgentClient(agent_config)
-    ic = agent  # InstanceController interface
-    sp = agent  # StorageProvider interface
+    runtime = AgentClient(agent_config)  # WorkspaceRuntime 구현체
 
     # Redis wrappers
     publisher = ChannelPublisher(redis_client)
@@ -88,11 +94,11 @@ async def run_control_plane(engine: AsyncEngine, redis_client: redis.Redis) -> N
     try:
         await asyncio.gather(
             # Coordinators (리더십 필요)
-            _run_coordinator(engine, redis_client, ObserverCoordinator, ic, sp),
-            _run_coordinator(engine, redis_client, WorkspaceController, ic, sp),
+            _run_coordinator(engine, redis_client, ObserverCoordinator, runtime),
+            _run_coordinator(engine, redis_client, WorkspaceController, runtime),
             _run_event_listener(redis_client),
             _run_coordinator(
-                engine, redis_client, Scheduler, activity_store, publisher, sp, ic
+                engine, redis_client, Scheduler, activity_store, publisher, runtime
             ),
 
             # Process Tasks (리더십 불필요 - 각 프로세스에서 독립 실행)
@@ -107,4 +113,4 @@ async def run_control_plane(engine: AsyncEngine, redis_client: redis.Redis) -> N
             extra={"event": LogEvent.APP_STOPPED, "error": str(e)},
         )
     finally:
-        await agent.close()
+        await runtime.close()
