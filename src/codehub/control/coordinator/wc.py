@@ -74,6 +74,7 @@ class WorkspaceController(CoordinatorBase):
 
     # Operation timeout from config
     OPERATION_TIMEOUT = _coordinator_config.operation_timeout
+    MAX_CONCURRENT = _coordinator_config.max_concurrent_executions
 
     def __init__(
         self,
@@ -87,6 +88,8 @@ class WorkspaceController(CoordinatorBase):
         # Track previous state to log only on changes (reduces noise)
         self._prev_state: tuple[int, int] | None = None
         self._last_heartbeat: float = 0.0
+        # Semaphore to limit concurrent external operations (Agent/Docker)
+        self._execute_semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
 
     async def reconcile(self) -> None:
         """Reconcile loop: Load → Judge → Plan → Execute → Persist.
@@ -133,9 +136,10 @@ class WorkspaceController(CoordinatorBase):
                 plan_ms = plan_duration * 1000
 
                 # Stage 3: Execute 병렬 (Docker/S3 - DB 미사용!)
+                # Semaphore limits concurrent operations (ADR-012 준수)
                 exec_start = time.monotonic()
                 results = await asyncio.gather(
-                    *[self._execute_one(ws, action) for ws, action in plans],
+                    *[self._execute_with_limit(ws, action) for ws, action in plans],
                     return_exceptions=False,  # 개별 예외 처리됨
                 )
                 exec_duration = time.monotonic() - exec_start
@@ -230,6 +234,17 @@ class WorkspaceController(CoordinatorBase):
         wc_planner.needs_execute()에 위임합니다.
         """
         return needs_execute(action, Operation(ws.operation))
+
+    async def _execute_with_limit(
+        self, ws: Workspace, action: PlanAction
+    ) -> tuple[Workspace, PlanAction]:
+        """Execute with semaphore to limit concurrent external operations.
+
+        Prevents overwhelming Agent/Docker API with too many concurrent requests.
+        MAX_CONCURRENT is configured via COORDINATOR_MAX_CONCURRENT_EXECUTIONS.
+        """
+        async with self._execute_semaphore:
+            return await self._execute_one(ws, action)
 
     async def _execute_one(
         self, ws: Workspace, action: PlanAction

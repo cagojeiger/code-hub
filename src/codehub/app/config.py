@@ -204,6 +204,7 @@ class CoordinatorConfig(BaseSettings):
 
     # WC specific
     operation_timeout: int = Field(default=600)  # seconds (10 minutes)
+    max_concurrent_executions: int = Field(default=20)  # concurrent external operations
 
     # TTL specific
     ttl_interval: float = Field(default=60.0)  # seconds (1 minute)
