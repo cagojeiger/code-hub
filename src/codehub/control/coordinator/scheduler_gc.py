@@ -95,8 +95,9 @@ class GCRunner:
         # 5. Archive GC: DB에서 보호해야 할 archive 목록 조회 후 run_gc 호출
         protected = await self._get_protected_archives()
         if protected is not None:
+            archive_keys, protected_workspaces = protected
             try:
-                result = await self._runtime.run_gc(protected)
+                result = await self._runtime.run_gc(archive_keys, protected_workspaces)
                 if result.deleted_count > 0:
                     logger.info(
                         "Deleted orphan archives",
@@ -114,20 +115,43 @@ class GCRunner:
                     extra={"event": LogEvent.OPERATION_FAILED, "error": str(e)},
                 )
 
-    async def _get_protected_archives(self) -> list[tuple[str, str]] | None:
-        """Query DB for protected archives (workspace_id, op_id pairs)."""
+    async def _get_protected_archives(
+        self,
+    ) -> tuple[list[str], list[tuple[str, str]]] | None:
+        """Query DB for protected archives.
+
+        Returns:
+            (archive_keys, protected_workspaces) or None on error
+            - archive_keys: archive_key column values (RESTORING target protection)
+            - protected_workspaces: (ws_id, op_id) tuples (ARCHIVING crash recovery)
+        """
         try:
-            result = await self._conn.execute(
+            # 1. archive_key 조회 (RESTORING 대상 보호)
+            result1 = await self._conn.execute(
+                text("""
+                    SELECT DISTINCT archive_key
+                    FROM workspaces
+                    WHERE archive_key IS NOT NULL AND deleted_at IS NULL
+                """)
+            )
+            archive_keys = [row[0] for row in result1.fetchall()]
+
+            # 2. (ws_id, op_id) 조회 (ARCHIVING crash 대비)
+            result2 = await self._conn.execute(
                 text("""
                     SELECT DISTINCT id::text, op_id
                     FROM workspaces
-                    WHERE deleted_at IS NULL
-                      AND op_id IS NOT NULL
+                    WHERE op_id IS NOT NULL AND deleted_at IS NULL
                 """)
             )
-            protected = [(row[0], row[1]) for row in result.fetchall()]
-            logger.debug("Found %d protected archives in DB", len(protected))
-            return protected
+            protected_workspaces = [(row[0], row[1]) for row in result2.fetchall()]
+
+            logger.debug(
+                "Found protected archives: %d keys, %d workspaces",
+                len(archive_keys),
+                len(protected_workspaces),
+            )
+            return archive_keys, protected_workspaces
         except Exception as e:
             logger.error(
                 "Failed to query protected archives",

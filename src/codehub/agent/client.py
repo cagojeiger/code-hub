@@ -224,15 +224,24 @@ class AgentClient(WorkspaceRuntime):
             port=data["port"],
         )
 
-    async def run_gc(self, protected: list[tuple[str, str]]) -> GCResult:
-        """Run garbage collection on archives."""
-        protected_items = [
-            {"workspace_id": ws_id, "op_id": op_id} for ws_id, op_id in protected
-        ]
+    async def run_gc(
+        self,
+        archive_keys: list[str],
+        protected_workspaces: list[tuple[str, str]],
+    ) -> GCResult:
+        """Run garbage collection on archives.
+
+        Args:
+            archive_keys: archive_key column values (RESTORING target protection)
+            protected_workspaces: (ws_id, op_id) tuples (ARCHIVING crash recovery)
+        """
         resp = await self._request(
             "post",
             "/api/v1/workspaces/gc",
-            json={"protected": protected_items},
+            json={
+                "archive_keys": archive_keys,
+                "protected_workspaces": protected_workspaces,
+            },
         )
         if resp is None:
             return GCResult(deleted_count=0, deleted_keys=[])

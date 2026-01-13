@@ -106,17 +106,16 @@ class StartRequest(BaseModel):
     image: str | None = None
 
 
-class ProtectedItem(BaseModel):
-    """Protected archive item for GC."""
-
-    workspace_id: str
-    op_id: str
-
-
 class GCRequest(BaseModel):
-    """GC request with protected items."""
+    """GC request with protected archives.
 
-    protected: list[ProtectedItem]
+    Two types of protection:
+    - archive_keys: Direct archive_key column values (RESTORING target)
+    - protected_workspaces: (ws_id, op_id) tuples for path calculation (ARCHIVING crash)
+    """
+
+    archive_keys: list[str]
+    protected_workspaces: list[tuple[str, str]]
 
 
 class GCResponse(BaseModel):
@@ -350,7 +349,12 @@ async def run_gc(
     """Run garbage collection on archives.
 
     Deletes archives not in the protected list.
+    Two types of protection:
+    - archive_keys: Direct paths (RESTORING target)
+    - protected_workspaces: (ws_id, op_id) for path calculation (ARCHIVING crash)
     """
-    protected = [(item.workspace_id, item.op_id) for item in request.protected]
-    deleted_count, deleted_keys = await runtime.storage.run_gc(protected)
+    deleted_count, deleted_keys = await runtime.storage.run_gc(
+        request.archive_keys,
+        request.protected_workspaces,
+    )
     return GCResponse(deleted_count=deleted_count, deleted_keys=deleted_keys)

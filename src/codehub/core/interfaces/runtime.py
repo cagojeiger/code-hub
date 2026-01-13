@@ -266,14 +266,19 @@ class WorkspaceRuntime(ABC):
 
     @abstractmethod
     async def run_gc(
-        self, protected: list[tuple[str, str]]
+        self,
+        archive_keys: list[str],
+        protected_workspaces: list[tuple[str, str]],
     ) -> GCResult:
         """Run garbage collection on archives.
 
         Deletes archives that are not in the protected list.
 
         Args:
-            protected: List of (workspace_id, op_id) tuples to protect
+            archive_keys: List of archive_key column values (full S3 paths).
+                          Protects archives during RESTORING.
+            protected_workspaces: List of (workspace_id, op_id) tuples.
+                                  Agent calculates S3 paths for ARCHIVING crash recovery.
 
         Returns:
             GCResult with count and list of deleted archive keys

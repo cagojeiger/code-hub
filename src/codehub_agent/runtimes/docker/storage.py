@@ -43,12 +43,20 @@ class StorageManager:
 
     async def run_gc(
         self,
-        protected: list[tuple[str, str]],
+        archive_keys: list[str],
+        protected_workspaces: list[tuple[str, str]],
     ) -> tuple[int, list[str]]:
-        """Delete archives not in the protected list."""
-        protected_keys = {
-            self._naming.archive_s3_key(ws_id, op_id) for ws_id, op_id in protected
-        }
+        """Delete archives not in the protected list.
+
+        Args:
+            archive_keys: Direct archive_key column values (RESTORING target protection)
+            protected_workspaces: (ws_id, op_id) tuples for path calculation
+                                  (ARCHIVING crash recovery)
+        """
+        # Build protected keys from both sources
+        protected_keys = set(archive_keys)
+        for ws_id, op_id in protected_workspaces:
+            protected_keys.add(self._naming.archive_s3_key(ws_id, op_id))
 
         all_keys = await self._s3.list_objects(self._naming.prefix)
         keys_to_delete = [key for key in all_keys if key not in protected_keys]
