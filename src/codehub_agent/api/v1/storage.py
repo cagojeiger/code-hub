@@ -2,11 +2,11 @@
 
 import logging
 
-import httpx
 from fastapi import APIRouter, HTTPException
 
-from codehub_agent.config import AgentConfig, get_agent_config
+from codehub_agent.config import get_agent_config
 from codehub_agent.api.v1.schemas import GCRequest, GCResponse, ProtectedItem
+from codehub_agent.infra import delete_object, list_objects
 
 router = APIRouter(prefix="/storage", tags=["storage"])
 logger = logging.getLogger(__name__)
@@ -18,27 +18,6 @@ __all__ = ["router", "ProtectedItem", "GCRequest", "GCResponse"]
 def _build_archive_key(cluster_id: str, workspace_id: str, op_id: str) -> str:
     """Build S3 archive key."""
     return f"{cluster_id}/{workspace_id}/{op_id}/home.tar.zst"
-
-
-async def _list_s3_objects(config: AgentConfig, prefix: str) -> list[str]:
-    """List S3 objects with given prefix."""
-    # Use simple HTTP client to list objects
-    async with httpx.AsyncClient() as client:
-        url = f"{config.s3_endpoint}/{config.s3_bucket}"
-        params = {"prefix": prefix, "list-type": "2"}
-
-        # MinIO/S3 requires signing, but for simplicity use boto3-like approach
-        # For now, this is a placeholder - real implementation would use aioboto3
-        logger.warning("S3 GC listing not fully implemented - requires S3 client")
-        _ = client, url, params  # Suppress unused variable warnings
-        return []
-
-
-async def _delete_s3_object(config: AgentConfig, key: str) -> bool:
-    """Delete S3 object."""
-    logger.warning("S3 GC delete not fully implemented - requires S3 client")
-    _ = config, key  # Suppress unused variable warnings
-    return False
 
 
 @router.post("/gc", response_model=GCResponse)
@@ -59,7 +38,7 @@ async def run_gc(request: GCRequest) -> GCResponse:
 
     try:
         # List all archives in this cluster
-        all_keys = await _list_s3_objects(config, f"{cluster_id}/")
+        all_keys = await list_objects(f"{cluster_id}/")
 
         # Find keys to delete
         keys_to_delete = [key for key in all_keys if key not in protected_keys]
@@ -67,7 +46,7 @@ async def run_gc(request: GCRequest) -> GCResponse:
         # Delete unprotected keys
         deleted_keys = []
         for key in keys_to_delete:
-            if await _delete_s3_object(config, key):
+            if await delete_object(key):
                 deleted_keys.append(key)
 
         logger.info("GC completed: deleted %d archives", len(deleted_keys))
