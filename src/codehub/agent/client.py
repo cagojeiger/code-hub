@@ -322,14 +322,49 @@ class AgentClient(InstanceController, VolumeProvider, JobRunner, StorageProvider
         ]
 
     async def list_archives(self, prefix: str) -> list[ArchiveInfo]:
-        """List archives - not implemented via Agent yet."""
-        logger.warning("list_archives not fully implemented via Agent")
-        return []
+        """List archives via Agent.
+
+        Args:
+            prefix: Workspace ID prefix to filter archives.
+
+        Returns:
+            List of ArchiveInfo for each workspace with an archive.
+        """
+        resp = await self._request(
+            "get", "/api/v1/storage/archives", params={"prefix": prefix}
+        )
+        if resp is None:
+            return []
+
+        data = resp.json()
+        return [
+            ArchiveInfo(
+                workspace_id=item["workspace_id"],
+                archive_key=item.get("archive_key"),
+                exists=item.get("exists", False),
+                reason=item.get("reason", ""),
+                message=item.get("message", ""),
+            )
+            for item in data.get("archives", [])
+        ]
 
     async def list_all_archive_keys(self, prefix: str) -> set[str]:
-        """List all archive keys - not implemented via Agent yet."""
-        logger.warning("list_all_archive_keys not fully implemented via Agent")
-        return set()
+        """List all archive keys via Agent.
+
+        Args:
+            prefix: Workspace ID prefix to filter archives.
+
+        Returns:
+            Set of archive keys.
+        """
+        resp = await self._request(
+            "get", "/api/v1/storage/archives/keys", params={"prefix": prefix}
+        )
+        if resp is None:
+            return set()
+
+        data = resp.json()
+        return set(data.get("keys", []))
 
     async def provision(self, workspace_id: str) -> None:
         """Provision volume via Agent."""
@@ -379,9 +414,25 @@ class AgentClient(InstanceController, VolumeProvider, JobRunner, StorageProvider
         )
 
     async def delete_archive(self, archive_key: str) -> bool:
-        """Delete archive - handled by GC via Agent."""
-        logger.warning("delete_archive not implemented - use GC instead")
-        return False
+        """Delete archive via Agent.
+
+        Args:
+            archive_key: Full S3 key of the archive to delete.
+
+        Returns:
+            True if deleted successfully.
+        """
+        resp = await self._request(
+            "delete",
+            "/api/v1/storage/archives",
+            params={"archive_key": archive_key},
+            on_404="false",
+        )
+        if resp is None:
+            return False
+
+        data = resp.json()
+        return data.get("deleted", False)
 
     async def run_gc(self, protected: list[dict]) -> dict:
         """Run garbage collection via Agent."""

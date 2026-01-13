@@ -1,57 +1,136 @@
-"""Storage GC API endpoint."""
+"""Storage API endpoints for archive management."""
 
-import logging
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 
-from fastapi import APIRouter, HTTPException
-
-from codehub_agent.config import get_agent_config
-from codehub_agent.api.v1.schemas import GCRequest, GCResponse, ProtectedItem
-from codehub_agent.infra import delete_object, list_objects
+from codehub_agent.api.dependencies import get_runtime
+from codehub_agent.runtimes import DockerRuntime
 
 router = APIRouter(prefix="/storage", tags=["storage"])
-logger = logging.getLogger(__name__)
-
-# Re-export for backward compatibility
-__all__ = ["router", "ProtectedItem", "GCRequest", "GCResponse"]
 
 
-def _build_archive_key(cluster_id: str, workspace_id: str, op_id: str) -> str:
-    """Build S3 archive key."""
-    return f"{cluster_id}/{workspace_id}/{op_id}/home.tar.zst"
+# =============================================================================
+# Schemas
+# =============================================================================
+
+
+class ArchiveInfoResponse(BaseModel):
+    """Archive info response."""
+
+    workspace_id: str
+    archive_key: str | None
+    exists: bool
+    reason: str
+    message: str
+
+
+class ArchiveListResponse(BaseModel):
+    """Archive list response."""
+
+    archives: list[ArchiveInfoResponse]
+
+
+class ArchiveKeysResponse(BaseModel):
+    """Archive keys response."""
+
+    keys: list[str]
+
+
+class ArchiveDeleteResponse(BaseModel):
+    """Archive delete response."""
+
+    deleted: bool
+    archive_key: str
+
+
+class ProtectedItem(BaseModel):
+    """Protected archive item."""
+
+    workspace_id: str
+    op_id: str
+
+
+class GCRequest(BaseModel):
+    """GC request with protected items."""
+
+    protected: list[ProtectedItem]
+
+
+class GCResponse(BaseModel):
+    """GC result response."""
+
+    deleted_count: int
+    deleted_keys: list[str]
+
+
+# =============================================================================
+# Archive Endpoints
+# =============================================================================
+
+
+@router.get("/archives", response_model=ArchiveListResponse)
+async def list_archives(
+    prefix: str = Query(default="", description="Workspace ID prefix to filter"),
+    runtime: DockerRuntime = Depends(get_runtime),
+) -> ArchiveListResponse:
+    """List archives in S3.
+
+    Returns list of archives matching the prefix.
+    Each workspace returns at most one archive (the latest).
+    """
+    archives = await runtime.storage.list_archives(prefix)
+    return ArchiveListResponse(
+        archives=[
+            ArchiveInfoResponse(
+                workspace_id=a.workspace_id,
+                archive_key=a.archive_key,
+                exists=a.exists,
+                reason=a.reason,
+                message=a.message,
+            )
+            for a in archives
+        ]
+    )
+
+
+@router.get("/archives/keys", response_model=ArchiveKeysResponse)
+async def list_archive_keys(
+    prefix: str = Query(default="", description="Workspace ID prefix to filter"),
+    runtime: DockerRuntime = Depends(get_runtime),
+) -> ArchiveKeysResponse:
+    """List all archive keys in S3.
+
+    Returns all archive keys (including multiple versions per workspace).
+    """
+    keys = await runtime.storage.list_all_archive_keys(prefix)
+    return ArchiveKeysResponse(keys=list(keys))
+
+
+@router.delete("/archives", response_model=ArchiveDeleteResponse)
+async def delete_archive(
+    archive_key: str = Query(..., description="Full S3 key of the archive to delete"),
+    runtime: DockerRuntime = Depends(get_runtime),
+) -> ArchiveDeleteResponse:
+    """Delete an archive from S3."""
+    deleted = await runtime.storage.delete_archive(archive_key)
+    return ArchiveDeleteResponse(deleted=deleted, archive_key=archive_key)
+
+
+# =============================================================================
+# GC Endpoint
+# =============================================================================
 
 
 @router.post("/gc", response_model=GCResponse)
-async def run_gc(request: GCRequest) -> GCResponse:
+async def run_gc(
+    request: GCRequest,
+    runtime: DockerRuntime = Depends(get_runtime),
+) -> GCResponse:
     """Run storage garbage collection.
 
     Deletes archives not in the protected list.
     Only deletes archives within this cluster's prefix.
     """
-    config = get_agent_config()
-    cluster_id = config.cluster_id
-
-    # Build set of protected keys
-    protected_keys = {
-        _build_archive_key(cluster_id, item.workspace_id, item.op_id)
-        for item in request.protected
-    }
-
-    try:
-        # List all archives in this cluster
-        all_keys = await list_objects(f"{cluster_id}/")
-
-        # Find keys to delete
-        keys_to_delete = [key for key in all_keys if key not in protected_keys]
-
-        # Delete unprotected keys
-        deleted_keys = []
-        for key in keys_to_delete:
-            if await delete_object(key):
-                deleted_keys.append(key)
-
-        logger.info("GC completed: deleted %d archives", len(deleted_keys))
-        return GCResponse(deleted_count=len(deleted_keys), deleted_keys=deleted_keys)
-
-    except Exception as e:
-        logger.error("GC failed: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+    protected = [(item.workspace_id, item.op_id) for item in request.protected]
+    deleted_count, deleted_keys = await runtime.storage.run_gc(protected)
+    return GCResponse(deleted_count=deleted_count, deleted_keys=deleted_keys)

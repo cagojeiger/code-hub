@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from codehub_agent.infra import ContainerAPI, ImageAPI, VolumeAPI
+from codehub_agent.runtimes.docker.naming import ResourceNaming
 
 
 @pytest.fixture
@@ -44,7 +45,7 @@ def mock_image_api() -> AsyncMock:
 
 
 @pytest.fixture
-def mock_agent_config(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+def mock_agent_config() -> MagicMock:
     """Mock AgentConfig for testing."""
     config = MagicMock()
     config.resource_prefix = "codehub-"
@@ -61,17 +62,10 @@ def mock_agent_config(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     config.s3_internal_endpoint = "http://minio:9000"
     config.s3_access_key = "test-access-key"
     config.s3_secret_key = "test-secret-key"
-
-    monkeypatch.setattr(
-        "codehub_agent.runtimes.docker.instance.get_agent_config",
-        lambda: config,
-    )
-    monkeypatch.setattr(
-        "codehub_agent.runtimes.docker.volume.get_agent_config",
-        lambda: config,
-    )
-    monkeypatch.setattr(
-        "codehub_agent.runtimes.docker.job.get_agent_config",
-        lambda: config,
-    )
     return config
+
+
+@pytest.fixture
+def mock_naming(mock_agent_config: MagicMock) -> ResourceNaming:
+    """ResourceNaming with mock config for testing."""
+    return ResourceNaming(mock_agent_config)

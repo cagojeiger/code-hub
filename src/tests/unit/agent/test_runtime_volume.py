@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from codehub_agent.runtimes.docker.naming import ResourceNaming
 from codehub_agent.runtimes.docker.volume import VolumeManager, VolumeStatus
 
 
@@ -15,9 +16,14 @@ class TestVolumeManager:
         self,
         mock_volume_api: AsyncMock,
         mock_agent_config: MagicMock,
+        mock_naming: ResourceNaming,
     ) -> VolumeManager:
         """Create VolumeManager with mock dependencies."""
-        return VolumeManager(api=mock_volume_api)
+        return VolumeManager(
+            config=mock_agent_config,
+            naming=mock_naming,
+            api=mock_volume_api,
+        )
 
     async def test_list_all_empty(
         self,

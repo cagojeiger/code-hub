@@ -1,11 +1,19 @@
 """Docker volume manager for Agent."""
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from codehub_agent.config import get_agent_config
+from codehub_agent.api.errors import VolumeInUseError
 from codehub_agent.infra import VolumeAPI, VolumeConfig
+from codehub_agent.infra.docker import VolumeInUseError as InfraVolumeInUseError
+
+if TYPE_CHECKING:
+    from codehub_agent.config import AgentConfig
+    from codehub_agent.runtimes.docker.naming import ResourceNaming
 
 logger = logging.getLogger(__name__)
 
@@ -20,16 +28,19 @@ class VolumeStatus(BaseModel):
 class VolumeManager:
     """Docker volume manager."""
 
-    def __init__(self, api: VolumeAPI | None = None) -> None:
-        self._config = get_agent_config()
+    def __init__(
+        self,
+        config: AgentConfig,
+        naming: ResourceNaming,
+        api: VolumeAPI | None = None,
+    ) -> None:
+        self._config = config
+        self._naming = naming
         self._api = api or VolumeAPI()
-
-    def _volume_name(self, workspace_id: str) -> str:
-        return f"{self._config.resource_prefix}{workspace_id}-home"
 
     async def list_all(self) -> list[dict]:
         """List all managed volumes."""
-        prefix = self._config.resource_prefix
+        prefix = self._naming.prefix
         volumes = await self._api.list(filters={"name": [prefix]})
 
         results = []
@@ -53,18 +64,25 @@ class VolumeManager:
 
     async def create(self, workspace_id: str) -> None:
         """Create volume for workspace."""
-        name = self._volume_name(workspace_id)
+        name = self._naming.volume_name(workspace_id)
         await self._api.create(VolumeConfig(name=name))
         logger.info("Created volume: %s", name)
 
     async def delete(self, workspace_id: str) -> None:
-        """Delete volume for workspace."""
-        name = self._volume_name(workspace_id)
-        await self._api.remove(name)
-        logger.info("Deleted volume: %s", name)
+        """Delete volume for workspace.
+
+        Raises:
+            VolumeInUseError: If volume is in use by a container.
+        """
+        name = self._naming.volume_name(workspace_id)
+        try:
+            await self._api.remove(name)
+            logger.info("Deleted volume: %s", name)
+        except InfraVolumeInUseError:
+            raise VolumeInUseError(f"Volume {name} is in use by a container")
 
     async def exists(self, workspace_id: str) -> VolumeStatus:
         """Check if volume exists."""
-        name = self._volume_name(workspace_id)
+        name = self._naming.volume_name(workspace_id)
         data = await self._api.inspect(name)
         return VolumeStatus(exists=data is not None, name=name)

@@ -1,12 +1,18 @@
 """Docker instance manager for Agent."""
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import httpx
 from pydantic import BaseModel
 
-from codehub_agent.config import get_agent_config
 from codehub_agent.infra import ContainerAPI, ContainerConfig, HostConfig, ImageAPI
+
+if TYPE_CHECKING:
+    from codehub_agent.config import AgentConfig
+    from codehub_agent.runtimes.docker.naming import ResourceNaming
 
 logger = logging.getLogger(__name__)
 
@@ -37,22 +43,19 @@ class InstanceManager:
 
     def __init__(
         self,
+        config: AgentConfig,
+        naming: ResourceNaming,
         containers: ContainerAPI | None = None,
         images: ImageAPI | None = None,
     ) -> None:
-        self._config = get_agent_config()
+        self._config = config
+        self._naming = naming
         self._containers = containers or ContainerAPI()
         self._images = images or ImageAPI()
 
-    def _container_name(self, workspace_id: str) -> str:
-        return f"{self._config.resource_prefix}{workspace_id}"
-
-    def _volume_name(self, workspace_id: str) -> str:
-        return f"{self._config.resource_prefix}{workspace_id}-home"
-
     async def list_all(self) -> list[dict]:
         """List all managed containers."""
-        prefix = self._config.resource_prefix
+        prefix = self._naming.prefix
         containers = await self._containers.list(filters={"name": [prefix]})
 
         results = []
@@ -83,8 +86,8 @@ class InstanceManager:
 
     async def start(self, workspace_id: str, image_ref: str | None = None) -> None:
         """Start container for workspace."""
-        container_name = self._container_name(workspace_id)
-        volume_name = self._volume_name(workspace_id)
+        container_name = self._naming.container_name(workspace_id)
+        volume_name = self._naming.volume_name(workspace_id)
 
         existing = await self._containers.inspect(container_name)
         if existing:
@@ -122,13 +125,13 @@ class InstanceManager:
 
     async def delete(self, workspace_id: str) -> None:
         """Delete container for workspace."""
-        container_name = self._container_name(workspace_id)
+        container_name = self._naming.container_name(workspace_id)
         await self._containers.stop(container_name)
         await self._containers.remove(container_name)
 
     async def get_status(self, workspace_id: str) -> InstanceStatus:
         """Get instance status."""
-        container_name = self._container_name(workspace_id)
+        container_name = self._naming.container_name(workspace_id)
 
         data = await self._containers.inspect(container_name)
         if not data:
@@ -156,6 +159,6 @@ class InstanceManager:
     async def get_upstream(self, workspace_id: str) -> UpstreamInfo:
         """Get upstream address for proxy."""
         return UpstreamInfo(
-            hostname=self._container_name(workspace_id),
+            hostname=self._naming.container_name(workspace_id),
             port=self._config.container_port,
         )

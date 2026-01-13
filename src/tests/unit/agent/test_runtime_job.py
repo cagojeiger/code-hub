@@ -5,7 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from codehub_agent.api.errors import JobFailedError
 from codehub_agent.runtimes.docker.job import JobRunner, JobResult, JobType
+from codehub_agent.runtimes.docker.naming import ResourceNaming
 
 
 class TestJobRunner:
@@ -16,9 +18,15 @@ class TestJobRunner:
         self,
         mock_container_api: AsyncMock,
         mock_agent_config: MagicMock,
+        mock_naming: ResourceNaming,
     ) -> JobRunner:
         """Create JobRunner with mock dependencies."""
-        return JobRunner(containers=mock_container_api, timeout=300)
+        return JobRunner(
+            config=mock_agent_config,
+            naming=mock_naming,
+            containers=mock_container_api,
+            timeout=300,
+        )
 
     async def test_run_archive_success(
         self,
@@ -69,14 +77,12 @@ class TestJobRunner:
         runner: JobRunner,
         mock_container_api: AsyncMock,
     ) -> None:
-        """Test job returns nonzero exit code."""
+        """Test job raises JobFailedError on nonzero exit code."""
         mock_container_api.wait.return_value = 1
         mock_container_api.logs.return_value = b"Error occurred"
 
-        result = await runner.run_archive("ws1", "op123")
-
-        assert result.exit_code == 1
-        assert result.logs == "Error occurred"
+        with pytest.raises(JobFailedError):
+            await runner.run_archive("ws1", "op123")
 
     async def test_run_job_cleanup_on_success(
         self,
@@ -128,20 +134,19 @@ class TestJobRunner:
 
     async def test_archive_url_format(
         self,
-        runner: JobRunner,
-        mock_agent_config: MagicMock,
+        mock_naming: ResourceNaming,
     ) -> None:
         """Test archive URL is correctly formatted."""
-        url = runner._archive_url("ws1", "op123")
+        url = mock_naming.archive_s3_url("ws1", "op123")
 
         assert url == "s3://test-bucket/test-cluster/ws1/op123/home.tar.zst"
 
     async def test_volume_name_format(
         self,
-        runner: JobRunner,
+        mock_naming: ResourceNaming,
     ) -> None:
         """Test volume name is correctly formatted."""
-        name = runner._volume_name("ws1")
+        name = mock_naming.volume_name("ws1")
 
         assert name == "codehub-ws1-home"
 

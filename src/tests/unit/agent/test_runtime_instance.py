@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from codehub_agent.runtimes.docker.instance import InstanceManager, InstanceStatus
+from codehub_agent.runtimes.docker.naming import ResourceNaming
 
 
 class TestInstanceManager:
@@ -17,9 +18,15 @@ class TestInstanceManager:
         mock_container_api: AsyncMock,
         mock_image_api: AsyncMock,
         mock_agent_config: MagicMock,
+        mock_naming: ResourceNaming,
     ) -> InstanceManager:
         """Create InstanceManager with mock dependencies."""
-        return InstanceManager(containers=mock_container_api, images=mock_image_api)
+        return InstanceManager(
+            config=mock_agent_config,
+            naming=mock_naming,
+            containers=mock_container_api,
+            images=mock_image_api,
+        )
 
     async def test_list_all_empty(
         self,

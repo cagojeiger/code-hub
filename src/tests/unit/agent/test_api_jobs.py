@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from codehub_agent.api.dependencies import get_runtime, reset_runtime
+from codehub_agent.api.errors import JobFailedError
 from codehub_agent.main import app
 from codehub_agent.runtimes.docker.job import JobResult
 
@@ -58,26 +59,10 @@ class TestJobsAPI:
     def test_run_archive_failure(
         self, client: TestClient, mock_runtime: MagicMock
     ) -> None:
-        """Test run archive job with nonzero exit."""
-        mock_runtime.jobs.run_archive.return_value = JobResult(
-            exit_code=1, logs="Error occurred"
+        """Test run archive job with nonzero exit raises JobFailedError."""
+        mock_runtime.jobs.run_archive.side_effect = JobFailedError(
+            "Archive job failed with exit code 1"
         )
-
-        response = client.post(
-            "/api/v1/jobs/archive",
-            json={"workspace_id": "ws1", "op_id": "op123"},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["exit_code"] == 1
-        assert data["logs"] == "Error occurred"
-
-    def test_run_archive_error(
-        self, client: TestClient, mock_runtime: MagicMock
-    ) -> None:
-        """Test run archive job handles exception."""
-        mock_runtime.jobs.run_archive.side_effect = Exception("Job failed")
 
         response = client.post(
             "/api/v1/jobs/archive",
@@ -85,6 +70,23 @@ class TestJobsAPI:
         )
 
         assert response.status_code == 500
+        data = response.json()
+        assert data["error"]["code"] == "JOB_FAILED"
+
+    def test_run_archive_error(
+        self, client: TestClient, mock_runtime: MagicMock
+    ) -> None:
+        """Test run archive job handles JobFailedError."""
+        mock_runtime.jobs.run_archive.side_effect = JobFailedError("Job failed")
+
+        response = client.post(
+            "/api/v1/jobs/archive",
+            json={"workspace_id": "ws1", "op_id": "op123"},
+        )
+
+        assert response.status_code == 500
+        data = response.json()
+        assert data["error"]["code"] == "JOB_FAILED"
 
     def test_run_restore_success(
         self, client: TestClient, mock_runtime: MagicMock
@@ -103,25 +105,10 @@ class TestJobsAPI:
     def test_run_restore_failure(
         self, client: TestClient, mock_runtime: MagicMock
     ) -> None:
-        """Test run restore job with nonzero exit."""
-        mock_runtime.jobs.run_restore.return_value = JobResult(
-            exit_code=1, logs="Restore failed"
+        """Test run restore job with nonzero exit raises JobFailedError."""
+        mock_runtime.jobs.run_restore.side_effect = JobFailedError(
+            "Restore job failed with exit code 1"
         )
-
-        response = client.post(
-            "/api/v1/jobs/restore",
-            json={"workspace_id": "ws1", "op_id": "op123"},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["exit_code"] == 1
-
-    def test_run_restore_error(
-        self, client: TestClient, mock_runtime: MagicMock
-    ) -> None:
-        """Test run restore job handles exception."""
-        mock_runtime.jobs.run_restore.side_effect = Exception("Restore error")
 
         response = client.post(
             "/api/v1/jobs/restore",
@@ -129,3 +116,20 @@ class TestJobsAPI:
         )
 
         assert response.status_code == 500
+        data = response.json()
+        assert data["error"]["code"] == "JOB_FAILED"
+
+    def test_run_restore_error(
+        self, client: TestClient, mock_runtime: MagicMock
+    ) -> None:
+        """Test run restore job handles JobFailedError."""
+        mock_runtime.jobs.run_restore.side_effect = JobFailedError("Restore error")
+
+        response = client.post(
+            "/api/v1/jobs/restore",
+            json={"workspace_id": "ws1", "op_id": "op123"},
+        )
+
+        assert response.status_code == 500
+        data = response.json()
+        assert data["error"]["code"] == "JOB_FAILED"

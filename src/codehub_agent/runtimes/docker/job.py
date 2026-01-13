@@ -1,14 +1,21 @@
 """Docker job runner for Agent."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import uuid
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from codehub_agent.config import get_agent_config
+from codehub_agent.api.errors import JobFailedError
 from codehub_agent.infra import ContainerAPI, ContainerConfig, HostConfig
+
+if TYPE_CHECKING:
+    from codehub_agent.config import AgentConfig
+    from codehub_agent.runtimes.docker.naming import ResourceNaming
 
 logger = logging.getLogger(__name__)
 
@@ -32,22 +39,15 @@ class JobRunner:
 
     def __init__(
         self,
+        config: AgentConfig,
+        naming: ResourceNaming,
         containers: ContainerAPI | None = None,
         timeout: int | None = None,
     ) -> None:
-        self._config = get_agent_config()
+        self._config = config
+        self._naming = naming
         self._containers = containers or ContainerAPI()
         self._timeout = timeout or self._config.job_timeout
-
-    def _volume_name(self, workspace_id: str) -> str:
-        return f"{self._config.resource_prefix}{workspace_id}-home"
-
-    def _archive_url(self, workspace_id: str, op_id: str) -> str:
-        """Build S3 archive URL."""
-        return (
-            f"s3://{self._config.s3_bucket}/"
-            f"{self._config.cluster_id}/{workspace_id}/{op_id}/home.tar.zst"
-        )
 
     async def _force_cleanup(self, container_name: str) -> None:
         """Force stop and remove container."""
@@ -78,8 +78,8 @@ class JobRunner:
         """
         job_id = uuid.uuid4().hex[:8]
         helper_name = f"codehub-job-{job_type.value}-{job_id}"
-        volume_name = self._volume_name(workspace_id)
-        archive_url = self._archive_url(workspace_id, op_id)
+        volume_name = self._naming.volume_name(workspace_id)
+        archive_url = self._naming.archive_s3_url(workspace_id, op_id)
 
         # Archive: read-only mount, Restore: read-write mount
         volume_bind = (
@@ -109,6 +109,7 @@ class JobRunner:
 
             exit_code = await self._containers.wait(helper_name, timeout=self._timeout)
             logs = await self._containers.logs(helper_name)
+            logs_str = logs.decode("utf-8", errors="replace")
 
             logger.info(
                 "%s job completed: %s, exit_code=%d",
@@ -116,9 +117,13 @@ class JobRunner:
                 helper_name,
                 exit_code,
             )
-            return JobResult(
-                exit_code=exit_code, logs=logs.decode("utf-8", errors="replace")
-            )
+
+            if exit_code != 0:
+                raise JobFailedError(
+                    f"{job_type.value.capitalize()} job failed with exit code {exit_code}"
+                )
+
+            return JobResult(exit_code=exit_code, logs=logs_str)
 
         except asyncio.CancelledError:
             logger.warning("%s job cancelled: %s", job_type.value.capitalize(), helper_name)

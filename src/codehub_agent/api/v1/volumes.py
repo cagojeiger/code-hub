@@ -1,16 +1,31 @@
 """Volume API endpoints."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from codehub_agent.api.dependencies import get_runtime
-from codehub_agent.api.v1.schemas import (
-    OperationResponse,
-    VolumeListResponse,
-    VolumeStatusResponse,
-)
+from codehub_agent.api.v1.instances import OperationResponse
 from codehub_agent.runtimes import DockerRuntime
 
 router = APIRouter(prefix="/volumes", tags=["volumes"])
+
+
+# =============================================================================
+# Schemas
+# =============================================================================
+
+
+class VolumeStatusResponse(BaseModel):
+    """Volume status response."""
+
+    exists: bool
+    name: str
+
+
+class VolumeListResponse(BaseModel):
+    """Volume list response."""
+
+    volumes: list[dict]
 
 
 @router.get("", response_model=VolumeListResponse)
@@ -28,11 +43,8 @@ async def create_volume(
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
     """Create volume for workspace."""
-    try:
-        await runtime.volumes.create(workspace_id)
-        return OperationResponse(status="created", workspace_id=workspace_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    await runtime.volumes.create(workspace_id)
+    return OperationResponse(status="created", workspace_id=workspace_id)
 
 
 @router.delete("/{workspace_id}", status_code=200, response_model=OperationResponse)
@@ -41,11 +53,8 @@ async def delete_volume(
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
     """Delete volume for workspace."""
-    try:
-        await runtime.volumes.delete(workspace_id)
-        return OperationResponse(status="deleted", workspace_id=workspace_id)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    await runtime.volumes.delete(workspace_id)
+    return OperationResponse(status="deleted", workspace_id=workspace_id)
 
 
 @router.get("/{workspace_id}/exists", response_model=VolumeStatusResponse)

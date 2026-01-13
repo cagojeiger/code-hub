@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from codehub_agent.api.dependencies import get_runtime, reset_runtime
+from codehub_agent.api.errors import DockerError, VolumeInUseError
 from codehub_agent.main import app
 from codehub_agent.runtimes.docker.volume import VolumeStatus
 
@@ -81,11 +82,13 @@ class TestVolumeAPI:
         self, client: TestClient, mock_runtime: MagicMock
     ) -> None:
         """Test create volume handles error."""
-        mock_runtime.volumes.create.side_effect = Exception("Create failed")
+        mock_runtime.volumes.create.side_effect = DockerError("Create failed")
 
         response = client.post("/api/v1/volumes/ws1")
 
         assert response.status_code == 500
+        data = response.json()
+        assert data["error"]["code"] == "DOCKER_ERROR"
 
     def test_delete_volume(
         self, client: TestClient, mock_runtime: MagicMock
@@ -102,11 +105,13 @@ class TestVolumeAPI:
         self, client: TestClient, mock_runtime: MagicMock
     ) -> None:
         """Test delete volume handles error."""
-        mock_runtime.volumes.delete.side_effect = Exception("Delete failed")
+        mock_runtime.volumes.delete.side_effect = VolumeInUseError("Volume in use")
 
         response = client.delete("/api/v1/volumes/ws1")
 
-        assert response.status_code == 500
+        assert response.status_code == 409
+        data = response.json()
+        assert data["error"]["code"] == "VOLUME_IN_USE"
 
     def test_volume_exists_true(
         self, client: TestClient, mock_runtime: MagicMock
