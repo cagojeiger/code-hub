@@ -248,14 +248,18 @@ async def delete(
     workspace_id: str,
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
-    """Delete workspace completely (container + volume)."""
-    # Delete container first
+    """Delete workspace completely (container + volume).
+
+    Note: Container must be deleted before volume (volume in use error).
+    We delete container first, then volume in sequence.
+    """
+    # Delete container first (required before volume deletion)
     try:
         await runtime.instances.delete(workspace_id)
     except Exception:
         pass  # Container might not exist
 
-    # Then delete volume
+    # Then delete volume (must be after container deletion)
     try:
         await runtime.volumes.delete(workspace_id)
     except Exception:

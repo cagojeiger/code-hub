@@ -4,6 +4,7 @@ Provides async Docker API access for containers and volumes.
 Supports both Unix socket and TCP connections.
 """
 
+import asyncio
 import json
 import logging
 
@@ -17,6 +18,27 @@ from codehub_agent.logging_schema import LogEvent
 logger = logging.getLogger(__name__)
 
 _agent_config = get_agent_config()
+
+# =============================================================================
+# Concurrency Control
+# =============================================================================
+
+_docker_semaphore: asyncio.Semaphore | None = None
+
+
+def get_docker_semaphore(limit: int = 10) -> asyncio.Semaphore:
+    """Get or create the Docker API semaphore.
+
+    Limits concurrent Docker API calls to prevent overwhelming the daemon.
+    Default limit of 10 is suitable for most deployments.
+
+    Args:
+        limit: Maximum concurrent Docker API calls.
+    """
+    global _docker_semaphore
+    if _docker_semaphore is None:
+        _docker_semaphore = asyncio.Semaphore(limit)
+    return _docker_semaphore
 
 
 # =============================================================================
@@ -105,8 +127,11 @@ class DockerClient:
         self._client: httpx.AsyncClient | None = None
 
     def _create_client(self) -> httpx.AsyncClient:
-        """Create a new HTTP client."""
+        """Create a new HTTP client with connection pooling."""
         timeout = _agent_config.docker.api_timeout
+        # Connection pool limits for high-concurrency scenarios
+        limits = httpx.Limits(max_connections=100, max_keepalive_connections=20)
+
         if self._host.startswith("unix://"):
             socket_path = self._host.replace("unix://", "")
             transport = httpx.AsyncHTTPTransport(uds=socket_path)
@@ -114,12 +139,13 @@ class DockerClient:
                 transport=transport,
                 base_url="http://localhost",
                 timeout=timeout,
+                limits=limits,
             )
         else:
             base_url = self._host
             if base_url.startswith("tcp://"):
                 base_url = base_url.replace("tcp://", "http://")
-            return httpx.AsyncClient(base_url=base_url, timeout=timeout)
+            return httpx.AsyncClient(base_url=base_url, timeout=timeout, limits=limits)
 
     async def get(self) -> httpx.AsyncClient:
         """Get or create the HTTP client."""
@@ -167,85 +193,95 @@ class ContainerAPI:
 
     async def list(self, filters: dict | None = None) -> list[dict]:
         """List containers."""
-        client = await self._docker.get()
-        params: dict = {"all": "true"}
-        if filters:
-            params["filters"] = json.dumps(filters)
-        resp = await client.get("/containers/json", params=params)
-        resp.raise_for_status()
-        return resp.json()
+        async with get_docker_semaphore():
+            client = await self._docker.get()
+            params: dict = {"all": "true"}
+            if filters:
+                params["filters"] = json.dumps(filters)
+            resp = await client.get("/containers/json", params=params)
+            resp.raise_for_status()
+            return resp.json()
 
     async def inspect(self, name: str) -> dict | None:
         """Inspect a container."""
-        client = await self._docker.get()
-        resp = await client.get(f"/containers/{name}/json")
-        if resp.status_code == 404:
-            return None
-        resp.raise_for_status()
-        return resp.json()
+        async with get_docker_semaphore():
+            client = await self._docker.get()
+            resp = await client.get(f"/containers/{name}/json")
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()
 
     async def create(self, config: ContainerConfig) -> None:
         """Create a container (idempotent)."""
-        client = await self._docker.get()
-        resp = await client.post(
-            "/containers/create",
-            params={"name": config.name},
-            json=config.to_api(),
-        )
-        if resp.status_code == 409:
-            logger.debug(
-                "Container already exists",
-                extra={"event": LogEvent.CONTAINER_CREATED, "container": config.name, "exists": True},
+        async with get_docker_semaphore():
+            client = await self._docker.get()
+            resp = await client.post(
+                "/containers/create",
+                params={"name": config.name},
+                json=config.to_api(),
             )
-            return
-        resp.raise_for_status()
-        logger.info(
-            "Container created",
-            extra={"event": LogEvent.CONTAINER_CREATED, "container": config.name, "image": config.image},
-        )
+            if resp.status_code == 409:
+                logger.debug(
+                    "Container already exists",
+                    extra={"event": LogEvent.CONTAINER_CREATED, "container": config.name, "exists": True},
+                )
+                return
+            resp.raise_for_status()
+            logger.info(
+                "Container created",
+                extra={"event": LogEvent.CONTAINER_CREATED, "container": config.name, "image": config.image},
+            )
 
     async def start(self, name: str) -> None:
         """Start a container."""
-        client = await self._docker.get()
-        resp = await client.post(f"/containers/{name}/start")
-        if resp.status_code not in (204, 304):
-            resp.raise_for_status()
-        logger.info(
-            "Container started",
-            extra={"event": LogEvent.CONTAINER_STARTED, "container": name},
-        )
+        async with get_docker_semaphore():
+            client = await self._docker.get()
+            resp = await client.post(f"/containers/{name}/start")
+            if resp.status_code not in (204, 304):
+                resp.raise_for_status()
+            logger.info(
+                "Container started",
+                extra={"event": LogEvent.CONTAINER_STARTED, "container": name},
+            )
 
     async def stop(self, name: str, timeout: int = 10) -> None:
         """Stop a container."""
-        client = await self._docker.get()
-        resp = await client.post(f"/containers/{name}/stop", params={"t": str(timeout)})
-        if resp.status_code not in (204, 304, 404):
-            resp.raise_for_status()
-        logger.info(
-            "Container stopped",
-            extra={"event": LogEvent.CONTAINER_STOPPED, "container": name},
-        )
+        async with get_docker_semaphore():
+            client = await self._docker.get()
+            resp = await client.post(f"/containers/{name}/stop", params={"t": str(timeout)})
+            if resp.status_code not in (204, 304, 404):
+                resp.raise_for_status()
+            logger.info(
+                "Container stopped",
+                extra={"event": LogEvent.CONTAINER_STOPPED, "container": name},
+            )
 
     async def remove(self, name: str, force: bool = True) -> None:
         """Remove a container."""
-        client = await self._docker.get()
-        resp = await client.delete(
-            f"/containers/{name}", params={"force": "true" if force else "false"}
-        )
-        if resp.status_code == 404:
-            logger.debug(
-                "Container not found",
-                extra={"event": LogEvent.CONTAINER_REMOVED, "container": name, "exists": False},
+        async with get_docker_semaphore():
+            client = await self._docker.get()
+            resp = await client.delete(
+                f"/containers/{name}", params={"force": "true" if force else "false"}
             )
-            return
-        resp.raise_for_status()
-        logger.info(
-            "Container removed",
-            extra={"event": LogEvent.CONTAINER_REMOVED, "container": name},
-        )
+            if resp.status_code == 404:
+                logger.debug(
+                    "Container not found",
+                    extra={"event": LogEvent.CONTAINER_REMOVED, "container": name, "exists": False},
+                )
+                return
+            resp.raise_for_status()
+            logger.info(
+                "Container removed",
+                extra={"event": LogEvent.CONTAINER_REMOVED, "container": name},
+            )
 
     async def wait(self, name: str, timeout: int | None = None) -> int:
-        """Wait for container to exit and return exit code."""
+        """Wait for container to exit and return exit code.
+
+        Note: This method does NOT use the semaphore because wait operations
+        are long-running and should not block other Docker operations.
+        """
         if timeout is None:
             timeout = _agent_config.docker.container_wait_timeout
         client = await self._docker.get()
@@ -266,11 +302,12 @@ class ContainerAPI:
 
     async def logs(self, name: str, stdout: bool = True, stderr: bool = True) -> bytes:
         """Get container logs."""
-        client = await self._docker.get()
-        params = {"stdout": stdout, "stderr": stderr}
-        resp = await client.get(f"/containers/{name}/logs", params=params)
-        resp.raise_for_status()
-        return resp.content
+        async with get_docker_semaphore():
+            client = await self._docker.get()
+            params = {"stdout": stdout, "stderr": stderr}
+            resp = await client.get(f"/containers/{name}/logs", params=params)
+            resp.raise_for_status()
+            return resp.content
 
 
 # =============================================================================
@@ -286,57 +323,61 @@ class VolumeAPI:
 
     async def list(self, filters: dict | None = None) -> list[dict]:
         """List volumes."""
-        client = await self._docker.get()
-        params: dict = {}
-        if filters:
-            params["filters"] = json.dumps(filters)
-        resp = await client.get("/volumes", params=params)
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("Volumes", [])
+        async with get_docker_semaphore():
+            client = await self._docker.get()
+            params: dict = {}
+            if filters:
+                params["filters"] = json.dumps(filters)
+            resp = await client.get("/volumes", params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("Volumes", [])
 
     async def inspect(self, name: str) -> dict | None:
         """Inspect a volume."""
-        client = await self._docker.get()
-        resp = await client.get(f"/volumes/{name}")
-        if resp.status_code == 404:
-            return None
-        resp.raise_for_status()
-        return resp.json()
+        async with get_docker_semaphore():
+            client = await self._docker.get()
+            resp = await client.get(f"/volumes/{name}")
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()
 
     async def create(self, config: VolumeConfig) -> None:
         """Create a volume (idempotent)."""
-        client = await self._docker.get()
-        resp = await client.post("/volumes/create", json=config.to_api())
-        if resp.status_code == 409:
-            logger.debug(
-                "Volume already exists",
-                extra={"event": LogEvent.VOLUME_CREATED, "volume": config.name, "exists": True},
+        async with get_docker_semaphore():
+            client = await self._docker.get()
+            resp = await client.post("/volumes/create", json=config.to_api())
+            if resp.status_code == 409:
+                logger.debug(
+                    "Volume already exists",
+                    extra={"event": LogEvent.VOLUME_CREATED, "volume": config.name, "exists": True},
+                )
+                return
+            resp.raise_for_status()
+            logger.info(
+                "Volume created",
+                extra={"event": LogEvent.VOLUME_CREATED, "volume": config.name},
             )
-            return
-        resp.raise_for_status()
-        logger.info(
-            "Volume created",
-            extra={"event": LogEvent.VOLUME_CREATED, "volume": config.name},
-        )
 
     async def remove(self, name: str) -> None:
         """Remove a volume."""
-        client = await self._docker.get()
-        resp = await client.delete(f"/volumes/{name}")
-        if resp.status_code == 404:
-            logger.debug(
-                "Volume not found",
-                extra={"event": LogEvent.VOLUME_REMOVED, "volume": name, "exists": False},
+        async with get_docker_semaphore():
+            client = await self._docker.get()
+            resp = await client.delete(f"/volumes/{name}")
+            if resp.status_code == 404:
+                logger.debug(
+                    "Volume not found",
+                    extra={"event": LogEvent.VOLUME_REMOVED, "volume": name, "exists": False},
+                )
+                return
+            if resp.status_code == 409:
+                raise VolumeInUseError(f"Volume {name} is in use by a container")
+            resp.raise_for_status()
+            logger.info(
+                "Volume removed",
+                extra={"event": LogEvent.VOLUME_REMOVED, "volume": name},
             )
-            return
-        if resp.status_code == 409:
-            raise VolumeInUseError(f"Volume {name} is in use by a container")
-        resp.raise_for_status()
-        logger.info(
-            "Volume removed",
-            extra={"event": LogEvent.VOLUME_REMOVED, "volume": name},
-        )
 
 
 # =============================================================================
@@ -352,12 +393,17 @@ class ImageAPI:
 
     async def exists(self, image_ref: str) -> bool:
         """Check if image exists locally."""
-        client = await self._docker.get()
-        resp = await client.get(f"/images/{image_ref}/json")
-        return resp.status_code == 200
+        async with get_docker_semaphore():
+            client = await self._docker.get()
+            resp = await client.get(f"/images/{image_ref}/json")
+            return resp.status_code == 200
 
     async def pull(self, image_ref: str) -> None:
-        """Pull image from registry."""
+        """Pull image from registry.
+
+        Note: This method does NOT use the semaphore because image pulls
+        are long-running and should not block other Docker operations.
+        """
         client = await self._docker.get()
 
         if ":" in image_ref:
@@ -373,7 +419,7 @@ class ImageAPI:
         resp = await client.post(
             "/images/create",
             params={"fromImage": image, "tag": tag},
-            timeout=_agent_config.image_pull_timeout,
+            timeout=_agent_config.docker.image_pull_timeout,
         )
         resp.raise_for_status()
         logger.info(

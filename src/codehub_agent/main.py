@@ -36,18 +36,38 @@ async def cleanup_orphaned_job_containers() -> None:
     Job containers (codehub-job-*) may be left behind if the agent
     restarts while jobs are running. These orphaned containers block
     volume deletion, causing ARCHIVING operations to fail.
+
+    Cleanup is parallelized for faster startup.
     """
+    import asyncio
+
     logger.info("Cleaning up orphaned job containers", extra={"event": LogEvent.CLEANUP_STARTED})
     api = ContainerAPI()
     try:
         containers = await api.list(filters={"name": ["codehub-job-"]})
-        for container in containers:
-            name = container["Names"][0].lstrip("/")
+        if not containers:
+            logger.info(
+                "Cleanup complete",
+                extra={"event": LogEvent.CLEANUP_COMPLETED, "removed_count": 0},
+            )
+            return
+
+        # Extract container names
+        names = [c["Names"][0].lstrip("/") for c in containers]
+
+        # Log containers to be removed
+        for name in names:
             logger.info(
                 "Removing orphaned job container",
                 extra={"event": LogEvent.CONTAINER_REMOVED, "container": name},
             )
-            await api.remove(name, force=True)
+
+        # Remove all containers in parallel
+        await asyncio.gather(
+            *[api.remove(name, force=True) for name in names],
+            return_exceptions=True,
+        )
+
         logger.info(
             "Cleanup complete",
             extra={"event": LogEvent.CLEANUP_COMPLETED, "removed_count": len(containers)},
@@ -120,9 +140,9 @@ async def api_key_middleware(
         return await call_next(request)
 
     # If API key is configured, validate it
-    if config.api_key:
+    if config.server.api_key:
         auth_header = request.headers.get("Authorization", "")
-        expected = f"Bearer {config.api_key}"
+        expected = f"Bearer {config.server.api_key}"
         if auth_header != expected:
             return Response(
                 content='{"detail": "Invalid API key"}',
@@ -156,8 +176,8 @@ def main() -> None:
     config = get_agent_config()
     uvicorn.run(
         "codehub_agent.main:app",
-        host=config.host,
-        port=config.port,
+        host=config.server.host,
+        port=config.server.port,
         reload=False,
     )
 

@@ -118,19 +118,19 @@ class InstanceManager:
                 else:
                     raise
 
-        image = image_ref or self._config.default_image
+        image = image_ref or self._config.runtime.default_image
         await self._images.ensure(image)
 
-        port = self._config.container_port
+        port = self._config.docker.container_port
         config = ContainerConfig(
             image=image,
             name=container_name,
             cmd=["--auth", "none", "--bind-addr", f"0.0.0.0:{port}"],
-            user=f"{self._config.coder_uid}:{self._config.coder_gid}",
+            user=f"{self._config.docker.coder_uid}:{self._config.docker.coder_gid}",
             env=["HOME=/home/coder"],
             exposed_ports={f"{port}/tcp": {}},
             host_config=HostConfig(
-                network_mode=self._config.docker_network,
+                network_mode=self._config.docker.network,
                 binds=[f"{volume_name}:/home/coder"],
             ),
         )
@@ -184,5 +184,5 @@ class InstanceManager:
         """Get upstream address for proxy."""
         return UpstreamInfo(
             hostname=self._naming.container_name(workspace_id),
-            port=self._config.container_port,
+            port=self._config.docker.container_port,
         )

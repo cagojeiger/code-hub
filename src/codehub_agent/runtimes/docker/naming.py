@@ -7,9 +7,9 @@ class ResourceNaming:
     """Centralized naming conventions for Docker resources."""
 
     def __init__(self, config: AgentConfig) -> None:
-        self._prefix = config.resource_prefix
+        self._prefix = config.runtime.resource_prefix
         self._cluster_id = config.cluster_id
-        self._s3_bucket = config.s3_bucket
+        self._s3_bucket = config.s3.bucket
         self._archive_suffix = config.runtime.archive_suffix
 
     @property

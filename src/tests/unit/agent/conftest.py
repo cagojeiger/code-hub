@@ -46,26 +46,38 @@ def mock_image_api() -> AsyncMock:
 
 @pytest.fixture
 def mock_agent_config() -> MagicMock:
-    """Mock AgentConfig for testing."""
-    config = MagicMock()
-    config.resource_prefix = "codehub-"
-    config.cluster_id = "test-cluster"
-    config.docker_network = "test-network"
-    config.container_port = 8080
-    config.coder_uid = 1000
-    config.coder_gid = 1000
-    config.default_image = "codercom/code-server:latest"
-    config.storage_job_image = "codehub/storage-job:latest"
-    config.job_timeout = 600
-    config.s3_bucket = "test-bucket"
-    config.s3_endpoint = "http://minio:9000"
-    config.s3_internal_endpoint = "http://minio:9000"
-    config.s3_access_key = "test-access-key"
-    config.s3_secret_key = "test-secret-key"
+    """Mock AgentConfig for testing.
 
-    # Sub-config for runtime settings
+    Uses the new nested config structure:
+    - config.docker.* for Docker settings
+    - config.s3.* for S3 settings
+    - config.runtime.* for runtime settings
+    """
+    config = MagicMock()
+    config.cluster_id = "test-cluster"
+
+    # Docker sub-config
+    config.docker = MagicMock()
+    config.docker.network = "test-network"
+    config.docker.container_port = 8080
+    config.docker.coder_uid = 1000
+    config.docker.coder_gid = 1000
+    config.docker.job_timeout = 600
+
+    # S3 sub-config
+    config.s3 = MagicMock()
+    config.s3.bucket = "test-bucket"
+    config.s3.endpoint = "http://minio:9000"
+    config.s3.internal_endpoint = "http://minio:9000"
+    config.s3.access_key = "test-access-key"
+    config.s3.secret_key = "test-secret-key"
+
+    # Runtime sub-config
     config.runtime = MagicMock()
+    config.runtime.resource_prefix = "codehub-"
     config.runtime.archive_suffix = "home.tar.zst"
+    config.runtime.default_image = "codercom/code-server:latest"
+    config.runtime.storage_job_image = "codehub/storage-job:latest"
 
     return config
 
