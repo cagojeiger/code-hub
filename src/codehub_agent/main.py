@@ -19,6 +19,7 @@ from codehub_agent.api.errors import AgentError
 from codehub_agent.config import get_agent_config
 from codehub_agent.infra import close_docker, ContainerAPI
 from codehub_agent.logging import setup_logging
+from codehub_agent.logging_schema import LogEvent
 
 # Import metrics to ensure they are registered
 import codehub_agent.metrics  # noqa: F401
@@ -36,17 +37,26 @@ async def cleanup_orphaned_job_containers() -> None:
     restarts while jobs are running. These orphaned containers block
     volume deletion, causing ARCHIVING operations to fail.
     """
-    logger.info("Cleaning up orphaned job containers...")
+    logger.info("Cleaning up orphaned job containers", extra={"event": LogEvent.CLEANUP_STARTED})
     api = ContainerAPI()
     try:
         containers = await api.list(filters={"name": ["codehub-job-"]})
         for container in containers:
             name = container["Names"][0].lstrip("/")
-            logger.info("Removing orphaned job container: %s", name)
+            logger.info(
+                "Removing orphaned job container",
+                extra={"event": LogEvent.CONTAINER_REMOVED, "container": name},
+            )
             await api.remove(name, force=True)
-        logger.info("Cleanup complete: removed %d job containers", len(containers))
+        logger.info(
+            "Cleanup complete",
+            extra={"event": LogEvent.CLEANUP_COMPLETED, "removed_count": len(containers)},
+        )
     except Exception as e:
-        logger.warning("Failed to cleanup job containers: %s", e)
+        logger.warning(
+            "Failed to cleanup job containers",
+            extra={"event": LogEvent.CLEANUP_FAILED, "error": str(e)},
+        )
 
 
 @asynccontextmanager
@@ -54,16 +64,19 @@ async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     config = get_agent_config()
     logger.info(
-        "Starting CodeHub Agent v%s (cluster_id=%s)",
-        __version__,
-        config.cluster_id,
+        "Starting CodeHub Agent",
+        extra={
+            "event": LogEvent.APP_STARTED,
+            "version": __version__,
+            "cluster_id": config.cluster_id,
+        },
     )
 
     # Cleanup orphaned job containers from previous runs
     await cleanup_orphaned_job_containers()
 
     yield
-    logger.info("Shutting down CodeHub Agent")
+    logger.info("Shutting down CodeHub Agent", extra={"event": LogEvent.APP_STOPPED})
     await close_docker()
 
 

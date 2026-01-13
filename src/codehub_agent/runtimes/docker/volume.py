@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from codehub_agent.infra import VolumeAPI, VolumeConfig
+from codehub_agent.logging_schema import LogEvent
 
 if TYPE_CHECKING:
     from codehub_agent.config import AgentConfig
@@ -58,13 +59,19 @@ class VolumeManager:
     async def create(self, workspace_id: str) -> None:
         name = self._naming.volume_name(workspace_id)
         await self._api.create(VolumeConfig(name=name))
-        logger.info("Created volume: %s", name)
+        logger.info(
+            "Volume created",
+            extra={"event": LogEvent.VOLUME_CREATED, "volume": name, "workspace_id": workspace_id},
+        )
 
     async def delete(self, workspace_id: str) -> None:
         """Raises VolumeInUseError if volume is in use."""
         name = self._naming.volume_name(workspace_id)
         await self._api.remove(name)
-        logger.info("Deleted volume: %s", name)
+        logger.info(
+            "Volume deleted",
+            extra={"event": LogEvent.VOLUME_REMOVED, "volume": name, "workspace_id": workspace_id},
+        )
 
     async def exists(self, workspace_id: str) -> VolumeStatus:
         name = self._naming.volume_name(workspace_id)

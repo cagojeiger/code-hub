@@ -8,6 +8,7 @@ from aiobotocore.session import AioSession, get_session
 from types_aiobotocore_s3 import S3Client
 
 from codehub_agent.config import AgentConfig, get_agent_config
+from codehub_agent.logging_schema import LogEvent
 
 logger = logging.getLogger(__name__)
 
@@ -37,10 +38,16 @@ class S3Operations:
         async with self.client() as s3:
             try:
                 await s3.head_bucket(Bucket=bucket)
-                logger.info("S3 bucket exists: %s", bucket)
+                logger.info(
+                    "S3 bucket exists",
+                    extra={"event": LogEvent.S3_BUCKET_READY, "bucket": bucket, "created": False},
+                )
             except Exception:
                 await s3.create_bucket(Bucket=bucket)
-                logger.info("Created S3 bucket: %s", bucket)
+                logger.info(
+                    "S3 bucket created",
+                    extra={"event": LogEvent.S3_BUCKET_READY, "bucket": bucket, "created": True},
+                )
 
     async def list_objects(self, prefix: str) -> list[str]:
         keys = []
@@ -56,10 +63,16 @@ class S3Operations:
         try:
             async with self.client() as s3:
                 await s3.delete_object(Bucket=self._config.s3.bucket, Key=key)
-                logger.debug("Deleted S3 object: %s", key)
+                logger.debug(
+                    "S3 object deleted",
+                    extra={"event": LogEvent.S3_OBJECT_DELETED, "key": key},
+                )
                 return True
         except Exception as e:
-            logger.warning("Failed to delete S3 object %s: %s", key, e)
+            logger.warning(
+                "Failed to delete S3 object",
+                extra={"event": LogEvent.S3_DELETE_FAILED, "key": key, "error": str(e)},
+            )
             return False
 
     async def delete_objects(self, keys: list[str]) -> list[str]:
@@ -86,12 +99,22 @@ class S3Operations:
                     # Log errors if any
                     for error in response.get("Errors", []):
                         logger.warning(
-                            "Failed to delete S3 object %s: %s",
-                            error.get("Key"),
-                            error.get("Message"),
+                            "Failed to delete S3 object",
+                            extra={
+                                "event": LogEvent.S3_DELETE_FAILED,
+                                "key": error.get("Key"),
+                                "error": error.get("Message"),
+                            },
                         )
                 except Exception as e:
-                    logger.warning("Batch delete failed for %d objects: %s", len(batch), e)
+                    logger.warning(
+                        "Batch delete failed",
+                        extra={
+                            "event": LogEvent.S3_DELETE_FAILED,
+                            "batch_size": len(batch),
+                            "error": str(e),
+                        },
+                    )
 
         return deleted_keys
 

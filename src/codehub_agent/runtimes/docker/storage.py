@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel
 
 from codehub_agent.infra import S3Operations
+from codehub_agent.logging_schema import LogEvent
 
 if TYPE_CHECKING:
     from codehub_agent.config import AgentConfig
@@ -55,7 +56,10 @@ class StorageManager:
         # Use batch delete for better performance
         deleted_keys = await self._s3.delete_objects(keys_to_delete)
 
-        logger.info("GC completed: deleted %d archives", len(deleted_keys))
+        logger.info(
+            "GC completed",
+            extra={"event": LogEvent.GC_COMPLETED, "deleted_count": len(deleted_keys)},
+        )
         return len(deleted_keys), deleted_keys
 
     async def list_archives(self, prefix: str = "") -> list[ArchiveInfo]:
@@ -94,9 +98,15 @@ class StorageManager:
     async def delete_archive(self, archive_key: str) -> bool:
         success = await self._s3.delete_object(archive_key)
         if success:
-            logger.info("Deleted archive: %s", archive_key)
+            logger.info(
+                "Archive deleted",
+                extra={"event": LogEvent.ARCHIVE_DELETED, "archive_key": archive_key},
+            )
         else:
-            logger.warning("Failed to delete archive: %s", archive_key)
+            logger.warning(
+                "Failed to delete archive",
+                extra={"event": LogEvent.S3_DELETE_FAILED, "archive_key": archive_key},
+            )
         return success
 
     async def archive_exists(self, archive_key: str) -> bool:

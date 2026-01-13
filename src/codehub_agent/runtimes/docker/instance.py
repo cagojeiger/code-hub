@@ -9,6 +9,7 @@ import httpx
 from pydantic import BaseModel
 
 from codehub_agent.infra import ContainerAPI, ContainerConfig, HostConfig, ImageAPI
+from codehub_agent.logging_schema import LogEvent
 
 if TYPE_CHECKING:
     from codehub_agent.config import AgentConfig
@@ -93,11 +94,26 @@ class InstanceManager:
         if existing:
             try:
                 await self._containers.start(container_name)
-                logger.info("Started existing container: %s", container_name)
+                logger.info(
+                    "Started existing container",
+                    extra={
+                        "event": LogEvent.CONTAINER_STARTED,
+                        "container": container_name,
+                        "workspace_id": workspace_id,
+                        "existing": True,
+                    },
+                )
                 return
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 404:
-                    logger.warning("Container disappeared, recreating: %s", container_name)
+                    logger.warning(
+                        "Container disappeared, recreating",
+                        extra={
+                            "event": LogEvent.CONTAINER_REMOVED,
+                            "container": container_name,
+                            "workspace_id": workspace_id,
+                        },
+                    )
                     await self._containers.remove(container_name)
                 else:
                     raise
@@ -121,7 +137,15 @@ class InstanceManager:
 
         await self._containers.create(config)
         await self._containers.start(container_name)
-        logger.info("Created and started container: %s", container_name)
+        logger.info(
+            "Created and started container",
+            extra={
+                "event": LogEvent.CONTAINER_STARTED,
+                "container": container_name,
+                "workspace_id": workspace_id,
+                "image": image,
+            },
+        )
 
     async def delete(self, workspace_id: str) -> None:
         """Delete container for workspace."""

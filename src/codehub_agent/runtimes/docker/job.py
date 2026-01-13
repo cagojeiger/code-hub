@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from codehub_agent.api.errors import JobFailedError
 from codehub_agent.infra import ContainerAPI, ContainerConfig, HostConfig
+from codehub_agent.logging_schema import LogEvent
 
 if TYPE_CHECKING:
     from codehub_agent.config import AgentConfig
@@ -53,7 +54,10 @@ class JobRunner:
         try:
             await self._containers.remove(container_name, force=True)
         except Exception as e:
-            logger.warning("Force cleanup failed for %s: %s", container_name, e)
+            logger.warning(
+                "Force cleanup failed",
+                extra={"event": LogEvent.JOB_FAILED, "container": container_name, "error": str(e)},
+            )
 
     async def _run_job(
         self,
@@ -108,10 +112,14 @@ class JobRunner:
             logs_str = logs.decode("utf-8", errors="replace")
 
             logger.info(
-                "%s job completed: %s, exit_code=%d",
-                job_type.value.capitalize(),
-                helper_name,
-                exit_code,
+                "Job completed",
+                extra={
+                    "event": LogEvent.JOB_COMPLETED,
+                    "job_type": job_type.value,
+                    "container": helper_name,
+                    "workspace_id": workspace_id,
+                    "exit_code": exit_code,
+                },
             )
 
             if exit_code != 0:
@@ -122,7 +130,15 @@ class JobRunner:
             return JobResult(exit_code=exit_code, logs=logs_str)
 
         except asyncio.CancelledError:
-            logger.warning("%s job cancelled: %s", job_type.value.capitalize(), helper_name)
+            logger.warning(
+                "Job cancelled",
+                extra={
+                    "event": LogEvent.JOB_CANCELLED,
+                    "job_type": job_type.value,
+                    "container": helper_name,
+                    "workspace_id": workspace_id,
+                },
+            )
             await self._force_cleanup(helper_name)
             raise
 
@@ -131,10 +147,13 @@ class JobRunner:
                 await self._containers.remove(helper_name)
             except Exception as e:
                 logger.error(
-                    "Failed to cleanup %s job container %s: %s",
-                    job_type.value,
-                    helper_name,
-                    e,
+                    "Failed to cleanup job container",
+                    extra={
+                        "event": LogEvent.JOB_FAILED,
+                        "job_type": job_type.value,
+                        "container": helper_name,
+                        "error": str(e),
+                    },
                 )
 
     async def run_archive(self, workspace_id: str, op_id: str) -> JobResult:

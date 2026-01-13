@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from codehub_agent.api.errors import VolumeInUseError
 from codehub_agent.config import get_agent_config
+from codehub_agent.logging_schema import LogEvent
 
 logger = logging.getLogger(__name__)
 
@@ -192,10 +193,16 @@ class ContainerAPI:
             json=config.to_api(),
         )
         if resp.status_code == 409:
-            logger.debug("Container already exists: %s", config.name)
+            logger.debug(
+                "Container already exists",
+                extra={"event": LogEvent.CONTAINER_CREATED, "container": config.name, "exists": True},
+            )
             return
         resp.raise_for_status()
-        logger.info("Created container: %s", config.name)
+        logger.info(
+            "Container created",
+            extra={"event": LogEvent.CONTAINER_CREATED, "container": config.name, "image": config.image},
+        )
 
     async def start(self, name: str) -> None:
         """Start a container."""
@@ -203,7 +210,10 @@ class ContainerAPI:
         resp = await client.post(f"/containers/{name}/start")
         if resp.status_code not in (204, 304):
             resp.raise_for_status()
-        logger.info("Started container: %s", name)
+        logger.info(
+            "Container started",
+            extra={"event": LogEvent.CONTAINER_STARTED, "container": name},
+        )
 
     async def stop(self, name: str, timeout: int = 10) -> None:
         """Stop a container."""
@@ -211,7 +221,10 @@ class ContainerAPI:
         resp = await client.post(f"/containers/{name}/stop", params={"t": str(timeout)})
         if resp.status_code not in (204, 304, 404):
             resp.raise_for_status()
-        logger.info("Stopped container: %s", name)
+        logger.info(
+            "Container stopped",
+            extra={"event": LogEvent.CONTAINER_STOPPED, "container": name},
+        )
 
     async def remove(self, name: str, force: bool = True) -> None:
         """Remove a container."""
@@ -220,10 +233,16 @@ class ContainerAPI:
             f"/containers/{name}", params={"force": "true" if force else "false"}
         )
         if resp.status_code == 404:
-            logger.debug("Container not found: %s", name)
+            logger.debug(
+                "Container not found",
+                extra={"event": LogEvent.CONTAINER_REMOVED, "container": name, "exists": False},
+            )
             return
         resp.raise_for_status()
-        logger.info("Removed container: %s", name)
+        logger.info(
+            "Container removed",
+            extra={"event": LogEvent.CONTAINER_REMOVED, "container": name},
+        )
 
     async def wait(self, name: str, timeout: int | None = None) -> int:
         """Wait for container to exit and return exit code."""
@@ -239,7 +258,10 @@ class ContainerAPI:
         resp.raise_for_status()
         data = resp.json()
         exit_code = data.get("StatusCode", -1)
-        logger.info("Container %s exited with code %d", name, exit_code)
+        logger.info(
+            "Container exited",
+            extra={"event": LogEvent.CONTAINER_EXITED, "container": name, "exit_code": exit_code},
+        )
         return exit_code
 
     async def logs(self, name: str, stdout: bool = True, stderr: bool = True) -> bytes:
@@ -287,22 +309,34 @@ class VolumeAPI:
         client = await self._docker.get()
         resp = await client.post("/volumes/create", json=config.to_api())
         if resp.status_code == 409:
-            logger.debug("Volume already exists: %s", config.name)
+            logger.debug(
+                "Volume already exists",
+                extra={"event": LogEvent.VOLUME_CREATED, "volume": config.name, "exists": True},
+            )
             return
         resp.raise_for_status()
-        logger.info("Created volume: %s", config.name)
+        logger.info(
+            "Volume created",
+            extra={"event": LogEvent.VOLUME_CREATED, "volume": config.name},
+        )
 
     async def remove(self, name: str) -> None:
         """Remove a volume."""
         client = await self._docker.get()
         resp = await client.delete(f"/volumes/{name}")
         if resp.status_code == 404:
-            logger.debug("Volume not found: %s", name)
+            logger.debug(
+                "Volume not found",
+                extra={"event": LogEvent.VOLUME_REMOVED, "volume": name, "exists": False},
+            )
             return
         if resp.status_code == 409:
             raise VolumeInUseError(f"Volume {name} is in use by a container")
         resp.raise_for_status()
-        logger.info("Removed volume: %s", name)
+        logger.info(
+            "Volume removed",
+            extra={"event": LogEvent.VOLUME_REMOVED, "volume": name},
+        )
 
 
 # =============================================================================
@@ -331,7 +365,10 @@ class ImageAPI:
         else:
             image, tag = image_ref, "latest"
 
-        logger.info("Pulling image: %s:%s", image, tag)
+        logger.info(
+            "Pulling image",
+            extra={"event": LogEvent.IMAGE_PULLED, "image": image, "tag": tag, "started": True},
+        )
 
         resp = await client.post(
             "/images/create",
@@ -339,7 +376,10 @@ class ImageAPI:
             timeout=_agent_config.image_pull_timeout,
         )
         resp.raise_for_status()
-        logger.info("Pulled image: %s:%s", image, tag)
+        logger.info(
+            "Image pulled",
+            extra={"event": LogEvent.IMAGE_PULLED, "image": image, "tag": tag},
+        )
 
     async def ensure(self, image_ref: str) -> None:
         """Ensure image exists locally, pull if not."""
