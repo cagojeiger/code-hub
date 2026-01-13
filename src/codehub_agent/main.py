@@ -18,15 +18,14 @@ from codehub_agent.api.v1 import (
 from codehub_agent.api.errors import AgentError
 from codehub_agent.config import get_agent_config
 from codehub_agent.infra import close_docker, ContainerAPI
+from codehub_agent.logging import setup_logging
 
 # Import metrics to ensure they are registered
 import codehub_agent.metrics  # noqa: F401
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Configure logging using config
+_config = get_agent_config()
+setup_logging(_config.logging)
 logger = logging.getLogger(__name__)
 
 
@@ -78,7 +77,7 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_config.server.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
