@@ -15,7 +15,6 @@ from pydantic import BaseModel
 from codehub_agent.api.errors import JobFailedError
 from codehub_agent.infra import ContainerAPI, ContainerConfig, HostConfig
 from codehub_agent.logging_schema import LogEvent
-from codehub_agent.runtimes.docker.lock import get_workspace_lock
 from codehub_agent.runtimes.docker.result import OperationResult, OperationStatus
 
 if TYPE_CHECKING:
@@ -263,78 +262,76 @@ class JobRunner:
     async def run_archive(self, workspace_id: str, archive_op_id: str) -> OperationResult:
         """Volume -> S3. URL is constructed from archive_op_id.
 
-        Uses workspace lock to prevent TOCTOU race condition.
         Checks for existing running archive job with same archive_op_id (idempotency).
         Returns OperationResult with status and archive_key.
-        """
-        async with get_workspace_lock(workspace_id):
-            # Check for existing running job with same archive_op_id
-            existing = await self.find_running_job(workspace_id, JobType.ARCHIVE, archive_op_id)
-            if existing:
-                logger.info(
-                    "Archive job already running",
-                    extra={
-                        "event": LogEvent.JOB_COMPLETED,
-                        "job_type": "archive",
-                        "workspace_id": workspace_id,
-                        "archive_op_id": archive_op_id,
-                        "status": "in_progress",
-                    },
-                )
-                return OperationResult(
-                    status=OperationStatus.IN_PROGRESS,
-                    message="Archive job already running",
-                )
 
-            # Run the job (lock is released after job starts, not after completion)
-            await self._run_job(JobType.ARCHIVE, workspace_id, archive_op_id=archive_op_id)
-            archive_key = self._naming.archive_s3_key(workspace_id, archive_op_id)
-            return OperationResult(
-                status=OperationStatus.COMPLETED,
-                archive_key=archive_key,
+        Note: Caller must hold workspace lock for atomicity.
+        """
+        # Check for existing running job with same archive_op_id
+        existing = await self.find_running_job(workspace_id, JobType.ARCHIVE, archive_op_id)
+        if existing:
+            logger.info(
+                "Archive job already running",
+                extra={
+                    "event": LogEvent.JOB_COMPLETED,
+                    "job_type": "archive",
+                    "workspace_id": workspace_id,
+                    "archive_op_id": archive_op_id,
+                    "status": "in_progress",
+                },
             )
+            return OperationResult(
+                status=OperationStatus.IN_PROGRESS,
+                message="Archive job already running",
+            )
+
+        await self._run_job(JobType.ARCHIVE, workspace_id, archive_op_id=archive_op_id)
+        archive_key = self._naming.archive_s3_key(workspace_id, archive_op_id)
+        return OperationResult(
+            status=OperationStatus.COMPLETED,
+            archive_key=archive_key,
+        )
 
     async def run_restore(self, workspace_id: str, archive_key: str) -> OperationResult:
         """S3 -> Volume. Receives archive_key directly per spec (L229).
 
-        Uses workspace lock to prevent TOCTOU race condition.
         Checks for existing running restore job first (idempotency).
         Returns OperationResult with status and restore_marker.
+
+        Note: Caller must hold workspace lock for atomicity.
         """
         # Extract archive_op_id from archive_key for labeling
         # Format: {prefix}{ws_id}/{archive_op_id}/home.tar.zst
         archive_op_id = self._extract_archive_op_id(archive_key)
 
-        async with get_workspace_lock(workspace_id):
-            # Check for existing running restore job (workspace level, not op_id level)
-            # Restore doesn't need op_id filtering - only one restore at a time per workspace
-            existing = await self.find_running_job(workspace_id, JobType.RESTORE)
-            if existing:
-                logger.info(
-                    "Restore job already running",
-                    extra={
-                        "event": LogEvent.JOB_COMPLETED,
-                        "job_type": "restore",
-                        "workspace_id": workspace_id,
-                        "status": "in_progress",
-                    },
-                )
-                return OperationResult(
-                    status=OperationStatus.IN_PROGRESS,
-                    message="Restore job already running",
-                )
-
-            # Run the job
-            archive_url = f"s3://{self._config.s3.bucket}/{archive_key}"
-            await self._run_job(
-                JobType.RESTORE, workspace_id,
-                archive_op_id=archive_op_id,
-                archive_url=archive_url,
+        # Check for existing running restore job (workspace level, not op_id level)
+        # Restore doesn't need op_id filtering - only one restore at a time per workspace
+        existing = await self.find_running_job(workspace_id, JobType.RESTORE)
+        if existing:
+            logger.info(
+                "Restore job already running",
+                extra={
+                    "event": LogEvent.JOB_COMPLETED,
+                    "job_type": "restore",
+                    "workspace_id": workspace_id,
+                    "status": "in_progress",
+                },
             )
             return OperationResult(
-                status=OperationStatus.COMPLETED,
-                restore_marker=archive_key,
+                status=OperationStatus.IN_PROGRESS,
+                message="Restore job already running",
             )
+
+        archive_url = f"s3://{self._config.s3.bucket}/{archive_key}"
+        await self._run_job(
+            JobType.RESTORE, workspace_id,
+            archive_op_id=archive_op_id,
+            archive_url=archive_url,
+        )
+        return OperationResult(
+            status=OperationStatus.COMPLETED,
+            restore_marker=archive_key,
+        )
 
     def _extract_archive_op_id(self, archive_key: str) -> str | None:
         """Extract archive_op_id from archive_key.

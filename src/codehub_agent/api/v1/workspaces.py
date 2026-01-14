@@ -289,19 +289,20 @@ async def archive(
 
     Returns status=in_progress if archive job already running (idempotency).
     """
-    result = await runtime.jobs.run_archive(workspace_id, request.archive_op_id)
+    async with get_workspace_lock(workspace_id):
+        result = await runtime.jobs.run_archive(workspace_id, request.archive_op_id)
 
-    # For in_progress, return expected key (job is still running)
-    if result.archive_key:
-        archive_key = result.archive_key
-    else:
-        archive_key = runtime.get_archive_key(workspace_id, request.archive_op_id)
+        # For in_progress, return expected key (job is still running)
+        if result.archive_key:
+            archive_key = result.archive_key
+        else:
+            archive_key = runtime.get_archive_key(workspace_id, request.archive_op_id)
 
-    return ArchiveResponse(
-        status=result.status.value,
-        workspace_id=workspace_id,
-        archive_key=archive_key,
-    )
+        return ArchiveResponse(
+            status=result.status.value,
+            workspace_id=workspace_id,
+            archive_key=archive_key,
+        )
 
 
 @router.post("/{workspace_id}/restore", response_model=RestoreResponse)
@@ -316,16 +317,17 @@ async def restore(
     Returns restore_marker for crash recovery verification.
     Returns status=in_progress if restore job already running (idempotency).
     """
-    result = await runtime.jobs.run_restore(workspace_id, request.archive_key)
+    async with get_workspace_lock(workspace_id):
+        result = await runtime.jobs.run_restore(workspace_id, request.archive_key)
 
-    # Use result.restore_marker if completed, else use the requested key
-    restore_marker = result.restore_marker or request.archive_key
+        # Use result.restore_marker if completed, else use the requested key
+        restore_marker = result.restore_marker or request.archive_key
 
-    return RestoreResponse(
-        status=result.status.value,
-        workspace_id=workspace_id,
-        restore_marker=restore_marker,
-    )
+        return RestoreResponse(
+            status=result.status.value,
+            workspace_id=workspace_id,
+            restore_marker=restore_marker,
+        )
 
 
 @router.delete("/archives", response_model=DeleteArchiveResponse)
