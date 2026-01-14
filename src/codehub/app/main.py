@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from codehub import __version__
 from codehub.app.api.v1 import auth_router, events_router, workspaces_router
 from codehub.app.config import get_settings
-from codehub.app.logging import setup_logging
+from codehub.app.logging import get_trace_id, setup_logging
 from codehub.app.middleware import LoggingMiddleware
 from codehub.core.errors import CodeHubError
 from codehub.core.logging_schema import LogEvent
@@ -137,6 +137,24 @@ async def codehub_error_handler(request: Request, exc: CodeHubError) -> JSONResp
     return JSONResponse(
         status_code=exc.status_code,
         content=exc.to_response().model_dump(),
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Handle unhandled exceptions with logging."""
+    logger.exception(
+        "Unhandled exception",
+        extra={
+            "event": LogEvent.UNHANDLED_EXCEPTION,
+            "path": request.url.path,
+            "method": request.method,
+            "trace_id": get_trace_id(),
+        },
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
     )
 
 

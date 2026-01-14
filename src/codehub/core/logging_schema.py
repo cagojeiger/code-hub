@@ -72,4 +72,7 @@ class LogEvent(StrEnum):
     REDIS_SUBSCRIBED = "redis_subscribed"
     REDIS_CONNECTION_ERROR = "redis_connection_error"
 
+    # Error events
+    UNHANDLED_EXCEPTION = "unhandled_exception"
+
 

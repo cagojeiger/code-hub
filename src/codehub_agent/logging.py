@@ -40,6 +40,10 @@ class RateLimitFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         """Filter duplicate messages within the rate limit window."""
+        # ERROR and above always pass through (critical for debugging)
+        if record.levelno >= logging.ERROR:
+            return True
+
         # Create a key from the log message and location
         key = f"{record.name}:{record.lineno}:{record.getMessage()}"
 

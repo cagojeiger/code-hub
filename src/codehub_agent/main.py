@@ -124,9 +124,36 @@ app.add_middleware(
 @app.exception_handler(AgentError)
 async def agent_error_handler(request: Request, exc: AgentError) -> JSONResponse:
     """Handle AgentError exceptions."""
+    logger.warning(
+        "Agent error",
+        extra={
+            "event": LogEvent.AGENT_ERROR,
+            "error_code": exc.code.value,
+            "path": request.url.path,
+            "method": request.method,
+        },
+    )
     return JSONResponse(
         status_code=exc.status_code,
         content=exc.to_response().model_dump(),
+    )
+
+
+# Error handler for unhandled exceptions
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Handle unhandled exceptions with logging."""
+    logger.exception(
+        "Unhandled exception",
+        extra={
+            "event": LogEvent.UNHANDLED_EXCEPTION,
+            "path": request.url.path,
+            "method": request.method,
+        },
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
     )
 
 

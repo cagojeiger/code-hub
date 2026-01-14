@@ -78,9 +78,9 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         try:
             response = await call_next(request)
         except Exception:
-            # Log failed requests
+            # Log failed requests with stack trace
             duration_ms = (time.monotonic() - start) * 1000
-            logger.error(
+            logger.exception(
                 "Request failed",
                 extra={
                     "event": LogEvent.REQUEST_FAILED,

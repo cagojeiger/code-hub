@@ -44,3 +44,7 @@ class LogEvent(StrEnum):
     CLEANUP_STARTED = "cleanup_started"
     CLEANUP_COMPLETED = "cleanup_completed"
     CLEANUP_FAILED = "cleanup_failed"
+
+    # Error events
+    UNHANDLED_EXCEPTION = "unhandled_exception"
+    AGENT_ERROR = "agent_error"
