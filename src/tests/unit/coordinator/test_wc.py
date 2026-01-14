@@ -360,37 +360,26 @@ class TestExecute:
 
         mock_runtime.stop.assert_called_once_with(ws.id)
 
-    async def test_archiving(self, wc: WorkspaceController, mock_runtime: AsyncMock):
-        """ARCHIVING → runtime.archive() + runtime.delete()."""
-        ws = make_workspace()
+    async def test_archiving_phase1(self, wc: WorkspaceController, mock_runtime: AsyncMock):
+        """ARCHIVING Phase 1: archive_ready=False → runtime.archive() only."""
+        ws = make_workspace(conditions={"archive": {"exists": False}, "volume": {"exists": True}})
         action = PlanAction(operation=Operation.ARCHIVING, phase=Phase.STANDBY, archive_op_id="op-1")
 
         await wc._execute(ws, action)
 
         mock_runtime.archive.assert_called_once_with(ws.id, "op-1")
-        mock_runtime.delete.assert_called_once_with(ws.id)
+        mock_runtime.delete.assert_not_called()
         assert action.archive_key == "ws-1/op-1/home.tar.zst"
 
-    async def test_archiving_call_order(self, wc: WorkspaceController, mock_runtime: AsyncMock):
-        """ARCHIVING: archive → delete 순서 확인."""
-        call_order: list[str] = []
-
-        async def track_archive(*args):
-            call_order.append("archive")
-            return "ws-1/op-1/home.tar.zst"
-
-        async def track_delete(*args):
-            call_order.append("delete")
-
-        mock_runtime.archive.side_effect = track_archive
-        mock_runtime.delete.side_effect = track_delete
-
-        ws = make_workspace()
+    async def test_archiving_phase2(self, wc: WorkspaceController, mock_runtime: AsyncMock):
+        """ARCHIVING Phase 2: archive_ready=True, volume_ready=True → runtime.delete() only."""
+        ws = make_workspace(conditions={"archive": {"exists": True}, "volume": {"exists": True}})
         action = PlanAction(operation=Operation.ARCHIVING, phase=Phase.STANDBY, archive_op_id="op-1")
 
         await wc._execute(ws, action)
 
-        assert call_order == ["archive", "delete"]
+        mock_runtime.archive.assert_not_called()
+        mock_runtime.delete.assert_called_once_with(ws.id)
 
     async def test_restoring(self, wc: WorkspaceController, mock_runtime: AsyncMock):
         """RESTORING → runtime.restore()."""

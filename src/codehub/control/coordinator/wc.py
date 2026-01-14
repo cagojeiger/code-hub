@@ -40,6 +40,7 @@ from codehub.control.coordinator.wc_planner import (
     needs_execute,
     plan,
 )
+from codehub.core.domain.conditions import ConditionInput
 from codehub.core.domain.workspace import (
     ErrorReason,
     Operation,
@@ -321,11 +322,19 @@ class WorkspaceController(CoordinatorBase):
                     await self._runtime.stop(ws.id)
 
                 case Operation.ARCHIVING:
-                    # 2단계 operation: archive → delete (Agent가 volume 정리 포함)
+                    # 2단계 operation (Fire-and-Forget 대응)
+                    cond = ConditionInput.from_conditions(ws.conditions or {})
                     archive_op_id = action.archive_op_id or ws.archive_op_id or str(uuid4())
-                    archive_key = await self._runtime.archive(ws.id, archive_op_id)
-                    action.archive_key = archive_key
-                    await self._runtime.delete(ws.id)  # Container + Volume 삭제
+
+                    # Phase 1: archive 시작 (archive_ready가 아직 아닐 때)
+                    if not cond.archive_ready:
+                        archive_key = await self._runtime.archive(ws.id, archive_op_id)
+                        action.archive_key = archive_key
+                        # delete() 호출 안함 - 다음 tick에서 archive_ready 확인
+
+                    # Phase 2: archive 완료 후 delete (archive_ready이고 volume이 아직 있을 때)
+                    elif cond.volume_ready:
+                        await self._runtime.delete(ws.id)  # Container + Volume 삭제
 
                 case Operation.CREATE_EMPTY_ARCHIVE:
                     archive_op_id = action.archive_op_id or ws.archive_op_id or str(uuid4())
