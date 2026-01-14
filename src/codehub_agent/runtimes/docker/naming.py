@@ -8,7 +8,6 @@ class ResourceNaming:
 
     def __init__(self, config: AgentConfig) -> None:
         self._prefix = config.runtime.resource_prefix
-        self._cluster_id = config.cluster_id
         self._s3_bucket = config.s3.bucket
         self._archive_suffix = config.runtime.archive_suffix
 
@@ -26,11 +25,11 @@ class ResourceNaming:
     def volume_name(self, workspace_id: str) -> str:
         return f"{self._prefix}{workspace_id}-home"
 
-    def archive_s3_key(self, workspace_id: str, op_id: str) -> str:
-        return f"{self._prefix}{workspace_id}/{op_id}/{self._archive_suffix}"
+    def archive_s3_key(self, workspace_id: str, archive_op_id: str) -> str:
+        return f"{self._prefix}{workspace_id}/{archive_op_id}/{self._archive_suffix}"
 
-    def archive_s3_url(self, workspace_id: str, op_id: str) -> str:
-        key = self.archive_s3_key(workspace_id, op_id)
+    def archive_s3_url(self, workspace_id: str, archive_op_id: str) -> str:
+        key = self.archive_s3_key(workspace_id, archive_op_id)
         return f"s3://{self._s3_bucket}/{key}"
 
     def workspace_id_from_container(self, container_name: str) -> str | None:

@@ -88,7 +88,6 @@ async def lifespan(app: FastAPI):
         extra={
             "event": LogEvent.APP_STARTED,
             "version": __version__,
-            "cluster_id": config.cluster_id,
         },
     )
 

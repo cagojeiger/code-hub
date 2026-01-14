@@ -123,7 +123,7 @@ class GCRunner:
         Returns:
             (archive_keys, protected_workspaces) or None on error
             - archive_keys: archive_key column values (RESTORING target protection)
-            - protected_workspaces: (ws_id, op_id) tuples (ARCHIVING crash recovery)
+            - protected_workspaces: (ws_id, archive_op_id) tuples (ARCHIVING crash recovery)
         """
         try:
             # 1. archive_key 조회 (RESTORING 대상 보호)
@@ -136,12 +136,12 @@ class GCRunner:
             )
             archive_keys = [row[0] for row in result1.fetchall()]
 
-            # 2. (ws_id, op_id) 조회 (ARCHIVING crash 대비)
+            # 2. (ws_id, archive_op_id) 조회 (ARCHIVING crash 대비)
             result2 = await self._conn.execute(
                 text("""
-                    SELECT DISTINCT id::text, op_id
+                    SELECT DISTINCT id::text, archive_op_id
                     FROM workspaces
-                    WHERE op_id IS NOT NULL AND deleted_at IS NULL
+                    WHERE archive_op_id IS NOT NULL AND deleted_at IS NULL
                 """)
             )
             protected_workspaces = [(row[0], row[1]) for row in result2.fetchall()]

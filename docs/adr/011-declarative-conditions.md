@@ -115,7 +115,7 @@ Kubernetes의 Conditions 패턴을 참고하여:
 1. **조건이 기본 단위**: 각 조건은 True/False + reason/message
 2. **Phase는 파생 값**: 조건들의 조합으로 최종 상태를 계산
 3. **단일 소유자**: 각 조건은 하나의 컴포넌트만 갱신
-4. **동시성은 분리**: operation/op_id CAS는 그대로 유지
+4. **동시성은 분리**: operation/archive_op_id CAS는 그대로 유지 (ARCHIVING/CREATE_EMPTY_ARCHIVE 전용)
 
 ---
 
@@ -157,7 +157,7 @@ Kubernetes의 Conditions 패턴을 참고하여:
 
 - **ADR-009**: Status와 Operation 분리
   - **Superseded**: status 분리 개념 → Conditions 패턴으로 대체
-  - **Still Valid**: operation 분리 개념, operation/op_id CAS 동시성 제어
+  - **Still Valid**: operation 분리 개념, operation/archive_op_id CAS 동시성 제어
 
 ---
 

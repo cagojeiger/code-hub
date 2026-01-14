@@ -319,14 +319,14 @@ class WorkspaceController(CoordinatorBase):
 
                 case Operation.ARCHIVING:
                     # 2단계 operation: archive → delete (Agent가 volume 정리 포함)
-                    op_id = action.op_id or ws.op_id or str(uuid4())
-                    archive_key = await self._runtime.archive(ws.id, op_id)
+                    archive_op_id = action.archive_op_id or ws.archive_op_id or str(uuid4())
+                    archive_key = await self._runtime.archive(ws.id, archive_op_id)
                     action.archive_key = archive_key
                     await self._runtime.delete(ws.id)  # Container + Volume 삭제
 
                 case Operation.CREATE_EMPTY_ARCHIVE:
-                    op_id = action.op_id or ws.op_id or str(uuid4())
-                    archive_key = await self._runtime.archive(ws.id, op_id)
+                    archive_op_id = action.archive_op_id or ws.archive_op_id or str(uuid4())
+                    archive_key = await self._runtime.archive(ws.id, archive_op_id)
                     action.archive_key = archive_key
 
                 case Operation.DELETING:
@@ -349,15 +349,19 @@ class WorkspaceController(CoordinatorBase):
         if action.operation != Operation.NONE and ws_op == Operation.NONE:
             # 새 operation 시작
             op_started_at = now
-            op_id = action.op_id or str(uuid4())
+            # archive_op_id는 ARCHIVING/CREATE_EMPTY에서만 새로 생성
+            if action.operation in (Operation.ARCHIVING, Operation.CREATE_EMPTY_ARCHIVE):
+                archive_op_id = action.archive_op_id or str(uuid4())
+            else:
+                archive_op_id = ws.archive_op_id  # 다른 operation은 기존 값 유지
         elif action.operation == Operation.NONE:
             # operation 완료 또는 no-op
             op_started_at = None
-            op_id = ws.op_id  # GC 보호용 유지
+            archive_op_id = ws.archive_op_id  # GC 보호용 유지
         else:
             # 진행 중
             op_started_at = ws.op_started_at
-            op_id = ws.op_id
+            archive_op_id = ws.archive_op_id
 
         # error_count 계산
         if action.error_reason:
@@ -379,7 +383,7 @@ class WorkspaceController(CoordinatorBase):
             phase=action.phase,
             operation=action.operation,
             op_started_at=op_started_at,
-            op_id=op_id,
+            archive_op_id=archive_op_id,
             archive_key=action.archive_key,
             error_count=error_count,
             error_reason=action.error_reason,
@@ -439,7 +443,7 @@ class WorkspaceController(CoordinatorBase):
         phase: Phase,
         operation: Operation,
         op_started_at: datetime | None,
-        op_id: str | None,
+        archive_op_id: str | None,
         archive_key: str | None,
         error_count: int,
         error_reason: ErrorReason | None,
@@ -454,7 +458,7 @@ class WorkspaceController(CoordinatorBase):
             "phase": phase.value,
             "operation": operation.value,
             "op_started_at": op_started_at,
-            "op_id": op_id,
+            "archive_op_id": archive_op_id,
             "error_count": error_count,
             "error_reason": error_reason.value if error_reason else None,
             "updated_at": updated_at or datetime.now(UTC),

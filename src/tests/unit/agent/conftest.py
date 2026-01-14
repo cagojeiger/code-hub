@@ -54,7 +54,6 @@ def mock_agent_config() -> MagicMock:
     - config.runtime.* for runtime settings
     """
     config = MagicMock()
-    config.cluster_id = "test-cluster"
 
     # Docker sub-config
     config.docker = MagicMock()

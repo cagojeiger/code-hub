@@ -73,9 +73,9 @@ class OperationResponse(BaseModel):
 
 
 class ArchiveRequest(BaseModel):
-    """Archive request with op_id."""
+    """Archive request with archive_op_id."""
 
-    op_id: str
+    archive_op_id: str
 
 
 class ArchiveResponse(BaseModel):
@@ -111,7 +111,7 @@ class GCRequest(BaseModel):
 
     Two types of protection:
     - archive_keys: Direct archive_key column values (RESTORING target)
-    - protected_workspaces: (ws_id, op_id) tuples for path calculation (ARCHIVING crash)
+    - protected_workspaces: (ws_id, archive_op_id) tuples for path calculation (ARCHIVING crash)
     """
 
     archive_keys: list[str]
@@ -279,8 +279,8 @@ async def archive(
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> ArchiveResponse:
     """Archive workspace to S3."""
-    await runtime.jobs.run_archive(workspace_id, request.op_id)
-    archive_key = runtime.get_archive_key(workspace_id, request.op_id)
+    await runtime.jobs.run_archive(workspace_id, request.archive_op_id)
+    archive_key = runtime.get_archive_key(workspace_id, request.archive_op_id)
     return ArchiveResponse(
         status="archived",
         workspace_id=workspace_id,
@@ -351,7 +351,7 @@ async def run_gc(
     Deletes archives not in the protected list.
     Two types of protection:
     - archive_keys: Direct paths (RESTORING target)
-    - protected_workspaces: (ws_id, op_id) for path calculation (ARCHIVING crash)
+    - protected_workspaces: (ws_id, archive_op_id) for path calculation (ARCHIVING crash)
     """
     deleted_count, deleted_keys = await runtime.storage.run_gc(
         request.archive_keys,

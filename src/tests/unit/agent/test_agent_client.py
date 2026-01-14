@@ -207,7 +207,7 @@ class TestAgentClient:
         mock_req.assert_called_once_with(
             "post",
             "/api/v1/workspaces/ws1/archive",
-            json={"op_id": "op123"},
+            json={"archive_op_id": "op123"},
             timeout=600.0,
         )
 
@@ -289,7 +289,10 @@ class TestAgentClient:
         }
 
         with patch.object(client, "_request", return_value=mock_response) as mock_req:
-            result = await client.run_gc([("ws3", "op3"), ("ws4", "op4")])
+            result = await client.run_gc(
+                archive_keys=["ws3/op3/home.tar.zst"],
+                protected_workspaces=[("ws4", "op4")],
+            )
 
         assert result.deleted_count == 2
         assert len(result.deleted_keys) == 2
@@ -297,17 +300,15 @@ class TestAgentClient:
             "post",
             "/api/v1/workspaces/gc",
             json={
-                "protected": [
-                    {"workspace_id": "ws3", "op_id": "op3"},
-                    {"workspace_id": "ws4", "op_id": "op4"},
-                ]
+                "archive_keys": ["ws3/op3/home.tar.zst"],
+                "protected_workspaces": [("ws4", "op4")],
             },
         )
 
     async def test_run_gc_empty_on_none(self, client: AgentClient) -> None:
         """Test run_gc returns empty result when response is None."""
         with patch.object(client, "_request", return_value=None):
-            result = await client.run_gc([])
+            result = await client.run_gc([], [])
 
         assert result.deleted_count == 0
         assert result.deleted_keys == []

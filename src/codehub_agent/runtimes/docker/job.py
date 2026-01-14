@@ -85,20 +85,20 @@ class JobRunner:
         job_type: JobType,
         workspace_id: str,
         *,
-        op_id: str | None = None,
+        archive_op_id: str | None = None,
         archive_url: str | None = None,
     ) -> JobResult:
         """Run archive/restore job.
 
-        For archive: provide op_id (URL will be constructed)
+        For archive: provide archive_op_id (URL will be constructed)
         For restore: provide archive_url directly (spec compliance)
 
         Uses a semaphore to limit concurrent jobs (default: 3).
         """
         if archive_url is None:
-            if op_id is None:
-                raise ValueError("Either op_id or archive_url must be provided")
-            archive_url = self._naming.archive_s3_url(workspace_id, op_id)
+            if archive_op_id is None:
+                raise ValueError("Either archive_op_id or archive_url must be provided")
+            archive_url = self._naming.archive_s3_url(workspace_id, archive_op_id)
 
         job_id = uuid.uuid4().hex[:8]
         helper_name = f"codehub-job-{job_type.value}-{job_id}"
@@ -180,9 +180,9 @@ class JobRunner:
                         },
                     )
 
-    async def run_archive(self, workspace_id: str, op_id: str) -> JobResult:
-        """Volume -> S3. URL is constructed from op_id."""
-        return await self._run_job(JobType.ARCHIVE, workspace_id, op_id=op_id)
+    async def run_archive(self, workspace_id: str, archive_op_id: str) -> JobResult:
+        """Volume -> S3. URL is constructed from archive_op_id."""
+        return await self._run_job(JobType.ARCHIVE, workspace_id, archive_op_id=archive_op_id)
 
     async def run_restore(self, workspace_id: str, archive_key: str) -> JobResult:
         """S3 -> Volume. Receives archive_key directly per spec (L229)."""

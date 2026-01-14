@@ -159,12 +159,6 @@ class AgentConfig(BaseSettings):
         env_nested_delimiter="__",
     )
 
-    # Cluster identification (for multi-cluster deployments)
-    cluster_id: str = Field(
-        default="default",
-        description="Cluster ID (currently unused, reserved for multi-cluster)",
-    )
-
     # Sub-configurations
     docker: DockerConfig = Field(default_factory=DockerConfig)
     s3: S3Config = Field(default_factory=S3Config)

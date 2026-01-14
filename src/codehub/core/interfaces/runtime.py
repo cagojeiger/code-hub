@@ -203,14 +203,14 @@ class WorkspaceRuntime(ABC):
     # =========================================================================
 
     @abstractmethod
-    async def archive(self, workspace_id: str, op_id: str) -> str:
+    async def archive(self, workspace_id: str, archive_op_id: str) -> str:
         """Archive workspace to S3.
 
         Creates a compressed archive of the workspace volume.
 
         Args:
             workspace_id: Workspace identifier
-            op_id: Operation ID for idempotency
+            archive_op_id: Archiving operation ID for idempotency (S3 path)
 
         Returns:
             Archive key (e.g., "cluster-id/ws123/op456/home.tar.zst")
@@ -277,7 +277,7 @@ class WorkspaceRuntime(ABC):
         Args:
             archive_keys: List of archive_key column values (full S3 paths).
                           Protects archives during RESTORING.
-            protected_workspaces: List of (workspace_id, op_id) tuples.
+            protected_workspaces: List of (workspace_id, archive_op_id) tuples.
                                   Agent calculates S3 paths for ARCHIVING crash recovery.
 
         Returns:

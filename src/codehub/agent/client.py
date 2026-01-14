@@ -164,19 +164,19 @@ class AgentClient(WorkspaceRuntime):
         await self._request("delete", f"/api/v1/workspaces/{workspace_id}")
         logger.info("Deleted workspace: %s", workspace_id)
 
-    async def archive(self, workspace_id: str, op_id: str) -> str:
+    async def archive(self, workspace_id: str, archive_op_id: str) -> str:
         """Archive workspace to S3."""
         resp = await self._request(
             "post",
             f"/api/v1/workspaces/{workspace_id}/archive",
-            json={"op_id": op_id},
+            json={"archive_op_id": archive_op_id},
             timeout=self._config.job_timeout,
         )
         if resp is None:
             raise RuntimeError(f"Archive failed for {workspace_id}")
         data = resp.json()
         logger.info("Archived workspace: %s", workspace_id)
-        return data.get("archive_key", f"{workspace_id}/{op_id}/home.tar.zst")
+        return data.get("archive_key", f"{workspace_id}/{archive_op_id}/home.tar.zst")
 
     async def restore(self, workspace_id: str, archive_key: str) -> str:
         """Restore workspace from S3 archive.
@@ -233,7 +233,7 @@ class AgentClient(WorkspaceRuntime):
 
         Args:
             archive_keys: archive_key column values (RESTORING target protection)
-            protected_workspaces: (ws_id, op_id) tuples (ARCHIVING crash recovery)
+            protected_workspaces: (ws_id, archive_op_id) tuples (ARCHIVING crash recovery)
         """
         resp = await self._request(
             "post",

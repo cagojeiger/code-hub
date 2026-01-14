@@ -79,7 +79,7 @@ def make_workspace(
     conditions: dict | None = None,
     archive_key: str | None = None,
     op_started_at: datetime | None = None,
-    op_id: str | None = None,
+    archive_op_id: str | None = None,
     deleted_at: datetime | None = None,
     error_count: int = 0,
 ) -> Workspace:
@@ -97,7 +97,7 @@ def make_workspace(
         phase=phase.value,
         operation=operation.value,
         op_started_at=op_started_at,
-        op_id=op_id,
+        archive_op_id=archive_op_id,
         desired_state=desired_state.value,
         archive_key=archive_key,
         error_count=error_count,
@@ -250,7 +250,8 @@ class TestPlan:
         action = plan(plan_input)
 
         assert action.operation == Operation.PROVISIONING
-        assert action.op_id is not None
+        # PROVISIONING doesn't generate archive_op_id (only ARCHIVING/CREATE_EMPTY do)
+        assert action.archive_op_id is None
 
     def test_operation_in_progress_complete(self):
         """진행 중 operation 완료."""
@@ -260,7 +261,7 @@ class TestPlan:
             desired_state=DesiredState.RUNNING,
             conditions={"volume": {"exists": True, "reason": "VolumeExists", "message": ""}},
             op_started_at=datetime.now(UTC),
-            op_id="op-1",
+            archive_op_id=None,  # PROVISIONING doesn't use archive_op_id
         )
         plan_input = PlanInput.from_workspace(ws)
         action = plan(plan_input)
@@ -276,7 +277,7 @@ class TestPlan:
             desired_state=DesiredState.RUNNING,
             conditions={},
             op_started_at=datetime.now(UTC) - timedelta(seconds=400),
-            op_id="op-1",
+            archive_op_id=None,  # PROVISIONING doesn't use archive_op_id
         )
         plan_input = PlanInput.from_workspace(ws)
         action = plan(plan_input, timeout_seconds=300)
@@ -345,7 +346,7 @@ class TestExecute:
     async def test_archiving(self, wc: WorkspaceController, mock_runtime: AsyncMock):
         """ARCHIVING → runtime.archive() + runtime.delete()."""
         ws = make_workspace()
-        action = PlanAction(operation=Operation.ARCHIVING, phase=Phase.STANDBY, op_id="op-1")
+        action = PlanAction(operation=Operation.ARCHIVING, phase=Phase.STANDBY, archive_op_id="op-1")
 
         await wc._execute(ws, action)
 
@@ -368,7 +369,7 @@ class TestExecute:
         mock_runtime.delete.side_effect = track_delete
 
         ws = make_workspace()
-        action = PlanAction(operation=Operation.ARCHIVING, phase=Phase.STANDBY, op_id="op-1")
+        action = PlanAction(operation=Operation.ARCHIVING, phase=Phase.STANDBY, archive_op_id="op-1")
 
         await wc._execute(ws, action)
 
@@ -387,7 +388,7 @@ class TestExecute:
         """CREATE_EMPTY_ARCHIVE → runtime.archive()."""
         ws = make_workspace()
         action = PlanAction(
-            operation=Operation.CREATE_EMPTY_ARCHIVE, phase=Phase.PENDING, op_id="op-1"
+            operation=Operation.CREATE_EMPTY_ARCHIVE, phase=Phase.PENDING, archive_op_id="op-1"
         )
 
         await wc._execute(ws, action)
@@ -510,7 +511,7 @@ class TestCasUpdate:
             phase=Phase.STANDBY,
             operation=Operation.STARTING,
             op_started_at=datetime.now(UTC),
-            op_id="op-123",
+            archive_op_id=None,  # STARTING doesn't use archive_op_id
             archive_key=None,
             error_count=0,
             error_reason=None,
@@ -535,7 +536,7 @@ class TestCasUpdate:
             phase=Phase.RUNNING,
             operation=Operation.NONE,
             op_started_at=None,
-            op_id=None,
+            archive_op_id=None,
             archive_key=None,
             error_count=0,
             error_reason=None,
@@ -559,7 +560,7 @@ class TestCasUpdate:
             phase=Phase.RUNNING,
             operation=Operation.NONE,
             op_started_at=None,
-            op_id=None,
+            archive_op_id=None,
             archive_key=None,
             error_count=0,
             error_reason=None,

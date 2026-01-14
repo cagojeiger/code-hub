@@ -50,39 +50,53 @@ def runner(
 class TestGetProtectedArchives:
     """_get_protected_archives() tests."""
 
-    async def test_returns_workspace_op_id_pairs(
+    async def test_returns_archive_keys_and_workspace_pairs(
         self,
         runner: GCRunner,
         mock_conn: MagicMock,
     ):
-        """Returns (workspace_id, op_id) pairs from DB."""
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = [
+        """Returns (archive_keys, protected_workspaces) tuple from DB."""
+        # First query: archive_keys
+        mock_archive_keys_result = MagicMock()
+        mock_archive_keys_result.fetchall.return_value = [
+            ("ws-abc123/op1/home.tar.zst",),
+            ("ws-def456/op2/home.tar.zst",),
+        ]
+
+        # Second query: (workspace_id, archive_op_id) pairs
+        mock_protected_ws_result = MagicMock()
+        mock_protected_ws_result.fetchall.return_value = [
             ("ws-abc123", "op1"),
             ("ws-def456", "op2"),
         ]
-        mock_conn.execute.return_value = mock_result
+
+        mock_conn.execute.side_effect = [mock_archive_keys_result, mock_protected_ws_result]
 
         result = await runner._get_protected_archives()
 
         assert result is not None
-        assert len(result) == 2
-        assert ("ws-abc123", "op1") in result
-        assert ("ws-def456", "op2") in result
+        archive_keys, protected_workspaces = result
+        assert len(archive_keys) == 2
+        assert "ws-abc123/op1/home.tar.zst" in archive_keys
+        assert len(protected_workspaces) == 2
+        assert ("ws-abc123", "op1") in protected_workspaces
 
     async def test_empty_db(
         self,
         runner: GCRunner,
         mock_conn: MagicMock,
     ):
-        """Returns empty list when no protected archives."""
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = []
-        mock_conn.execute.return_value = mock_result
+        """Returns empty lists when no protected archives."""
+        mock_empty_result = MagicMock()
+        mock_empty_result.fetchall.return_value = []
+        mock_conn.execute.return_value = mock_empty_result
 
         result = await runner._get_protected_archives()
 
-        assert result == []
+        assert result is not None
+        archive_keys, protected_workspaces = result
+        assert archive_keys == []
+        assert protected_workspaces == []
 
     async def test_handles_db_error(
         self,
@@ -221,25 +235,36 @@ class TestRunGC:
         """Calls runtime.run_gc with protected list."""
         mock_runtime.observe.return_value = []
 
-        # DB returns protected archives
+        # DB returns valid workspace IDs
         mock_ws_result = MagicMock()
         mock_ws_result.fetchall.return_value = []
 
-        mock_protected_result = MagicMock()
-        mock_protected_result.fetchall.return_value = [
-            ("ws-abc123", "op1"),
+        # DB returns archive_keys
+        mock_archive_keys_result = MagicMock()
+        mock_archive_keys_result.fetchall.return_value = [
+            ("ws-abc123/op1/home.tar.zst",),
+        ]
+
+        # DB returns protected_workspaces
+        mock_protected_ws_result = MagicMock()
+        mock_protected_ws_result.fetchall.return_value = [
             ("ws-def456", "op2"),
         ]
 
-        mock_conn.execute.side_effect = [mock_ws_result, mock_protected_result]
+        mock_conn.execute.side_effect = [
+            mock_ws_result,
+            mock_archive_keys_result,
+            mock_protected_ws_result,
+        ]
 
         await runner._cleanup_orphan_resources()
 
         mock_runtime.run_gc.assert_called_once()
         call_args = mock_runtime.run_gc.call_args
-        protected = call_args[0][0]
-        assert ("ws-abc123", "op1") in protected
-        assert ("ws-def456", "op2") in protected
+        archive_keys = call_args[0][0]
+        protected_workspaces = call_args[0][1]
+        assert "ws-abc123/op1/home.tar.zst" in archive_keys
+        assert ("ws-def456", "op2") in protected_workspaces
 
     async def test_handles_gc_result(
         self,
@@ -257,10 +282,17 @@ class TestRunGC:
         mock_ws_result = MagicMock()
         mock_ws_result.fetchall.return_value = []
 
-        mock_protected_result = MagicMock()
-        mock_protected_result.fetchall.return_value = []
+        mock_archive_keys_result = MagicMock()
+        mock_archive_keys_result.fetchall.return_value = []
 
-        mock_conn.execute.side_effect = [mock_ws_result, mock_protected_result]
+        mock_protected_ws_result = MagicMock()
+        mock_protected_ws_result.fetchall.return_value = []
+
+        mock_conn.execute.side_effect = [
+            mock_ws_result,
+            mock_archive_keys_result,
+            mock_protected_ws_result,
+        ]
 
         # Should not raise
         await runner._cleanup_orphan_resources()
@@ -296,10 +328,17 @@ class TestRun:
         mock_ws_result = MagicMock()
         mock_ws_result.fetchall.return_value = []
 
-        mock_protected_result = MagicMock()
-        mock_protected_result.fetchall.return_value = []
+        mock_archive_keys_result = MagicMock()
+        mock_archive_keys_result.fetchall.return_value = []
 
-        mock_conn.execute.side_effect = [mock_ws_result, mock_protected_result]
+        mock_protected_ws_result = MagicMock()
+        mock_protected_ws_result.fetchall.return_value = []
+
+        mock_conn.execute.side_effect = [
+            mock_ws_result,
+            mock_archive_keys_result,
+            mock_protected_ws_result,
+        ]
 
         await runner.run()
 
@@ -339,10 +378,17 @@ class TestObserverPattern:
         mock_ws_result = MagicMock()
         mock_ws_result.fetchall.return_value = [("ws-a",), ("ws-b",)]
 
-        mock_protected_result = MagicMock()
-        mock_protected_result.fetchall.return_value = []
+        mock_archive_keys_result = MagicMock()
+        mock_archive_keys_result.fetchall.return_value = []
 
-        mock_conn.execute.side_effect = [mock_ws_result, mock_protected_result]
+        mock_protected_ws_result = MagicMock()
+        mock_protected_ws_result.fetchall.return_value = []
+
+        mock_conn.execute.side_effect = [
+            mock_ws_result,
+            mock_archive_keys_result,
+            mock_protected_ws_result,
+        ]
 
         await runner._cleanup_orphan_resources()
 

@@ -39,7 +39,7 @@
 | **phase** | ENUM | NO | 'PENDING' | 파생 상태 (캐시) |
 | **operation** | ENUM | NO | 'NONE' | 진행 중인 작업 |
 | **op_started_at** | TIMESTAMP | YES | NULL | operation 시작 시점 |
-| **op_id** | UUID | YES | NULL | 작업 ID (Idempotency Key) |
+| **archive_op_id** | UUID | YES | NULL | 아카이브 작업 ID (S3 경로용, ARCHIVING/CREATE_EMPTY만 사용) |
 | **desired_state** | ENUM | NO | 'RUNNING' | 목표 상태 |
 | **archive_key** | VARCHAR(512) | YES | NULL | Archive 경로 |
 | **observed_at** | TIMESTAMP | YES | NULL | 마지막 관측 시점 |
@@ -186,7 +186,7 @@
 | phase_changed_at | phase 변경 시각 (TTL 계산용) |
 | operation | 진행 중인 작업 |
 | op_started_at | operation 시작 시점 |
-| op_id | 작업 고유 ID |
+| archive_op_id | 아카이브 작업 ID (ARCHIVING/CREATE_EMPTY만 사용) |
 | archive_key | Archive 경로 (ARCHIVING 완료 시) |
 | error_count | 재시도 횟수 |
 | error_reason | 에러 분류 코드 |
