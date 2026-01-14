@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from codehub_agent.api.dependencies import get_runtime
 from codehub_agent.metrics import AGENT_CONTAINERS_TOTAL, AGENT_VOLUMES_TOTAL
 from codehub_agent.runtimes import DockerRuntime
+from codehub_agent.runtimes.docker.lock import get_workspace_lock
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -217,8 +218,9 @@ async def provision(
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
     """Provision a new workspace (create volume)."""
-    result = await runtime.volumes.create(workspace_id)
-    return OperationResponse(status=result.status.value, workspace_id=workspace_id)
+    async with get_workspace_lock(workspace_id):
+        result = await runtime.volumes.create(workspace_id)
+        return OperationResponse(status=result.status.value, workspace_id=workspace_id)
 
 
 @router.post("/{workspace_id}/start", response_model=OperationResponse)
@@ -228,8 +230,9 @@ async def start(
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
     """Start workspace container."""
-    result = await runtime.instances.start(workspace_id, request.image)
-    return OperationResponse(status=result.status.value, workspace_id=workspace_id)
+    async with get_workspace_lock(workspace_id):
+        result = await runtime.instances.start(workspace_id, request.image)
+        return OperationResponse(status=result.status.value, workspace_id=workspace_id)
 
 
 @router.post("/{workspace_id}/stop", response_model=OperationResponse)
@@ -238,8 +241,9 @@ async def stop(
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
     """Stop workspace container (delete container, keep volume)."""
-    result = await runtime.instances.delete(workspace_id)
-    return OperationResponse(status=result.status.value, workspace_id=workspace_id)
+    async with get_workspace_lock(workspace_id):
+        result = await runtime.instances.delete(workspace_id)
+        return OperationResponse(status=result.status.value, workspace_id=workspace_id)
 
 
 @router.delete("/{workspace_id}", response_model=OperationResponse)
@@ -249,24 +253,25 @@ async def delete(
 ) -> OperationResponse:
     """Delete workspace completely (container + volume).
 
-    Note: Container must be deleted before volume (volume in use error).
-    We delete container first, then volume in sequence.
+    Uses workspace lock to ensure atomic deletion of both resources.
+    Container must be deleted before volume (volume in use error).
     Idempotent - returns success even if resources don't exist.
     """
-    # Delete container first (required before volume deletion)
-    try:
-        await runtime.instances.delete(workspace_id)
-    except Exception:
-        pass  # Container might not exist
+    async with get_workspace_lock(workspace_id):
+        # Delete container first (required before volume deletion)
+        try:
+            await runtime.instances.delete(workspace_id)
+        except Exception:
+            pass  # Container might not exist
 
-    # Then delete volume (must be after container deletion)
-    try:
-        await runtime.volumes.delete(workspace_id)
-    except Exception:
-        pass  # Volume might not exist or be in use
+        # Then delete volume (must be after container deletion)
+        try:
+            await runtime.volumes.delete(workspace_id)
+        except Exception:
+            pass  # Volume might not exist or be in use
 
-    # Always return "deleted" for idempotency
-    return OperationResponse(status="deleted", workspace_id=workspace_id)
+        # Always return "deleted" for idempotency
+        return OperationResponse(status="deleted", workspace_id=workspace_id)
 
 
 # =============================================================================
