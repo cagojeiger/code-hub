@@ -1,19 +1,28 @@
 """API dependencies for dependency injection."""
 
-from codehub_agent.infra import get_s3_ops
 from codehub_agent.runtimes import DockerRuntime
 
 # Singleton runtime instance
 _runtime: DockerRuntime | None = None
 
 
-def init_runtime() -> None:
-    """Initialize runtime singleton with dependencies.
+async def init_runtime() -> None:
+    """Initialize runtime singleton.
 
-    Must be called after init_s3() during app startup.
+    Creates DockerRuntime and initializes async resources (S3).
+    Must be called during app startup.
     """
     global _runtime
-    _runtime = DockerRuntime(s3=get_s3_ops())
+    _runtime = DockerRuntime()
+    await _runtime.init()
+
+
+async def close_runtime() -> None:
+    """Close runtime and release resources."""
+    global _runtime
+    if _runtime:
+        await _runtime.close()
+        _runtime = None
 
 
 def get_runtime() -> DockerRuntime:

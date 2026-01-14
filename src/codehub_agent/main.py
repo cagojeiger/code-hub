@@ -17,8 +17,8 @@ from codehub_agent.api.v1 import (
 )
 from codehub_agent.api.errors import AgentError
 from codehub_agent.config import get_agent_config
-from codehub_agent.api.dependencies import init_runtime
-from codehub_agent.infra import ContainerAPI, close_docker, close_s3, init_s3
+from codehub_agent.api.dependencies import close_runtime, init_runtime
+from codehub_agent.infra import ContainerAPI, close_docker
 from codehub_agent.logging import setup_logging
 from codehub_agent.logging_schema import LogEvent
 
@@ -83,7 +83,6 @@ async def cleanup_orphaned_job_containers() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    config = get_agent_config()
     logger.info(
         "Starting CodeHub Agent",
         extra={
@@ -92,16 +91,15 @@ async def lifespan(app: FastAPI):
         },
     )
 
-    # Initialize singletons in dependency order
-    await init_s3()      # 1. S3 first
-    init_runtime()       # 2. Runtime (depends on S3)
+    # Initialize runtime (includes S3)
+    await init_runtime()
 
     # Cleanup orphaned job containers from previous runs
     await cleanup_orphaned_job_containers()
 
     yield
     logger.info("Shutting down CodeHub Agent", extra={"event": LogEvent.APP_STOPPED})
-    await close_s3()
+    await close_runtime()
     await close_docker()
 
 

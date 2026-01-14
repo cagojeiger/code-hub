@@ -6,7 +6,7 @@ from contextlib import AsyncExitStack
 from aiobotocore.session import AioSession, get_session
 from types_aiobotocore_s3 import S3Client
 
-from codehub_agent.config import AgentConfig, get_agent_config
+from codehub_agent.config import AgentConfig
 from codehub_agent.logging_schema import LogEvent
 
 logger = logging.getLogger(__name__)
@@ -131,31 +131,3 @@ class S3Operations:
             return False
 
 
-# Module-level functions for main.py lifespan
-_s3_ops: S3Operations | None = None
-
-
-async def init_s3() -> None:
-    """Initialize global S3 operations singleton."""
-    global _s3_ops
-    _s3_ops = S3Operations(get_agent_config())
-    await _s3_ops.init()
-
-
-async def close_s3() -> None:
-    """Close global S3 operations and release resources."""
-    global _s3_ops
-    if _s3_ops:
-        await _s3_ops.close()
-        _s3_ops = None
-
-
-def get_s3_ops() -> S3Operations:
-    """Get the global S3 operations singleton.
-
-    Must be called after init_s3() during app startup.
-    Raises RuntimeError if called before initialization.
-    """
-    if _s3_ops is None:
-        raise RuntimeError("S3 not initialized. Call init_s3() first.")
-    return _s3_ops
