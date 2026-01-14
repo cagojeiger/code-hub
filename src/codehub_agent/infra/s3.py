@@ -58,6 +58,7 @@ class S3Operations:
             self._client = None
 
     async def list_objects(self, prefix: str) -> list[str]:
+        """List object keys with given prefix."""
         keys = []
         bucket = self._config.s3.bucket
         paginator = self._client.get_paginator("list_objects_v2")
@@ -65,6 +66,19 @@ class S3Operations:
             for obj in page.get("Contents", []):
                 keys.append(obj["Key"])
         return keys
+
+    async def list_objects_with_metadata(self, prefix: str) -> list[dict]:
+        """List objects with Key and LastModified for sorting by recency."""
+        objects = []
+        bucket = self._config.s3.bucket
+        paginator = self._client.get_paginator("list_objects_v2")
+        async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                objects.append({
+                    "Key": obj["Key"],
+                    "LastModified": obj["LastModified"],
+                })
+        return objects
 
     async def delete_object(self, key: str) -> bool:
         try:

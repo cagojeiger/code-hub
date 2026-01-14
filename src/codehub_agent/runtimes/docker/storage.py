@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import defaultdict
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
@@ -71,32 +73,60 @@ class StorageManager:
         return len(deleted_keys), deleted_keys
 
     async def list_archives(self, prefix: str = "") -> list[ArchiveInfo]:
-        """List archives in S3 matching resource prefix.
+        """List complete archives (tar.zst + .meta, latest per workspace).
 
-        Uses resource_prefix to match archive_s3_key() output format.
+        Returns one archive per workspace:
+        - Only archives with both tar.zst and .meta files (complete)
+        - Selects the most recent by LastModified when multiple exist
         """
         resource_prefix = self._naming.prefix
-        archive_suffix = re.escape(self._naming.archive_suffix)
-        all_keys = await self._s3.list_objects(resource_prefix)
+        archive_suffix = self._naming.archive_suffix
 
-        archives: dict[str, ArchiveInfo] = {}
-        pattern = re.compile(rf"^{re.escape(resource_prefix)}([^/]+)/([^/]+)/{archive_suffix}$")
+        # 1. Get all objects with metadata for sorting
+        all_objects = await self._s3.list_objects_with_metadata(resource_prefix)
 
-        for key in all_keys:
+        # 2. Build key set for O(1) .meta lookup
+        all_keys = {obj["Key"] for obj in all_objects}
+
+        # 3. Group archives by workspace_id
+        pattern = re.compile(
+            rf"^{re.escape(resource_prefix)}([^/]+)/([^/]+)/{re.escape(archive_suffix)}$"
+        )
+        workspace_archives: dict[str, list[tuple[str, datetime]]] = defaultdict(list)
+
+        for obj in all_objects:
+            key = obj["Key"]
             match = pattern.match(key)
             if not match:
                 continue
 
-            workspace_id = match.group(1)
-            archives[workspace_id] = ArchiveInfo(
-                workspace_id=workspace_id,
-                archive_key=key,
-                exists=True,
-                reason="ArchiveUploaded",
-                message="",
-            )
+            # Require .meta file for completeness
+            meta_key = f"{key}.meta"
+            if meta_key not in all_keys:
+                continue
 
-        return list(archives.values())
+            workspace_id = match.group(1)
+            workspace_archives[workspace_id].append((key, obj["LastModified"]))
+
+        # 4. Select latest archive per workspace
+        archives: list[ArchiveInfo] = []
+        for workspace_id, archive_list in workspace_archives.items():
+            if not archive_list:
+                continue
+
+            # Sort by LastModified descending, pick latest
+            archive_list.sort(key=lambda x: x[1], reverse=True)
+            latest_key = archive_list[0][0]
+
+            archives.append(ArchiveInfo(
+                workspace_id=workspace_id,
+                archive_key=latest_key,
+                exists=True,
+                reason="ArchiveComplete",
+                message="",
+            ))
+
+        return archives
 
     async def list_all_archive_keys(self, prefix: str = "") -> set[str]:
         """List all archive keys matching resource prefix."""
