@@ -12,10 +12,20 @@ from codehub_agent.runtimes.docker.volume import VolumeManager
 class DockerRuntime:
     """Docker runtime combining instance, volume, job, and storage management."""
 
-    def __init__(self, config: AgentConfig | None = None) -> None:
+    def __init__(
+        self,
+        s3: S3Operations,
+        config: AgentConfig | None = None,
+    ) -> None:
+        """Initialize DockerRuntime with injected dependencies.
+
+        Args:
+            s3: Initialized S3Operations instance (required).
+            config: Agent configuration (optional, uses default if not provided).
+        """
         self._config = config or get_agent_config()
         self._naming = ResourceNaming(self._config)
-        self._s3 = S3Operations(self._config)
+        self._s3 = s3
 
         self.instances = InstanceManager(self._config, self._naming)
         self.volumes = VolumeManager(self._config, self._naming)

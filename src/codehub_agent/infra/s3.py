@@ -148,3 +148,14 @@ async def close_s3() -> None:
     if _s3_ops:
         await _s3_ops.close()
         _s3_ops = None
+
+
+def get_s3_ops() -> S3Operations:
+    """Get the global S3 operations singleton.
+
+    Must be called after init_s3() during app startup.
+    Raises RuntimeError if called before initialization.
+    """
+    if _s3_ops is None:
+        raise RuntimeError("S3 not initialized. Call init_s3() first.")
+    return _s3_ops
