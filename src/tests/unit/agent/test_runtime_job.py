@@ -8,6 +8,7 @@ import pytest
 from codehub_agent.api.errors import JobFailedError
 from codehub_agent.runtimes.docker.job import JobRunner, JobResult, JobType
 from codehub_agent.runtimes.docker.naming import ResourceNaming
+from codehub_agent.runtimes.docker.result import OperationStatus
 
 
 class TestJobRunner:
@@ -34,13 +35,15 @@ class TestJobRunner:
         mock_container_api: AsyncMock,
     ) -> None:
         """Test run_archive creates and runs archive job."""
+        # No existing job running
+        mock_container_api.list.return_value = []
         mock_container_api.wait.return_value = 0
         mock_container_api.logs.return_value = b"Archive completed"
 
         result = await runner.run_archive("ws1", "op123")
 
-        assert result.exit_code == 0
-        assert result.logs == "Archive completed"
+        assert result.status == OperationStatus.COMPLETED
+        assert result.archive_key == "codehub-ws1/op123/home.tar.zst"
 
         # Verify container was created with correct config
         mock_container_api.create.assert_called_once()
@@ -57,6 +60,8 @@ class TestJobRunner:
         mock_container_api: AsyncMock,
     ) -> None:
         """Test run_restore creates and runs restore job with archive_key."""
+        # No existing job running
+        mock_container_api.list.return_value = []
         mock_container_api.wait.return_value = 0
         mock_container_api.logs.return_value = b"Restore completed"
 
@@ -64,8 +69,8 @@ class TestJobRunner:
         archive_key = "codehub-ws1/op123/home.tar.zst"
         result = await runner.run_restore("ws1", archive_key)
 
-        assert result.exit_code == 0
-        assert result.logs == "Restore completed"
+        assert result.status == OperationStatus.COMPLETED
+        assert result.restore_marker == archive_key
 
         # Verify container was created with correct config
         mock_container_api.create.assert_called_once()
@@ -85,6 +90,7 @@ class TestJobRunner:
         mock_container_api: AsyncMock,
     ) -> None:
         """Test job raises JobFailedError on nonzero exit code."""
+        mock_container_api.list.return_value = []
         mock_container_api.wait.return_value = 1
         mock_container_api.logs.return_value = b"Error occurred"
 
@@ -97,6 +103,7 @@ class TestJobRunner:
         mock_container_api: AsyncMock,
     ) -> None:
         """Test job container is cleaned up on success."""
+        mock_container_api.list.return_value = []
         mock_container_api.wait.return_value = 0
         mock_container_api.logs.return_value = b""
 
@@ -110,6 +117,7 @@ class TestJobRunner:
         mock_container_api: AsyncMock,
     ) -> None:
         """Test job container is cleaned up on failure."""
+        mock_container_api.list.return_value = []
         mock_container_api.wait.side_effect = Exception("Wait failed")
 
         with pytest.raises(Exception, match="Wait failed"):
@@ -124,6 +132,7 @@ class TestJobRunner:
         mock_agent_config: MagicMock,
     ) -> None:
         """Test job container has correct env variables."""
+        mock_container_api.list.return_value = []
         mock_container_api.wait.return_value = 0
         mock_container_api.logs.return_value = b""
 
@@ -163,6 +172,7 @@ class TestJobRunner:
         mock_container_api: AsyncMock,
     ) -> None:
         """Test job container name has correct format."""
+        mock_container_api.list.return_value = []
         mock_container_api.wait.return_value = 0
         mock_container_api.logs.return_value = b""
 
@@ -177,6 +187,7 @@ class TestJobRunner:
         mock_container_api: AsyncMock,
     ) -> None:
         """Test job container is force cleaned up on cancellation."""
+        mock_container_api.list.return_value = []
         mock_container_api.wait.side_effect = asyncio.CancelledError()
 
         with pytest.raises(asyncio.CancelledError):
@@ -186,3 +197,40 @@ class TestJobRunner:
         mock_container_api.stop.assert_called_once()
         # At least one remove call (force cleanup or regular)
         assert mock_container_api.remove.call_count >= 1
+
+    async def test_run_archive_in_progress(
+        self,
+        runner: JobRunner,
+        mock_container_api: AsyncMock,
+    ) -> None:
+        """Test run_archive returns in_progress when job already running."""
+        # Simulate existing running job
+        mock_container_api.list.return_value = [
+            {"Names": ["/codehub-job-archive-abc123"], "State": "running"}
+        ]
+
+        result = await runner.run_archive("ws1", "op123")
+
+        assert result.status == OperationStatus.IN_PROGRESS
+        assert result.archive_key is None
+        # Should NOT create new container
+        mock_container_api.create.assert_not_called()
+
+    async def test_run_restore_in_progress(
+        self,
+        runner: JobRunner,
+        mock_container_api: AsyncMock,
+    ) -> None:
+        """Test run_restore returns in_progress when job already running."""
+        # Simulate existing running job
+        mock_container_api.list.return_value = [
+            {"Names": ["/codehub-job-restore-abc123"], "State": "running"}
+        ]
+
+        archive_key = "codehub-ws1/op123/home.tar.zst"
+        result = await runner.run_restore("ws1", archive_key)
+
+        assert result.status == OperationStatus.IN_PROGRESS
+        assert result.restore_marker is None
+        # Should NOT create new container
+        mock_container_api.create.assert_not_called()

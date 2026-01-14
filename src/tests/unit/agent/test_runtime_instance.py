@@ -82,13 +82,36 @@ class TestInstanceManager:
         manager: InstanceManager,
         mock_container_api: AsyncMock,
     ) -> None:
-        """Test start starts existing container."""
-        mock_container_api.inspect.return_value = {"Id": "abc123"}
+        """Test start starts existing stopped container."""
+        # Container exists but not running
+        mock_container_api.inspect.return_value = {
+            "Id": "abc123",
+            "State": {"Running": False}
+        }
 
-        await manager.start("ws1")
+        result = await manager.start("ws1")
 
         mock_container_api.start.assert_called_once_with("codehub-ws1")
         mock_container_api.create.assert_not_called()
+        assert result.status.value == "completed"
+
+    async def test_start_already_running(
+        self,
+        manager: InstanceManager,
+        mock_container_api: AsyncMock,
+    ) -> None:
+        """Test start returns already_running for running container."""
+        # Container exists and running
+        mock_container_api.inspect.return_value = {
+            "Id": "abc123",
+            "State": {"Running": True}
+        }
+
+        result = await manager.start("ws1")
+
+        mock_container_api.start.assert_not_called()
+        mock_container_api.create.assert_not_called()
+        assert result.status.value == "already_running"
 
     async def test_start_creates_new_container(
         self,
@@ -99,11 +122,12 @@ class TestInstanceManager:
         """Test start creates container when not exists."""
         mock_container_api.inspect.return_value = None
 
-        await manager.start("ws1", "custom-image:latest")
+        result = await manager.start("ws1", "custom-image:latest")
 
         mock_image_api.ensure.assert_called_once_with("custom-image:latest")
         mock_container_api.create.assert_called_once()
         assert mock_container_api.start.call_count == 1
+        assert result.status.value == "completed"
 
     async def test_start_recreates_on_404(
         self,
@@ -112,7 +136,11 @@ class TestInstanceManager:
         mock_image_api: AsyncMock,
     ) -> None:
         """Test start recreates container on 404 error."""
-        mock_container_api.inspect.return_value = {"Id": "abc123"}
+        # Container exists but not running
+        mock_container_api.inspect.return_value = {
+            "Id": "abc123",
+            "State": {"Running": False}
+        }
 
         # First start fails with 404
         response = MagicMock()
@@ -122,22 +150,60 @@ class TestInstanceManager:
             None,  # Second call succeeds
         ]
 
-        await manager.start("ws1")
+        result = await manager.start("ws1")
 
         mock_container_api.remove.assert_called_once_with("codehub-ws1")
         mock_image_api.ensure.assert_called_once()
         mock_container_api.create.assert_called_once()
+        assert result.status.value == "completed"
 
     async def test_delete_stops_and_removes(
         self,
         manager: InstanceManager,
         mock_container_api: AsyncMock,
     ) -> None:
-        """Test delete stops and removes container."""
-        await manager.delete("ws1")
+        """Test delete stops and removes running container."""
+        # Container exists and is running
+        mock_container_api.inspect.return_value = {
+            "State": {"Running": True}
+        }
+
+        result = await manager.delete("ws1")
 
         mock_container_api.stop.assert_called_once_with("codehub-ws1")
         mock_container_api.remove.assert_called_once_with("codehub-ws1")
+        assert result.status.value == "completed"
+
+    async def test_delete_already_stopped(
+        self,
+        manager: InstanceManager,
+        mock_container_api: AsyncMock,
+    ) -> None:
+        """Test delete returns already_stopped for stopped container."""
+        # Container exists but not running
+        mock_container_api.inspect.return_value = {
+            "State": {"Running": False}
+        }
+
+        result = await manager.delete("ws1")
+
+        mock_container_api.stop.assert_not_called()
+        mock_container_api.remove.assert_called_once_with("codehub-ws1")
+        assert result.status.value == "already_stopped"
+
+    async def test_delete_not_found(
+        self,
+        manager: InstanceManager,
+        mock_container_api: AsyncMock,
+    ) -> None:
+        """Test delete returns already_stopped when container not found."""
+        mock_container_api.inspect.return_value = None
+
+        result = await manager.delete("ws1")
+
+        mock_container_api.stop.assert_not_called()
+        mock_container_api.remove.assert_not_called()
+        assert result.status.value == "already_stopped"
 
     async def test_get_status_not_found(
         self,

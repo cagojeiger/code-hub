@@ -217,8 +217,8 @@ async def provision(
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
     """Provision a new workspace (create volume)."""
-    await runtime.volumes.create(workspace_id)
-    return OperationResponse(status="provisioned", workspace_id=workspace_id)
+    result = await runtime.volumes.create(workspace_id)
+    return OperationResponse(status=result.status.value, workspace_id=workspace_id)
 
 
 @router.post("/{workspace_id}/start", response_model=OperationResponse)
@@ -228,8 +228,8 @@ async def start(
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
     """Start workspace container."""
-    await runtime.instances.start(workspace_id, request.image)
-    return OperationResponse(status="started", workspace_id=workspace_id)
+    result = await runtime.instances.start(workspace_id, request.image)
+    return OperationResponse(status=result.status.value, workspace_id=workspace_id)
 
 
 @router.post("/{workspace_id}/stop", response_model=OperationResponse)
@@ -238,8 +238,8 @@ async def stop(
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
     """Stop workspace container (delete container, keep volume)."""
-    await runtime.instances.delete(workspace_id)
-    return OperationResponse(status="stopped", workspace_id=workspace_id)
+    result = await runtime.instances.delete(workspace_id)
+    return OperationResponse(status=result.status.value, workspace_id=workspace_id)
 
 
 @router.delete("/{workspace_id}", response_model=OperationResponse)
@@ -251,6 +251,7 @@ async def delete(
 
     Note: Container must be deleted before volume (volume in use error).
     We delete container first, then volume in sequence.
+    Idempotent - returns success even if resources don't exist.
     """
     # Delete container first (required before volume deletion)
     try:
@@ -264,6 +265,7 @@ async def delete(
     except Exception:
         pass  # Volume might not exist or be in use
 
+    # Always return "deleted" for idempotency
     return OperationResponse(status="deleted", workspace_id=workspace_id)
 
 
@@ -278,11 +280,20 @@ async def archive(
     request: ArchiveRequest,
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> ArchiveResponse:
-    """Archive workspace to S3."""
-    await runtime.jobs.run_archive(workspace_id, request.archive_op_id)
-    archive_key = runtime.get_archive_key(workspace_id, request.archive_op_id)
+    """Archive workspace to S3.
+
+    Returns status=in_progress if archive job already running (idempotency).
+    """
+    result = await runtime.jobs.run_archive(workspace_id, request.archive_op_id)
+
+    # For in_progress, return expected key (job is still running)
+    if result.archive_key:
+        archive_key = result.archive_key
+    else:
+        archive_key = runtime.get_archive_key(workspace_id, request.archive_op_id)
+
     return ArchiveResponse(
-        status="archived",
+        status=result.status.value,
         workspace_id=workspace_id,
         archive_key=archive_key,
     )
@@ -298,12 +309,17 @@ async def restore(
 
     Per spec L229: Job receives full archive_key directly (no parsing).
     Returns restore_marker for crash recovery verification.
+    Returns status=in_progress if restore job already running (idempotency).
     """
-    await runtime.jobs.run_restore(workspace_id, request.archive_key)
+    result = await runtime.jobs.run_restore(workspace_id, request.archive_key)
+
+    # Use result.restore_marker if completed, else use the requested key
+    restore_marker = result.restore_marker or request.archive_key
+
     return RestoreResponse(
-        status="restored",
+        status=result.status.value,
         workspace_id=workspace_id,
-        restore_marker=request.archive_key,
+        restore_marker=restore_marker,
     )
 
 

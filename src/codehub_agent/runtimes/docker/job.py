@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from codehub_agent.api.errors import JobFailedError
 from codehub_agent.infra import ContainerAPI, ContainerConfig, HostConfig
 from codehub_agent.logging_schema import LogEvent
+from codehub_agent.runtimes.docker.result import OperationResult, OperationStatus
 
 if TYPE_CHECKING:
     from codehub_agent.config import AgentConfig
@@ -55,6 +56,10 @@ class JobType(str, Enum):
 class JobRunner:
     """Docker job runner for archive/restore operations."""
 
+    # Label keys for job containers
+    LABEL_WORKSPACE_ID = "codehub.workspace_id"
+    LABEL_JOB_TYPE = "codehub.job_type"
+
     def __init__(
         self,
         config: AgentConfig,
@@ -66,6 +71,24 @@ class JobRunner:
         self._naming = naming
         self._containers = containers or ContainerAPI()
         self._timeout = timeout or self._config.docker.job_timeout
+
+    async def find_running_job(self, workspace_id: str, job_type: JobType) -> dict | None:
+        """Find a running job container for the given workspace and job type.
+
+        Returns container info dict if found, None otherwise.
+        Used to prevent duplicate job execution (idempotency).
+        """
+        # Query containers with label filter
+        containers = await self._containers.list(
+            filters={
+                "label": [
+                    f"{self.LABEL_WORKSPACE_ID}={workspace_id}",
+                    f"{self.LABEL_JOB_TYPE}={job_type.value}",
+                ],
+                "status": ["created", "running"],
+            }
+        )
+        return containers[0] if containers else None
 
     async def _force_cleanup(self, container_name: str) -> None:
         try:
@@ -123,6 +146,10 @@ class JobRunner:
                         f"AWS_ACCESS_KEY_ID={self._config.s3.access_key}",
                         f"AWS_SECRET_ACCESS_KEY={self._config.s3.secret_key}",
                     ],
+                    labels={
+                        self.LABEL_WORKSPACE_ID: workspace_id,
+                        self.LABEL_JOB_TYPE: job_type.value,
+                    },
                     host_config=HostConfig(
                         network_mode=self._config.docker.network,
                         binds=[volume_bind],
@@ -180,11 +207,64 @@ class JobRunner:
                         },
                     )
 
-    async def run_archive(self, workspace_id: str, archive_op_id: str) -> JobResult:
-        """Volume -> S3. URL is constructed from archive_op_id."""
-        return await self._run_job(JobType.ARCHIVE, workspace_id, archive_op_id=archive_op_id)
+    async def run_archive(self, workspace_id: str, archive_op_id: str) -> OperationResult:
+        """Volume -> S3. URL is constructed from archive_op_id.
 
-    async def run_restore(self, workspace_id: str, archive_key: str) -> JobResult:
-        """S3 -> Volume. Receives archive_key directly per spec (L229)."""
+        Checks for existing running archive job first (idempotency).
+        Returns OperationResult with status and archive_key.
+        """
+        # Check for existing running job
+        existing = await self.find_running_job(workspace_id, JobType.ARCHIVE)
+        if existing:
+            logger.info(
+                "Archive job already running",
+                extra={
+                    "event": LogEvent.JOB_COMPLETED,
+                    "job_type": "archive",
+                    "workspace_id": workspace_id,
+                    "status": "in_progress",
+                },
+            )
+            return OperationResult(
+                status=OperationStatus.IN_PROGRESS,
+                message="Archive job already running",
+            )
+
+        # Run the job
+        await self._run_job(JobType.ARCHIVE, workspace_id, archive_op_id=archive_op_id)
+        archive_key = self._naming.archive_s3_key(workspace_id, archive_op_id)
+        return OperationResult(
+            status=OperationStatus.COMPLETED,
+            archive_key=archive_key,
+        )
+
+    async def run_restore(self, workspace_id: str, archive_key: str) -> OperationResult:
+        """S3 -> Volume. Receives archive_key directly per spec (L229).
+
+        Checks for existing running restore job first (idempotency).
+        Returns OperationResult with status and restore_marker.
+        """
+        # Check for existing running job
+        existing = await self.find_running_job(workspace_id, JobType.RESTORE)
+        if existing:
+            logger.info(
+                "Restore job already running",
+                extra={
+                    "event": LogEvent.JOB_COMPLETED,
+                    "job_type": "restore",
+                    "workspace_id": workspace_id,
+                    "status": "in_progress",
+                },
+            )
+            return OperationResult(
+                status=OperationStatus.IN_PROGRESS,
+                message="Restore job already running",
+            )
+
+        # Run the job
         archive_url = f"s3://{self._config.s3.bucket}/{archive_key}"
-        return await self._run_job(JobType.RESTORE, workspace_id, archive_url=archive_url)
+        await self._run_job(JobType.RESTORE, workspace_id, archive_url=archive_url)
+        return OperationResult(
+            status=OperationStatus.COMPLETED,
+            restore_marker=archive_key,
+        )

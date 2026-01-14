@@ -199,12 +199,13 @@ class TestCheckCompletion:
         assert _check_completion(Operation.STOPPING, plan_input) is True
 
     def test_archiving_complete(self):
-        """ARCHIVING 완료: !volume_ready ∧ archive_ready."""
+        """ARCHIVING 완료: !volume_ready ∧ archive_ready ∧ archive_op_id in archive_key."""
         ws = make_workspace(
+            archive_op_id="op-1",  # Desired: archive_op_id
             conditions={
                 "archive": {
                     "exists": True,
-                    "archive_key": "ws-1/op-1/home.tar.zst",
+                    "archive_key": "ws-1/op-1/home.tar.zst",  # Actual: archive_key includes op-1
                     "reason": "ArchiveUploaded",
                     "message": "",
                 }
@@ -212,6 +213,22 @@ class TestCheckCompletion:
         )
         plan_input = PlanInput.from_workspace(ws)
         assert _check_completion(Operation.ARCHIVING, plan_input) is True
+
+    def test_archiving_not_complete_with_old_archive(self):
+        """ARCHIVING은 이전 archive_key로 완료되지 않음."""
+        ws = make_workspace(
+            archive_op_id="op-2",  # Desired: op-2
+            conditions={
+                "archive": {
+                    "exists": True,
+                    "archive_key": "ws-1/op-1/home.tar.zst",  # Actual: op-1 (이전 archive)
+                    "reason": "ArchiveUploaded",
+                    "message": "",
+                }
+            }
+        )
+        plan_input = PlanInput.from_workspace(ws)
+        assert _check_completion(Operation.ARCHIVING, plan_input) is False
 
     def test_deleting_complete(self):
         """DELETING 완료: !container_ready ∧ !volume_ready."""

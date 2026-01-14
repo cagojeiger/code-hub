@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from codehub_agent.infra import ContainerAPI, ContainerConfig, HostConfig, ImageAPI
 from codehub_agent.logging_schema import LogEvent
+from codehub_agent.runtimes.docker.result import OperationResult, OperationStatus
 
 if TYPE_CHECKING:
     from codehub_agent.config import AgentConfig
@@ -85,13 +86,34 @@ class InstanceManager:
 
         return results
 
-    async def start(self, workspace_id: str, image_ref: str | None = None) -> None:
-        """Start container for workspace."""
+    async def start(self, workspace_id: str, image_ref: str | None = None) -> OperationResult:
+        """Start container for workspace.
+
+        Checks Docker state first (idempotency):
+        - If container already running: returns ALREADY_RUNNING
+        - Otherwise: creates/starts container and returns COMPLETED
+        """
         container_name = self._naming.container_name(workspace_id)
         volume_name = self._naming.volume_name(workspace_id)
 
         existing = await self._containers.inspect(container_name)
         if existing:
+            state = existing.get("State", {})
+            if state.get("Running", False):
+                logger.info(
+                    "Container already running",
+                    extra={
+                        "event": LogEvent.CONTAINER_STARTED,
+                        "container": container_name,
+                        "workspace_id": workspace_id,
+                        "status": "already_running",
+                    },
+                )
+                return OperationResult(
+                    status=OperationStatus.ALREADY_RUNNING,
+                    message="Container already running",
+                )
+
             try:
                 await self._containers.start(container_name)
                 logger.info(
@@ -103,7 +125,7 @@ class InstanceManager:
                         "existing": True,
                     },
                 )
-                return
+                return OperationResult(status=OperationStatus.COMPLETED)
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 404:
                     logger.warning(
@@ -146,12 +168,56 @@ class InstanceManager:
                 "image": image,
             },
         )
+        return OperationResult(status=OperationStatus.COMPLETED)
 
-    async def delete(self, workspace_id: str) -> None:
-        """Delete container for workspace."""
+    async def delete(self, workspace_id: str) -> OperationResult:
+        """Delete container for workspace (used for stop operation).
+
+        Checks Docker state first (idempotency):
+        - If container doesn't exist or already stopped: returns ALREADY_STOPPED
+        - Otherwise: stops/removes container and returns COMPLETED
+        """
         container_name = self._naming.container_name(workspace_id)
+
+        # Check current state
+        existing = await self._containers.inspect(container_name)
+        if not existing:
+            logger.info(
+                "Container already deleted",
+                extra={
+                    "event": LogEvent.CONTAINER_STOPPED,
+                    "container": container_name,
+                    "workspace_id": workspace_id,
+                    "status": "already_stopped",
+                },
+            )
+            return OperationResult(
+                status=OperationStatus.ALREADY_STOPPED,
+                message="Container does not exist",
+            )
+
+        state = existing.get("State", {})
+        if not state.get("Running", False):
+            # Container exists but not running - just remove it
+            await self._containers.remove(container_name)
+            logger.info(
+                "Removed stopped container",
+                extra={
+                    "event": LogEvent.CONTAINER_STOPPED,
+                    "container": container_name,
+                    "workspace_id": workspace_id,
+                    "status": "already_stopped",
+                },
+            )
+            return OperationResult(
+                status=OperationStatus.ALREADY_STOPPED,
+                message="Container was already stopped",
+            )
+
+        # Container is running - stop and remove
         await self._containers.stop(container_name)
         await self._containers.remove(container_name)
+        return OperationResult(status=OperationStatus.COMPLETED)
 
     async def get_status(self, workspace_id: str) -> InstanceStatus:
         """Get instance status."""

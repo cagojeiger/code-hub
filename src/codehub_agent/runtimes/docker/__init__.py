@@ -5,6 +5,7 @@ from codehub_agent.infra import S3Operations
 from codehub_agent.runtimes.docker.instance import InstanceManager
 from codehub_agent.runtimes.docker.job import JobRunner
 from codehub_agent.runtimes.docker.naming import ResourceNaming
+from codehub_agent.runtimes.docker.result import OperationResult, OperationStatus
 from codehub_agent.runtimes.docker.storage import StorageManager
 from codehub_agent.runtimes.docker.volume import VolumeManager
 
@@ -61,4 +62,6 @@ __all__ = [
     "JobRunner",
     "StorageManager",
     "ResourceNaming",
+    "OperationResult",
+    "OperationStatus",
 ]

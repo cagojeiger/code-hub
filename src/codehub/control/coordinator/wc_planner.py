@@ -204,7 +204,10 @@ def _handle_in_progress(
 
 
 def _check_completion(operation: Operation, input: PlanInput) -> bool:
-    """operation 완료 조건 체크."""
+    """operation 완료 조건 체크.
+
+    kubelet 패턴: Desired(archive_op_id) vs Actual(archive_key) 비교로 완료 판단.
+    """
     cond = ConditionInput.from_conditions(input.conditions)
 
     match operation:
@@ -220,9 +223,25 @@ def _check_completion(operation: Operation, input: PlanInput) -> bool:
         case Operation.STOPPING:
             return not cond.container_ready
         case Operation.ARCHIVING:
-            return not cond.volume_ready and cond.archive_ready
+            # 1. 기본 조건: volume 삭제됨 + archive 존재
+            if not (not cond.volume_ready and cond.archive_ready):
+                return False
+            # 2. Desired vs Actual: archive_key가 현재 archive_op_id와 일치하는지 검증
+            # archive_key 형식: {prefix}{ws_id}/{archive_op_id}/home.tar.zst
+            archive = input.conditions.get("archive") or {}
+            actual_key = archive.get("archive_key")
+            if not input.archive_op_id or not actual_key:
+                return False
+            return f"/{input.archive_op_id}/" in actual_key
         case Operation.CREATE_EMPTY_ARCHIVE:
-            return cond.archive_ready
+            # CREATE_EMPTY도 동일 로직 적용
+            if not cond.archive_ready:
+                return False
+            archive = input.conditions.get("archive") or {}
+            actual_key = archive.get("archive_key")
+            if not input.archive_op_id or not actual_key:
+                return False
+            return f"/{input.archive_op_id}/" in actual_key
         case Operation.DELETING:
             return not cond.container_ready and not cond.volume_ready
         case _:

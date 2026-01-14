@@ -64,12 +64,29 @@ class TestVolumeManager:
         mock_volume_api: AsyncMock,
     ) -> None:
         """Test create creates volume with correct name."""
-        await manager.create("ws1")
+        # Volume doesn't exist
+        mock_volume_api.inspect.return_value = None
+
+        result = await manager.create("ws1")
 
         mock_volume_api.create.assert_called_once()
         call_args = mock_volume_api.create.call_args
         config = call_args[0][0]
         assert config.name == "codehub-ws1-home"
+        assert result.status.value == "completed"
+
+    async def test_create_volume_already_exists(
+        self,
+        manager: VolumeManager,
+        mock_volume_api: AsyncMock,
+    ) -> None:
+        """Test create returns already_exists when volume exists."""
+        mock_volume_api.inspect.return_value = {"Name": "codehub-ws1-home"}
+
+        result = await manager.create("ws1")
+
+        mock_volume_api.create.assert_not_called()
+        assert result.status.value == "already_exists"
 
     async def test_delete_volume(
         self,
@@ -77,9 +94,26 @@ class TestVolumeManager:
         mock_volume_api: AsyncMock,
     ) -> None:
         """Test delete removes volume with correct name."""
-        await manager.delete("ws1")
+        # Volume exists
+        mock_volume_api.inspect.return_value = {"Name": "codehub-ws1-home"}
+
+        result = await manager.delete("ws1")
 
         mock_volume_api.remove.assert_called_once_with("codehub-ws1-home")
+        assert result.status.value == "completed"
+
+    async def test_delete_volume_not_found(
+        self,
+        manager: VolumeManager,
+        mock_volume_api: AsyncMock,
+    ) -> None:
+        """Test delete returns already_deleted when volume not found."""
+        mock_volume_api.inspect.return_value = None
+
+        result = await manager.delete("ws1")
+
+        mock_volume_api.remove.assert_not_called()
+        assert result.status.value == "already_deleted"
 
     async def test_exists_true(
         self,

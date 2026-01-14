@@ -79,6 +79,7 @@ class ContainerConfig(BaseModel):
     env: list[str] = []
     exposed_ports: dict[str, dict] = {}
     host_config: HostConfig = HostConfig()
+    labels: dict[str, str] = {}
 
     model_config = {"frozen": True}
 
@@ -94,6 +95,8 @@ class ContainerConfig(BaseModel):
             result["User"] = self.user
         if self.env:
             result["Env"] = self.env
+        if self.labels:
+            result["Labels"] = self.labels
         return result
 
 
