@@ -1,12 +1,18 @@
 """Unit tests for JobRunner."""
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from codehub_agent.api.errors import JobFailedError
-from codehub_agent.runtimes.docker.job import JobRunner, JobResult, JobType
+from codehub_agent.runtimes.docker.job import (
+    STUCK_THRESHOLD_SECONDS,
+    JobRunner,
+    JobResult,
+    JobType,
+)
 from codehub_agent.runtimes.docker.naming import ResourceNaming
 from codehub_agent.runtimes.docker.result import OperationStatus
 
@@ -234,3 +240,115 @@ class TestJobRunner:
         assert result.restore_marker is None
         # Should NOT create new container
         mock_container_api.create.assert_not_called()
+
+    async def test_archive_op_id_label_in_container(
+        self,
+        runner: JobRunner,
+        mock_container_api: AsyncMock,
+    ) -> None:
+        """Test archive_op_id label is added to job container."""
+        mock_container_api.list.return_value = []
+        mock_container_api.wait.return_value = 0
+        mock_container_api.logs.return_value = b""
+
+        await runner.run_archive("ws1", "op123")
+
+        call_args = mock_container_api.create.call_args[0][0]
+        assert call_args.labels["codehub.workspace_id"] == "ws1"
+        assert call_args.labels["codehub.job_type"] == "archive"
+        assert call_args.labels["codehub.archive_op_id"] == "op123"
+
+    async def test_find_running_job_filters_by_archive_op_id(
+        self,
+        runner: JobRunner,
+        mock_container_api: AsyncMock,
+    ) -> None:
+        """Test find_running_job filters by archive_op_id when provided."""
+        # No containers match the specific archive_op_id
+        mock_container_api.list.return_value = []
+
+        result = await runner.find_running_job("ws1", JobType.ARCHIVE, "op123")
+
+        assert result is None
+        # Verify filter includes archive_op_id
+        call_args = mock_container_api.list.call_args
+        filters = call_args[1]["filters"]
+        assert "codehub.archive_op_id=op123" in filters["label"]
+
+    async def test_find_running_job_cleans_stuck_container(
+        self,
+        runner: JobRunner,
+        mock_container_api: AsyncMock,
+    ) -> None:
+        """Test find_running_job removes stuck 'created' containers."""
+        # Simulate stuck container (created 10 minutes ago)
+        stuck_time = int(time.time()) - (STUCK_THRESHOLD_SECONDS + 60)
+        mock_container_api.list.return_value = [
+            {
+                "Id": "stuck123",
+                "Names": ["/codehub-job-archive-stuck"],
+                "State": "created",
+                "Created": stuck_time,
+            }
+        ]
+
+        result = await runner.find_running_job("ws1", JobType.ARCHIVE)
+
+        # Stuck container should be removed
+        mock_container_api.remove.assert_called_once_with("stuck123", force=True)
+        # No valid container found after cleanup
+        assert result is None
+
+    async def test_find_running_job_keeps_recent_created_container(
+        self,
+        runner: JobRunner,
+        mock_container_api: AsyncMock,
+    ) -> None:
+        """Test find_running_job keeps recently created containers."""
+        # Simulate recently created container (1 minute ago)
+        recent_time = int(time.time()) - 60
+        mock_container_api.list.return_value = [
+            {
+                "Id": "recent123",
+                "Names": ["/codehub-job-archive-recent"],
+                "State": "created",
+                "Created": recent_time,
+            }
+        ]
+
+        result = await runner.find_running_job("ws1", JobType.ARCHIVE)
+
+        # Recent container should NOT be removed
+        mock_container_api.remove.assert_not_called()
+        # Container should be returned
+        assert result is not None
+        assert result["Id"] == "recent123"
+
+    async def test_run_archive_different_op_id_starts_new_job(
+        self,
+        runner: JobRunner,
+        mock_container_api: AsyncMock,
+    ) -> None:
+        """Test run_archive starts new job for different archive_op_id."""
+        # First call: no existing job
+        mock_container_api.list.return_value = []
+        mock_container_api.wait.return_value = 0
+        mock_container_api.logs.return_value = b""
+
+        result = await runner.run_archive("ws1", "op-new")
+
+        assert result.status == OperationStatus.COMPLETED
+        mock_container_api.create.assert_called_once()
+
+    async def test_extract_archive_op_id(
+        self,
+        runner: JobRunner,
+    ) -> None:
+        """Test _extract_archive_op_id parses archive_key correctly."""
+        # Standard format
+        assert runner._extract_archive_op_id("codehub-ws1/op123/home.tar.zst") == "op123"
+        # With prefix
+        assert runner._extract_archive_op_id("prefix/codehub-ws1/op456/home.tar.zst") == "op456"
+        # Invalid format
+        assert runner._extract_archive_op_id("invalid-key") is None
+        assert runner._extract_archive_op_id("") is None
