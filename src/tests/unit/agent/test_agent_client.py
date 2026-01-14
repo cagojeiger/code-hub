@@ -216,22 +216,23 @@ class TestAgentClient:
     ) -> None:
         """Test restore returns restore_marker from Agent."""
         archive_key = "ws1/op123/home.tar.zst"
+        restore_op_id = "restore-op-123"
         mock_response.json.return_value = {
             "status": "restored",
             "workspace_id": "ws1",
-            "restore_marker": archive_key,
+            "restore_marker": restore_op_id,
         }
 
         with patch.object(client, "_request", return_value=mock_response) as mock_req:
-            result = await client.restore("ws1", archive_key)
+            result = await client.restore("ws1", archive_key, restore_op_id)
 
         mock_req.assert_called_once_with(
             "post",
             "/api/v1/workspaces/ws1/restore",
-            json={"archive_key": archive_key},
+            json={"archive_key": archive_key, "restore_op_id": restore_op_id},
             timeout=600.0,
         )
-        assert result == archive_key
+        assert result == restore_op_id
 
     async def test_delete_archive(
         self, client: AgentClient, mock_response: MagicMock

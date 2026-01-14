@@ -185,7 +185,7 @@ class TestBulkUpdateConditionsV2:
         params = call_args[0][1]
         import json
         cond = json.loads(params["conds"][0])
-        assert cond == {"container": None, "volume": None, "archive": None}
+        assert cond == {"container": None, "volume": None, "archive": None, "restore": None}
 
     async def test_overwrites_deleted_resource_with_null(
         self, coordinator: ObserverCoordinator, mock_conn: MagicMock

@@ -16,6 +16,7 @@ from codehub.core.interfaces.runtime import (
     ArchiveStatus,
     ContainerStatus,
     GCResult,
+    RestoreStatus,
     UpstreamInfo,
     VolumeStatus,
     WorkspaceRuntime,
@@ -129,12 +130,20 @@ class AgentClient(WorkspaceRuntime):
                     archive_key=ws["archive"].get("archive_key"),
                 )
 
+            restore = None
+            if ws.get("restore"):
+                restore = RestoreStatus(
+                    restore_op_id=ws["restore"]["restore_op_id"],
+                    archive_key=ws["restore"]["archive_key"],
+                )
+
             workspaces.append(
                 WorkspaceState(
                     workspace_id=ws["workspace_id"],
                     container=container,
                     volume=volume,
                     archive=archive,
+                    restore=restore,
                 )
             )
 
@@ -178,16 +187,23 @@ class AgentClient(WorkspaceRuntime):
         logger.info("Archived workspace: %s", workspace_id)
         return data.get("archive_key", f"{workspace_id}/{archive_op_id}/home.tar.zst")
 
-    async def restore(self, workspace_id: str, archive_key: str) -> str:
+    async def restore(
+        self, workspace_id: str, archive_key: str, restore_op_id: str
+    ) -> str:
         """Restore workspace from S3 archive.
 
+        Args:
+            workspace_id: Workspace identifier
+            archive_key: Full archive key from S3
+            restore_op_id: Unique restore operation ID for Dual Check
+
         Returns:
-            restore_marker: Proof of which archive was restored (spec L149-152)
+            restore_marker: The restore_op_id for completion verification
         """
         resp = await self._request(
             "post",
             f"/api/v1/workspaces/{workspace_id}/restore",
-            json={"archive_key": archive_key},
+            json={"archive_key": archive_key, "restore_op_id": restore_op_id},
             timeout=self._config.job_timeout,
         )
         if resp is None:

@@ -43,6 +43,13 @@ class ArchiveStatus(BaseModel):
     archive_key: str | None = None
 
 
+class RestoreStatus(BaseModel):
+    """Restore status within a workspace (from .restore_marker)."""
+
+    restore_op_id: str
+    archive_key: str
+
+
 class WorkspaceState(BaseModel):
     """Complete state of a workspace."""
 
@@ -50,6 +57,7 @@ class WorkspaceState(BaseModel):
     container: ContainerStatus | None = None
     volume: VolumeStatus | None = None
     archive: ArchiveStatus | None = None
+    restore: RestoreStatus | None = None
 
 
 class ObserveResponse(BaseModel):
@@ -88,9 +96,10 @@ class ArchiveResponse(BaseModel):
 
 
 class RestoreRequest(BaseModel):
-    """Restore request with archive_key."""
+    """Restore request with archive_key and restore_op_id."""
 
     archive_key: str
+    restore_op_id: str
 
 
 class RestoreResponse(BaseModel):
@@ -149,12 +158,14 @@ async def observe(
     - Container status (running, healthy)
     - Volume status (exists)
     - Archive status (exists, archive_key)
+    - Restore status (restore_op_id, archive_key from .restore_marker)
     """
     # Get all data in parallel
-    containers, volumes, archives = await asyncio.gather(
+    containers, volumes, archives, restore_markers = await asyncio.gather(
         runtime.instances.list_all(),
         runtime.volumes.list_all(),
         runtime.storage.list_archives(),
+        runtime.storage.list_restore_markers(),
     )
 
     # Update metrics
@@ -165,10 +176,14 @@ async def observe(
     container_map: dict[str, dict] = {c["workspace_id"]: c for c in containers}
     volume_map: dict[str, dict] = {v["workspace_id"]: v for v in volumes}
     archive_map: dict[str, object] = {a.workspace_id: a for a in archives}
+    restore_map: dict[str, object] = {r.workspace_id: r for r in restore_markers}
 
     # Collect all unique workspace IDs
-    all_workspace_ids = set(container_map.keys()) | set(volume_map.keys()) | set(
-        archive_map.keys()
+    all_workspace_ids = (
+        set(container_map.keys())
+        | set(volume_map.keys())
+        | set(archive_map.keys())
+        | set(restore_map.keys())
     )
 
     # Build workspace states
@@ -177,6 +192,7 @@ async def observe(
         container_info = container_map.get(ws_id)
         volume_info = volume_map.get(ws_id)
         archive_info = archive_map.get(ws_id)
+        restore_info = restore_map.get(ws_id)
 
         state = WorkspaceState(
             workspace_id=ws_id,
@@ -199,6 +215,14 @@ async def observe(
                     archive_key=archive_info.archive_key,
                 )
                 if archive_info
+                else None
+            ),
+            restore=(
+                RestoreStatus(
+                    restore_op_id=restore_info.restore_op_id,
+                    archive_key=restore_info.archive_key,
+                )
+                if restore_info
                 else None
             ),
         )
@@ -287,9 +311,28 @@ async def archive(
 ) -> ArchiveResponse:
     """Archive workspace to S3.
 
+    Preconditions:
+    - Container must NOT be running
+    - Volume must exist
+
     Returns status=in_progress if archive job already running (idempotency).
     """
+    from codehub_agent.api.errors import ContainerRunningError, VolumeNotFoundError
+
     async with get_workspace_lock(workspace_id):
+        # Precondition checks
+        container_status = await runtime.instances.get_status(workspace_id)
+        if container_status.running:
+            raise ContainerRunningError(
+                f"Cannot archive while container is running for workspace {workspace_id}"
+            )
+
+        volume_status = await runtime.volumes.exists(workspace_id)
+        if not volume_status.exists:
+            raise VolumeNotFoundError(
+                f"Volume does not exist for workspace {workspace_id}"
+            )
+
         result = await runtime.jobs.run_archive(workspace_id, request.archive_op_id)
 
         # For in_progress, return expected key (job is still running)
@@ -297,6 +340,9 @@ async def archive(
             archive_key = result.archive_key
         else:
             archive_key = runtime.get_archive_key(workspace_id, request.archive_op_id)
+
+        # NOTE: Volume deletion is handled by WC (Single-Writer principle)
+        # WC calls runtime.delete() after archive() completes
 
         return ArchiveResponse(
             status=result.status.value,
@@ -313,15 +359,36 @@ async def restore(
 ) -> RestoreResponse:
     """Restore workspace from S3 archive.
 
+    Preconditions:
+    - Container must NOT be running
+    - Archive must exist in S3
+
     Per spec L229: Job receives full archive_key directly (no parsing).
     Returns restore_marker for crash recovery verification.
     Returns status=in_progress if restore job already running (idempotency).
     """
-    async with get_workspace_lock(workspace_id):
-        result = await runtime.jobs.run_restore(workspace_id, request.archive_key)
+    from codehub_agent.api.errors import ArchiveNotFoundError, ContainerRunningError
 
-        # Use result.restore_marker if completed, else use the requested key
-        restore_marker = result.restore_marker or request.archive_key
+    async with get_workspace_lock(workspace_id):
+        # Precondition checks
+        container_status = await runtime.instances.get_status(workspace_id)
+        if container_status.running:
+            raise ContainerRunningError(
+                f"Cannot restore while container is running for workspace {workspace_id}"
+            )
+
+        archive_exists = await runtime.storage.archive_exists(request.archive_key)
+        if not archive_exists:
+            raise ArchiveNotFoundError(
+                f"Archive not found: {request.archive_key}"
+            )
+
+        result = await runtime.jobs.run_restore(
+            workspace_id, request.archive_key, request.restore_op_id
+        )
+
+        # Use result.restore_marker if completed, else use restore_op_id
+        restore_marker = result.restore_marker or request.restore_op_id
 
         return RestoreResponse(
             status=result.status.value,

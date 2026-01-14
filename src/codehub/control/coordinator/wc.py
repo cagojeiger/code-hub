@@ -307,8 +307,11 @@ class WorkspaceController(CoordinatorBase):
 
                 case Operation.RESTORING:
                     if ws.archive_key:
-                        # Agent returns restore_marker for crash recovery verification
-                        restore_marker = await self._runtime.restore(ws.id, ws.archive_key)
+                        # Generate unique restore_op_id for Dual Check verification
+                        restore_op_id = str(uuid4())
+                        restore_marker = await self._runtime.restore(
+                            ws.id, ws.archive_key, restore_op_id
+                        )
                         action.restore_marker = restore_marker
 
                 case Operation.STARTING:

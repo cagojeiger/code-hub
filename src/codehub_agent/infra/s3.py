@@ -144,4 +144,15 @@ class S3Operations:
         except Exception:
             return False
 
+    async def get_object(self, key: str) -> bytes | None:
+        """Get object content as bytes. Returns None if object doesn't exist."""
+        try:
+            response = await self._client.get_object(
+                Bucket=self._config.s3.bucket, Key=key
+            )
+            async with response["Body"] as stream:
+                return await stream.read()
+        except Exception:
+            return None
+
 

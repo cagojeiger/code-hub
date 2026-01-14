@@ -30,6 +30,14 @@ class ArchiveInfo(BaseModel):
     message: str
 
 
+class RestoreMarkerInfo(BaseModel):
+    """Restore marker observation result."""
+
+    workspace_id: str
+    restore_op_id: str
+    archive_key: str
+
+
 class StorageManager:
     """S3 storage manager for archive operations."""
 
@@ -149,3 +157,53 @@ class StorageManager:
 
     async def archive_exists(self, archive_key: str) -> bool:
         return await self._s3.object_exists(archive_key)
+
+    async def list_restore_markers(self) -> list[RestoreMarkerInfo]:
+        """List all restore markers (.restore_marker files).
+
+        Returns one marker per workspace containing:
+        - restore_op_id: The restore operation ID
+        - archive_key: The archive that was restored
+        """
+        import json
+
+        resource_prefix = self._naming.prefix
+        marker_suffix = ".restore_marker"
+
+        # List all objects and find .restore_marker files
+        all_objects = await self._s3.list_objects(resource_prefix)
+
+        markers: list[RestoreMarkerInfo] = []
+        for key in all_objects:
+            if not key.endswith(marker_suffix):
+                continue
+
+            # Extract workspace_id from path: {prefix}{workspace_id}/.restore_marker
+            # Remove prefix and marker suffix to get workspace_id
+            path_after_prefix = key[len(resource_prefix):]
+            if "/" not in path_after_prefix:
+                continue
+
+            workspace_id = path_after_prefix.split("/")[0]
+
+            # Read marker content
+            try:
+                content = await self._s3.get_object(key)
+                if content:
+                    data = json.loads(content.decode("utf-8"))
+                    markers.append(RestoreMarkerInfo(
+                        workspace_id=workspace_id,
+                        restore_op_id=data.get("restore_op_id", ""),
+                        archive_key=data.get("archive_key", ""),
+                    ))
+            except Exception as e:
+                logger.warning(
+                    "Failed to read restore marker",
+                    extra={
+                        "event": LogEvent.S3_GET_FAILED,
+                        "key": key,
+                        "error": str(e),
+                    },
+                )
+
+        return markers

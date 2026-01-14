@@ -214,10 +214,13 @@ def _check_completion(operation: Operation, input: PlanInput) -> bool:
         case Operation.PROVISIONING:
             return cond.volume_ready
         case Operation.RESTORING:
-            # marker 있으면 현재 archive_key와 일치하는지 검증
-            if input.home_ctx and input.home_ctx.get("restore_marker"):
-                return cond.volume_ready and input.home_ctx["restore_marker"] == input.archive_key
-            return cond.volume_ready
+            # Dual Check: S3 restore_marker + Volume exists
+            # Agent writes .restore_marker to S3 with archive_key after restore
+            # Observer reads it and stores in conditions.restore
+            restore = input.conditions.get("restore") or {}
+            if restore.get("archive_key") == input.archive_key:
+                return cond.volume_ready
+            return False
         case Operation.STARTING:
             return cond.container_ready
         case Operation.STOPPING:

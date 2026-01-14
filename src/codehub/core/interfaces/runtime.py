@@ -45,6 +45,15 @@ class ArchiveStatus(BaseModel):
     model_config = {"frozen": True}
 
 
+class RestoreStatus(BaseModel):
+    """Restore status within a workspace (from .restore_marker)."""
+
+    restore_op_id: str
+    archive_key: str
+
+    model_config = {"frozen": True}
+
+
 # =============================================================================
 # Main Models
 # =============================================================================
@@ -61,6 +70,7 @@ class WorkspaceState(BaseModel):
     container: ContainerStatus | None = None
     volume: VolumeStatus | None = None
     archive: ArchiveStatus | None = None
+    restore: RestoreStatus | None = None
 
     model_config = {"frozen": True}
 
@@ -218,7 +228,9 @@ class WorkspaceRuntime(ABC):
         ...
 
     @abstractmethod
-    async def restore(self, workspace_id: str, archive_key: str) -> str:
+    async def restore(
+        self, workspace_id: str, archive_key: str, restore_op_id: str
+    ) -> str:
         """Restore workspace from S3 archive.
 
         Downloads and extracts the archive to the workspace volume.
@@ -226,9 +238,10 @@ class WorkspaceRuntime(ABC):
         Args:
             workspace_id: Workspace identifier
             archive_key: Full archive key from S3
+            restore_op_id: Unique restore operation ID for Dual Check
 
         Returns:
-            restore_marker: Proof of which archive was restored (for crash recovery)
+            restore_marker: The restore_op_id for completion verification
         """
         ...
 

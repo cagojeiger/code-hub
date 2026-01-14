@@ -280,12 +280,17 @@ class ObserverCoordinator(CoordinatorBase):
                         {"exists": state.archive.exists, "archive_key": state.archive.archive_key}
                         if state.archive else None
                     ),
+                    "restore": (
+                        {"restore_op_id": state.restore.restore_op_id, "archive_key": state.restore.archive_key}
+                        if state.restore else None
+                    ),
                 }
             else:
                 current_conditions[ws_id] = {
                     "container": None,
                     "volume": None,
                     "archive": None,
+                    "restore": None,
                 }
 
         # Detect changed workspaces only

@@ -4,7 +4,7 @@ Reference: docs/architecture_v2/wc.md
 """
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
@@ -399,7 +399,7 @@ class TestExecute:
 
         await wc._execute(ws, action)
 
-        mock_runtime.restore.assert_called_once_with(ws.id, ws.archive_key)
+        mock_runtime.restore.assert_called_once_with(ws.id, ws.archive_key, ANY)
 
     async def test_create_empty_archive(self, wc: WorkspaceController, mock_runtime: AsyncMock):
         """CREATE_EMPTY_ARCHIVE → runtime.archive()."""

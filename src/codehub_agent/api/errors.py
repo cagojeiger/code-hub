@@ -23,6 +23,8 @@ class ErrorCode(str, Enum):
     INSTANCE_NOT_FOUND = "INSTANCE_NOT_FOUND"
     VOLUME_NOT_FOUND = "VOLUME_NOT_FOUND"
     VOLUME_IN_USE = "VOLUME_IN_USE"
+    CONTAINER_RUNNING = "CONTAINER_RUNNING"
+    ARCHIVE_NOT_FOUND = "ARCHIVE_NOT_FOUND"
     JOB_FAILED = "JOB_FAILED"
     DOCKER_ERROR = "DOCKER_ERROR"
     INTERNAL_ERROR = "INTERNAL_ERROR"
@@ -85,6 +87,20 @@ class VolumeInUseError(AgentError):
 
     def __init__(self, message: str = "Volume is in use") -> None:
         super().__init__(ErrorCode.VOLUME_IN_USE, message, 409)
+
+
+class ContainerRunningError(AgentError):
+    """409 Conflict - Container is running (archive/restore not allowed)."""
+
+    def __init__(self, message: str = "Container is running") -> None:
+        super().__init__(ErrorCode.CONTAINER_RUNNING, message, 409)
+
+
+class ArchiveNotFoundError(AgentError):
+    """404 Not Found - Archive not found in S3."""
+
+    def __init__(self, message: str = "Archive not found") -> None:
+        super().__init__(ErrorCode.ARCHIVE_NOT_FOUND, message, 404)
 
 
 class JobFailedError(AgentError):

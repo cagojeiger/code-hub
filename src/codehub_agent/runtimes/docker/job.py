@@ -161,11 +161,13 @@ class JobRunner:
         *,
         archive_op_id: str | None = None,
         archive_url: str | None = None,
+        restore_op_id: str | None = None,
+        restore_archive_key: str | None = None,
     ) -> JobResult:
         """Run archive/restore job.
 
         For archive: provide archive_op_id (URL will be constructed)
-        For restore: provide archive_url directly (spec compliance)
+        For restore: provide archive_url, restore_op_id, restore_archive_key
 
         Uses a semaphore to limit concurrent jobs (default: 3).
         """
@@ -185,18 +187,30 @@ class JobRunner:
             else f"{volume_name}:/data"
         )
 
+        # Build environment variables
+        env = [
+            f"ARCHIVE_URL={archive_url}",
+            f"AWS_ENDPOINT_URL={self._config.s3.internal_endpoint}",
+            f"AWS_ACCESS_KEY_ID={self._config.s3.access_key}",
+            f"AWS_SECRET_ACCESS_KEY={self._config.s3.secret_key}",
+            f"WORKSPACE_ID={workspace_id}",
+            f"S3_PREFIX={self._naming.prefix}",
+            f"S3_BUCKET={self._config.s3.bucket}",
+        ]
+
+        # Add restore-specific env vars for .restore_marker creation
+        if restore_op_id:
+            env.append(f"RESTORE_OP_ID={restore_op_id}")
+        if restore_archive_key:
+            env.append(f"RESTORE_ARCHIVE_KEY={restore_archive_key}")
+
         async with get_job_semaphore():
             try:
                 config = ContainerConfig(
                     image=self._config.runtime.storage_job_image,
                     name=helper_name,
                     cmd=["-c", f"/usr/local/bin/{job_type.value}"],
-                    env=[
-                        f"ARCHIVE_URL={archive_url}",
-                        f"AWS_ENDPOINT_URL={self._config.s3.internal_endpoint}",
-                        f"AWS_ACCESS_KEY_ID={self._config.s3.access_key}",
-                        f"AWS_SECRET_ACCESS_KEY={self._config.s3.secret_key}",
-                    ],
+                    env=env,
                     labels={
                         self.LABEL_WORKSPACE_ID: workspace_id,
                         self.LABEL_JOB_TYPE: job_type.value,
@@ -292,18 +306,16 @@ class JobRunner:
             archive_key=archive_key,
         )
 
-    async def run_restore(self, workspace_id: str, archive_key: str) -> OperationResult:
-        """S3 -> Volume. Receives archive_key directly per spec (L229).
+    async def run_restore(
+        self, workspace_id: str, archive_key: str, restore_op_id: str
+    ) -> OperationResult:
+        """S3 -> Volume. Receives archive_key and restore_op_id per spec.
 
         Checks for existing running restore job first (idempotency).
         Returns OperationResult with status and restore_marker.
 
         Note: Caller must hold workspace lock for atomicity.
         """
-        # Extract archive_op_id from archive_key for labeling
-        # Format: {prefix}{ws_id}/{archive_op_id}/home.tar.zst
-        archive_op_id = self._extract_archive_op_id(archive_key)
-
         # Check for existing running restore job (workspace level, not op_id level)
         # Restore doesn't need op_id filtering - only one restore at a time per workspace
         existing = await self.find_running_job(workspace_id, JobType.RESTORE)
@@ -325,12 +337,13 @@ class JobRunner:
         archive_url = f"s3://{self._config.s3.bucket}/{archive_key}"
         await self._run_job(
             JobType.RESTORE, workspace_id,
-            archive_op_id=archive_op_id,
             archive_url=archive_url,
+            restore_op_id=restore_op_id,
+            restore_archive_key=archive_key,
         )
         return OperationResult(
             status=OperationStatus.COMPLETED,
-            restore_marker=archive_key,
+            restore_marker=restore_op_id,
         )
 
     def _extract_archive_op_id(self, archive_key: str) -> str | None:

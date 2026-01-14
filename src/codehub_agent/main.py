@@ -129,6 +129,7 @@ async def agent_error_handler(request: Request, exc: AgentError) -> JSONResponse
         extra={
             "event": LogEvent.AGENT_ERROR,
             "error_code": exc.code.value,
+            "error_message": exc.message,
             "path": request.url.path,
             "method": request.method,
         },

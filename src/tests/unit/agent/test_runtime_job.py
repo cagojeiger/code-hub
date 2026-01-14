@@ -71,12 +71,13 @@ class TestJobRunner:
         mock_container_api.wait.return_value = 0
         mock_container_api.logs.return_value = b"Restore completed"
 
-        # Per spec L229: Job receives archive_key directly (not op_id)
+        # Per spec: Job receives archive_key and restore_op_id
         archive_key = "codehub-ws1/op123/home.tar.zst"
-        result = await runner.run_restore("ws1", archive_key)
+        restore_op_id = "restore-456"
+        result = await runner.run_restore("ws1", archive_key, restore_op_id)
 
         assert result.status == OperationStatus.COMPLETED
-        assert result.restore_marker == archive_key
+        assert result.restore_marker == restore_op_id
 
         # Verify container was created with correct config
         mock_container_api.create.assert_called_once()
@@ -234,7 +235,8 @@ class TestJobRunner:
         ]
 
         archive_key = "codehub-ws1/op123/home.tar.zst"
-        result = await runner.run_restore("ws1", archive_key)
+        restore_op_id = "restore-456"
+        result = await runner.run_restore("ws1", archive_key, restore_op_id)
 
         assert result.status == OperationStatus.IN_PROGRESS
         assert result.restore_marker is None
