@@ -1,6 +1,6 @@
 """Rename op_id to archive_op_id.
 
-Revision ID: 008_rename_op_id_to_archive_op_id
+Revision ID: 008_rename_op_id
 Revises: 007_optimize_indexes
 Create Date: 2026-01-14
 
@@ -12,7 +12,7 @@ Reference: docs/spec/04-control-plane.md
 
 from alembic import op
 
-revision = '008_rename_op_id_to_archive_op_id'
+revision = '008_rename_op_id'
 down_revision = '007_optimize_indexes'
 branch_labels = None
 depends_on = None

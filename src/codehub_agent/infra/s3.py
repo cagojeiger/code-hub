@@ -41,13 +41,13 @@ class S3Operations:
             await self._client.head_bucket(Bucket=bucket)
             logger.info(
                 "S3 bucket exists",
-                extra={"event": LogEvent.S3_BUCKET_READY, "bucket": bucket, "created": False},
+                extra={"event": LogEvent.S3_BUCKET_READY, "bucket": bucket, "bucket_created": False},
             )
         except Exception:
             await self._client.create_bucket(Bucket=bucket)
             logger.info(
                 "S3 bucket created",
-                extra={"event": LogEvent.S3_BUCKET_READY, "bucket": bucket, "created": True},
+                extra={"event": LogEvent.S3_BUCKET_READY, "bucket": bucket, "bucket_created": True},
             )
 
     async def close(self) -> None:
