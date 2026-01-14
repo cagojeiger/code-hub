@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from codehub_agent.api.errors import JobFailedError
 from codehub_agent.infra import ContainerAPI, ContainerConfig, HostConfig
 from codehub_agent.logging_schema import LogEvent
+from codehub_agent.runtimes.docker.lock import get_workspace_lock
 from codehub_agent.runtimes.docker.result import OperationResult, OperationStatus
 
 if TYPE_CHECKING:
@@ -28,7 +29,6 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 _job_semaphore: asyncio.Semaphore | None = None
-_workspace_locks: dict[str, asyncio.Lock] = {}
 
 # Stuck container threshold (5 minutes)
 STUCK_THRESHOLD_SECONDS = 300
@@ -47,17 +47,6 @@ def get_job_semaphore(limit: int = 3) -> asyncio.Semaphore:
     if _job_semaphore is None:
         _job_semaphore = asyncio.Semaphore(limit)
     return _job_semaphore
-
-
-def get_workspace_lock(workspace_id: str) -> asyncio.Lock:
-    """Get or create a per-workspace lock.
-
-    Prevents TOCTOU race condition by ensuring only one job operation
-    per workspace at a time (check + create are atomic).
-    """
-    if workspace_id not in _workspace_locks:
-        _workspace_locks[workspace_id] = asyncio.Lock()
-    return _workspace_locks[workspace_id]
 
 
 class JobResult(BaseModel):
