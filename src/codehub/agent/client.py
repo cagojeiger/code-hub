@@ -155,42 +155,46 @@ class AgentClient(WorkspaceRuntime):
         logger.info("Provisioned workspace: %s", workspace_id)
 
     async def start(self, workspace_id: str, image: str) -> None:
-        """Start workspace container."""
+        """Start workspace container (Fire-and-Forget)."""
         await self._request(
             "post",
             f"/api/v1/workspaces/{workspace_id}/start",
             json={"image": image},
         )
-        logger.info("Started workspace: %s", workspace_id)
+        logger.info("Started workspace (async): %s", workspace_id)
 
     async def stop(self, workspace_id: str) -> None:
-        """Stop workspace container."""
+        """Stop workspace container (Fire-and-Forget)."""
         await self._request("post", f"/api/v1/workspaces/{workspace_id}/stop")
-        logger.info("Stopped workspace: %s", workspace_id)
+        logger.info("Stopped workspace (async): %s", workspace_id)
 
     async def delete(self, workspace_id: str) -> None:
-        """Delete workspace completely (container + volume)."""
+        """Delete workspace completely (Fire-and-Forget)."""
         await self._request("delete", f"/api/v1/workspaces/{workspace_id}")
-        logger.info("Deleted workspace: %s", workspace_id)
+        logger.info("Deleted workspace (async): %s", workspace_id)
 
     async def archive(self, workspace_id: str, archive_op_id: str) -> str:
-        """Archive workspace to S3."""
+        """Archive workspace to S3 (Fire-and-Forget).
+
+        Returns immediately with archive_key. Completion detected via Observer.
+        """
         resp = await self._request(
             "post",
             f"/api/v1/workspaces/{workspace_id}/archive",
             json={"archive_op_id": archive_op_id},
-            timeout=self._config.job_timeout,
         )
         if resp is None:
             raise RuntimeError(f"Archive failed for {workspace_id}")
         data = resp.json()
-        logger.info("Archived workspace: %s", workspace_id)
+        logger.info("Archive started (async): %s", workspace_id)
         return data.get("archive_key", f"{workspace_id}/{archive_op_id}/home.tar.zst")
 
     async def restore(
         self, workspace_id: str, archive_key: str, restore_op_id: str
     ) -> str:
-        """Restore workspace from S3 archive.
+        """Restore workspace from S3 archive (Fire-and-Forget).
+
+        Returns immediately with restore_marker. Completion detected via Observer.
 
         Args:
             workspace_id: Workspace identifier
@@ -204,12 +208,11 @@ class AgentClient(WorkspaceRuntime):
             "post",
             f"/api/v1/workspaces/{workspace_id}/restore",
             json={"archive_key": archive_key, "restore_op_id": restore_op_id},
-            timeout=self._config.job_timeout,
         )
         if resp is None:
             raise RuntimeError(f"Restore failed for {workspace_id}")
         data = resp.json()
-        logger.info("Restored workspace: %s from %s", workspace_id, archive_key)
+        logger.info("Restore started (async): %s from %s", workspace_id, archive_key)
         return data["restore_marker"]
 
     async def delete_archive(self, archive_key: str) -> bool:

@@ -55,28 +55,97 @@ class StorageManager:
         self,
         archive_keys: list[str],
         protected_workspaces: list[tuple[str, str]],
+        retention_count: int = 3,
     ) -> tuple[int, list[str]]:
-        """Delete archives not in the protected list.
+        """Delete old archives while keeping latest N per workspace.
+
+        Two-layer protection:
+        1. Retention: Keep latest N archives per workspace
+        2. Protection: Never delete archives in protected list (RESTORING/ARCHIVING)
 
         Args:
-            archive_keys: Direct archive_key column values (RESTORING target protection)
-            protected_workspaces: (ws_id, archive_op_id) tuples for path calculation
-                                  (ARCHIVING crash recovery)
+            archive_keys: Direct archive_key values (RESTORING target protection)
+            protected_workspaces: (ws_id, archive_op_id) tuples (ARCHIVING protection)
+            retention_count: Number of archives to keep per workspace (default: 3)
         """
-        # Build protected keys from both sources
-        protected_keys = set(archive_keys)
+        resource_prefix = self._naming.prefix
+        archive_suffix = self._naming.archive_suffix
+
+        # 1. Build protected prefixes (directory-based)
+        protected_prefixes: set[str] = set()
+
+        for key in archive_keys:
+            # "workspaces/ws-1/op-1/home.tar.zst" → "ws-1/op-1/"
+            relative = key[len(resource_prefix):] if key.startswith(resource_prefix) else key
+            if "/" in relative:
+                parts = relative.rsplit("/", 1)[0]  # "ws-1/op-1"
+                protected_prefixes.add(parts + "/")
+
         for ws_id, archive_op_id in protected_workspaces:
-            protected_keys.add(self._naming.archive_s3_key(ws_id, archive_op_id))
+            protected_prefixes.add(f"{ws_id}/{archive_op_id}/")
 
-        all_keys = await self._s3.list_objects(self._naming.prefix)
-        keys_to_delete = [key for key in all_keys if key not in protected_keys]
+        # 2. Get all objects with metadata for sorting by date
+        all_objects = await self._s3.list_objects_with_metadata(resource_prefix)
 
-        # Use batch delete for better performance
+        # 3. Group archives by workspace
+        #    Pattern: {prefix}{ws_id}/{archive_op_id}/home.tar.zst
+        pattern = re.compile(
+            rf"^{re.escape(resource_prefix)}([^/]+)/([^/]+)/{re.escape(archive_suffix)}$"
+        )
+
+        # Group: {ws_id: [(archive_prefix, last_modified), ...]}
+        workspace_archives: dict[str, list[tuple[str, datetime]]] = defaultdict(list)
+
+        for obj in all_objects:
+            key = obj["Key"]
+            match = pattern.match(key)
+            if match:
+                ws_id = match.group(1)
+                archive_op_id = match.group(2)
+                archive_prefix = f"{ws_id}/{archive_op_id}/"
+                workspace_archives[ws_id].append((archive_prefix, obj["LastModified"]))
+
+        # 4. Determine archives to delete (retention + protection)
+        prefixes_to_delete: set[str] = set()
+
+        for ws_id, archives in workspace_archives.items():
+            # Sort by date descending (newest first)
+            archives.sort(key=lambda x: x[1], reverse=True)
+
+            # Keep latest N, mark rest for deletion
+            for archive_prefix, _ in archives[retention_count:]:
+                # Check if protected
+                if archive_prefix not in protected_prefixes:
+                    prefixes_to_delete.add(archive_prefix)
+
+        # 5. Collect all keys under prefixes to delete
+        keys_to_delete: list[str] = []
+        for obj in all_objects:
+            key = obj["Key"]
+            relative = key[len(resource_prefix):]
+
+            # Never delete .restore_marker
+            if relative.endswith(".restore_marker"):
+                continue
+
+            # Check if under a prefix to delete
+            for prefix in prefixes_to_delete:
+                if relative.startswith(prefix):
+                    keys_to_delete.append(key)
+                    break
+
+        # 6. Execute deletion
         deleted_keys = await self._s3.delete_objects(keys_to_delete)
 
         logger.info(
             "GC completed",
-            extra={"event": LogEvent.GC_COMPLETED, "deleted_count": len(deleted_keys)},
+            extra={
+                "event": LogEvent.GC_COMPLETED,
+                "deleted_count": len(deleted_keys),
+                "deleted_prefixes": len(prefixes_to_delete),
+                "protected_prefixes": len(protected_prefixes),
+                "retention_count": retention_count,
+            },
         )
         return len(deleted_keys), deleted_keys
 

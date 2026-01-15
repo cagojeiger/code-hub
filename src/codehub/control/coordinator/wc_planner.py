@@ -152,6 +152,25 @@ def needs_execute(action: PlanAction, current_operation: Operation) -> bool:
     return current_operation == Operation.NONE or current_operation == action.operation
 
 
+def is_this_archive_ready(conditions: dict, archive_op_id: str | None) -> bool:
+    """현재 operation의 archive가 완료되었는지 확인.
+
+    Desired vs Actual 패턴:
+    - Desired: archive_op_id (DB에 저장된 현재 operation ID)
+    - Actual: conditions.archive.archive_key (S3에서 Observer가 읽어온 값)
+
+    archive_key 형식: {prefix}{ws_id}/{archive_op_id}/home.tar.zst
+
+    Returns:
+        True if archive_key contains the expected archive_op_id
+    """
+    if not archive_op_id:
+        return False
+    archive = conditions.get("archive") or {}
+    actual_key = archive.get("archive_key", "")
+    return f"/{archive_op_id}/" in actual_key
+
+
 # === Private helpers ===
 
 
@@ -226,25 +245,13 @@ def _check_completion(operation: Operation, input: PlanInput) -> bool:
         case Operation.STOPPING:
             return not cond.container_ready
         case Operation.ARCHIVING:
-            # 1. 기본 조건: volume 삭제됨 + archive 존재
-            if not (not cond.volume_ready and cond.archive_ready):
+            # 완료 조건: 현재 operation의 archive 완료 + volume 삭제됨
+            if not is_this_archive_ready(input.conditions, input.archive_op_id):
                 return False
-            # 2. Desired vs Actual: archive_key가 현재 archive_op_id와 일치하는지 검증
-            # archive_key 형식: {prefix}{ws_id}/{archive_op_id}/home.tar.zst
-            archive = input.conditions.get("archive") or {}
-            actual_key = archive.get("archive_key")
-            if not input.archive_op_id or not actual_key:
-                return False
-            return f"/{input.archive_op_id}/" in actual_key
+            return not cond.volume_ready
         case Operation.CREATE_EMPTY_ARCHIVE:
-            # CREATE_EMPTY도 동일 로직 적용
-            if not cond.archive_ready:
-                return False
-            archive = input.conditions.get("archive") or {}
-            actual_key = archive.get("archive_key")
-            if not input.archive_op_id or not actual_key:
-                return False
-            return f"/{input.archive_op_id}/" in actual_key
+            # 완료 조건: 현재 operation의 archive 완료
+            return is_this_archive_ready(input.conditions, input.archive_op_id)
         case Operation.DELETING:
             return not cond.container_ready and not cond.volume_ready
         case _:

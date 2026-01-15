@@ -372,8 +372,12 @@ class TestExecute:
         assert action.archive_key == "ws-1/op-1/home.tar.zst"
 
     async def test_archiving_phase2(self, wc: WorkspaceController, mock_runtime: AsyncMock):
-        """ARCHIVING Phase 2: archive_ready=True, volume_ready=True → runtime.delete() only."""
-        ws = make_workspace(conditions={"archive": {"exists": True}, "volume": {"exists": True}})
+        """ARCHIVING Phase 2: this_archive_ready=True, volume_ready=True → runtime.delete() only."""
+        # archive_key must contain the archive_op_id for is_this_archive_ready() to return True
+        ws = make_workspace(conditions={
+            "archive": {"exists": True, "archive_key": "prefix/ws-1/op-1/home.tar.zst"},
+            "volume": {"exists": True}
+        })
         action = PlanAction(operation=Operation.ARCHIVING, phase=Phase.STANDBY, archive_op_id="op-1")
 
         await wc._execute(ws, action)

@@ -162,7 +162,7 @@ class TestAgentClient:
     async def test_start(
         self, client: AgentClient, mock_response: MagicMock
     ) -> None:
-        """Test start sends correct request."""
+        """Test start sends correct request (Fire-and-Forget)."""
         with patch.object(client, "_request", return_value=mock_response) as mock_req:
             await client.start("ws1", "image:latest")
 
@@ -175,7 +175,7 @@ class TestAgentClient:
     async def test_stop(
         self, client: AgentClient, mock_response: MagicMock
     ) -> None:
-        """Test stop sends correct request."""
+        """Test stop sends correct request (Fire-and-Forget)."""
         with patch.object(client, "_request", return_value=mock_response) as mock_req:
             await client.stop("ws1")
 
@@ -184,7 +184,7 @@ class TestAgentClient:
     async def test_delete(
         self, client: AgentClient, mock_response: MagicMock
     ) -> None:
-        """Test delete sends correct request."""
+        """Test delete sends correct request (Fire-and-Forget)."""
         with patch.object(client, "_request", return_value=mock_response) as mock_req:
             await client.delete("ws1")
 
@@ -197,7 +197,7 @@ class TestAgentClient:
     async def test_archive(
         self, client: AgentClient, mock_response: MagicMock
     ) -> None:
-        """Test archive returns archive key."""
+        """Test archive returns archive key (Fire-and-Forget)."""
         mock_response.json.return_value = {"archive_key": "ws1/op123/home.tar.zst"}
 
         with patch.object(client, "_request", return_value=mock_response) as mock_req:
@@ -208,17 +208,16 @@ class TestAgentClient:
             "post",
             "/api/v1/workspaces/ws1/archive",
             json={"archive_op_id": "op123"},
-            timeout=600.0,
         )
 
     async def test_restore(
         self, client: AgentClient, mock_response: MagicMock
     ) -> None:
-        """Test restore returns restore_marker from Agent."""
+        """Test restore returns restore_marker from Agent (Fire-and-Forget)."""
         archive_key = "ws1/op123/home.tar.zst"
         restore_op_id = "restore-op-123"
         mock_response.json.return_value = {
-            "status": "restored",
+            "status": "in_progress",
             "workspace_id": "ws1",
             "restore_marker": restore_op_id,
         }
@@ -230,7 +229,6 @@ class TestAgentClient:
             "post",
             "/api/v1/workspaces/ws1/restore",
             json={"archive_key": archive_key, "restore_op_id": restore_op_id},
-            timeout=600.0,
         )
         assert result == restore_op_id
 

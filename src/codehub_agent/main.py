@@ -198,7 +198,7 @@ async def metrics() -> Response:
     )
 
 
-# API v1 endpoints with /api/v1 prefix
+# API v1 endpoints with /api/v1 prefix (Fire-and-Forget pattern)
 app.include_router(workspaces_router, prefix="/api/v1")
 
 

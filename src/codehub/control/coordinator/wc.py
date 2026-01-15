@@ -37,6 +37,7 @@ from codehub.control.coordinator.base import (
 from codehub.control.coordinator.wc_planner import (
     PlanAction,
     PlanInput,
+    is_this_archive_ready,
     needs_execute,
     plan,
 )
@@ -323,18 +324,18 @@ class WorkspaceController(CoordinatorBase):
 
                 case Operation.ARCHIVING:
                     # 2단계 operation (Fire-and-Forget 대응)
-                    cond = ConditionInput.from_conditions(ws.conditions or {})
                     archive_op_id = action.archive_op_id or ws.archive_op_id or str(uuid4())
 
-                    # Phase 1: archive 시작 (archive_ready가 아직 아닐 때)
-                    if not cond.archive_ready:
+                    # Phase 1/2 분기: 현재 archive_op_id의 archive 완료 여부로 판단
+                    if not is_this_archive_ready(ws.conditions or {}, archive_op_id):
+                        # Phase 1: Archive 생성
                         archive_key = await self._runtime.archive(ws.id, archive_op_id)
                         action.archive_key = archive_key
-                        # delete() 호출 안함 - 다음 tick에서 archive_ready 확인
-
-                    # Phase 2: archive 완료 후 delete (archive_ready이고 volume이 아직 있을 때)
-                    elif cond.volume_ready:
-                        await self._runtime.delete(ws.id)  # Container + Volume 삭제
+                    else:
+                        # Phase 2: Archive 완료, Volume 삭제
+                        cond = ConditionInput.from_conditions(ws.conditions or {})
+                        if cond.volume_ready:
+                            await self._runtime.delete(ws.id)
 
                 case Operation.CREATE_EMPTY_ARCHIVE:
                     archive_op_id = action.archive_op_id or ws.archive_op_id or str(uuid4())

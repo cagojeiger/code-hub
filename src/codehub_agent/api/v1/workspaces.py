@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from codehub_agent.api.dependencies import get_runtime
 from codehub_agent.metrics import AGENT_CONTAINERS_TOTAL, AGENT_VOLUMES_TOTAL
 from codehub_agent.runtimes import DockerRuntime
+from codehub_agent.runtimes.docker.job import JobType
 from codehub_agent.runtimes.docker.lock import get_workspace_lock
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
@@ -117,15 +118,19 @@ class StartRequest(BaseModel):
 
 
 class GCRequest(BaseModel):
-    """GC request with protected archives.
+    """GC request with protected archives and retention policy.
 
     Two types of protection:
     - archive_keys: Direct archive_key column values (RESTORING target)
     - protected_workspaces: (ws_id, archive_op_id) tuples for path calculation (ARCHIVING crash)
+
+    Retention:
+    - retention_count: Number of archives to keep per workspace (default: 3)
     """
 
     archive_keys: list[str]
     protected_workspaces: list[tuple[str, str]]
+    retention_count: int = 3
 
 
 class GCResponse(BaseModel):
@@ -253,10 +258,16 @@ async def start(
     request: StartRequest,
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
-    """Start workspace container."""
+    """Start workspace container (Fire-and-Forget).
+
+    Fire-and-Forget pattern:
+    - Container start is initiated in background
+    - Returns immediately with status=in_progress
+    - WC detects completion via Observer (container.running=true)
+    """
     async with get_workspace_lock(workspace_id):
-        result = await runtime.instances.start(workspace_id, request.image)
-        return OperationResponse(status=result.status.value, workspace_id=workspace_id)
+        asyncio.create_task(runtime.instances.start(workspace_id, request.image))
+        return OperationResponse(status="in_progress", workspace_id=workspace_id)
 
 
 @router.post("/{workspace_id}/stop", response_model=OperationResponse)
@@ -264,10 +275,16 @@ async def stop(
     workspace_id: str,
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
-    """Stop workspace container (delete container, keep volume)."""
+    """Stop workspace container (Fire-and-Forget).
+
+    Fire-and-Forget pattern:
+    - Container deletion is initiated in background
+    - Returns immediately with status=in_progress
+    - WC detects completion via Observer (container=null)
+    """
     async with get_workspace_lock(workspace_id):
-        result = await runtime.instances.delete(workspace_id)
-        return OperationResponse(status=result.status.value, workspace_id=workspace_id)
+        asyncio.create_task(runtime.instances.delete(workspace_id))
+        return OperationResponse(status="in_progress", workspace_id=workspace_id)
 
 
 @router.delete("/{workspace_id}", response_model=OperationResponse)
@@ -275,27 +292,27 @@ async def delete(
     workspace_id: str,
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
-    """Delete workspace completely (container + volume).
+    """Delete workspace completely (Fire-and-Forget).
 
-    Uses workspace lock to ensure atomic deletion of both resources.
-    Container must be deleted before volume (volume in use error).
-    Idempotent - returns success even if resources don't exist.
+    Fire-and-Forget pattern:
+    - Container + Volume deletion initiated in background
+    - Returns immediately with status=in_progress
+    - WC detects completion via Observer (container=null, volume=null)
     """
-    async with get_workspace_lock(workspace_id):
-        # Delete container first (required before volume deletion)
+    async def _delete_all() -> None:
+        """Delete container then volume."""
         try:
             await runtime.instances.delete(workspace_id)
         except Exception:
             pass  # Container might not exist
-
-        # Then delete volume (must be after container deletion)
         try:
             await runtime.volumes.delete(workspace_id)
         except Exception:
-            pass  # Volume might not exist or be in use
+            pass  # Volume might not exist
 
-        # Always return "deleted" for idempotency
-        return OperationResponse(status="deleted", workspace_id=workspace_id)
+    async with get_workspace_lock(workspace_id):
+        asyncio.create_task(_delete_all())
+        return OperationResponse(status="in_progress", workspace_id=workspace_id)
 
 
 # =============================================================================
@@ -309,13 +326,16 @@ async def archive(
     request: ArchiveRequest,
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> ArchiveResponse:
-    """Archive workspace to S3.
+    """Archive workspace to S3 (Fire-and-Forget).
 
     Preconditions:
     - Container must NOT be running
     - Volume must exist
 
-    Returns status=in_progress if archive job already running (idempotency).
+    Fire-and-Forget pattern:
+    - Job is started in background
+    - Returns immediately with status=in_progress
+    - WC detects completion via Observer (S3 .meta marker)
     """
     from codehub_agent.api.errors import ContainerRunningError, VolumeNotFoundError
 
@@ -333,19 +353,21 @@ async def archive(
                 f"Volume does not exist for workspace {workspace_id}"
             )
 
-        result = await runtime.jobs.run_archive(workspace_id, request.archive_op_id)
+        # Check if job is already running (idempotency)
+        existing = await runtime.jobs.find_running_job(
+            workspace_id, JobType.ARCHIVE, request.archive_op_id
+        )
+        if not existing:
+            # Fire-and-Forget: Start job in background, don't wait
+            asyncio.create_task(
+                runtime.jobs.run_archive(workspace_id, request.archive_op_id)
+            )
 
-        # For in_progress, return expected key (job is still running)
-        if result.archive_key:
-            archive_key = result.archive_key
-        else:
-            archive_key = runtime.get_archive_key(workspace_id, request.archive_op_id)
-
-        # NOTE: Volume deletion is handled by WC (Single-Writer principle)
-        # WC calls runtime.delete() after archive() completes
+        # Always return in_progress - WC will detect completion via Observer
+        archive_key = runtime.get_archive_key(workspace_id, request.archive_op_id)
 
         return ArchiveResponse(
-            status=result.status.value,
+            status="in_progress",
             workspace_id=workspace_id,
             archive_key=archive_key,
         )
@@ -357,15 +379,16 @@ async def restore(
     request: RestoreRequest,
     runtime: DockerRuntime = Depends(get_runtime),
 ) -> RestoreResponse:
-    """Restore workspace from S3 archive.
+    """Restore workspace from S3 archive (Fire-and-Forget).
 
     Preconditions:
     - Container must NOT be running
     - Archive must exist in S3
 
-    Per spec L229: Job receives full archive_key directly (no parsing).
-    Returns restore_marker for crash recovery verification.
-    Returns status=in_progress if restore job already running (idempotency).
+    Fire-and-Forget pattern:
+    - Job is started in background
+    - Returns immediately with status=in_progress
+    - WC detects completion via Observer (S3 .restore_marker)
     """
     from codehub_agent.api.errors import ArchiveNotFoundError, ContainerRunningError
 
@@ -383,17 +406,21 @@ async def restore(
                 f"Archive not found: {request.archive_key}"
             )
 
-        result = await runtime.jobs.run_restore(
-            workspace_id, request.archive_key, request.restore_op_id
-        )
+        # Check if job is already running (idempotency)
+        existing = await runtime.jobs.find_running_job(workspace_id, JobType.RESTORE)
+        if not existing:
+            # Fire-and-Forget: Start job in background, don't wait
+            asyncio.create_task(
+                runtime.jobs.run_restore(
+                    workspace_id, request.archive_key, request.restore_op_id
+                )
+            )
 
-        # Use result.restore_marker if completed, else use restore_op_id
-        restore_marker = result.restore_marker or request.restore_op_id
-
+        # Always return in_progress - WC will detect completion via Observer
         return RestoreResponse(
-            status=result.status.value,
+            status="in_progress",
             workspace_id=workspace_id,
-            restore_marker=restore_marker,
+            restore_marker=request.restore_op_id,
         )
 
 
@@ -438,13 +465,13 @@ async def run_gc(
 ) -> GCResponse:
     """Run garbage collection on archives.
 
-    Deletes archives not in the protected list.
-    Two types of protection:
-    - archive_keys: Direct paths (RESTORING target)
-    - protected_workspaces: (ws_id, archive_op_id) for path calculation (ARCHIVING crash)
+    Retention + Protection based GC:
+    - Retention: Keep latest N archives per workspace
+    - Protection: Never delete RESTORING/ARCHIVING archives
     """
     deleted_count, deleted_keys = await runtime.storage.run_gc(
         request.archive_keys,
         request.protected_workspaces,
+        request.retention_count,
     )
     return GCResponse(deleted_count=deleted_count, deleted_keys=deleted_keys)
