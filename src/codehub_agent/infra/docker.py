@@ -23,22 +23,45 @@ _agent_config = get_agent_config()
 # Concurrency Control
 # =============================================================================
 
-_docker_semaphore: asyncio.Semaphore | None = None
+# Separate semaphores for read and write operations
+_docker_read_semaphore: asyncio.Semaphore | None = None
+_docker_write_semaphore: asyncio.Semaphore | None = None
 
 
-def get_docker_semaphore(limit: int = 10) -> asyncio.Semaphore:
-    """Get or create the Docker API semaphore.
+def get_docker_read_semaphore(limit: int = 50) -> asyncio.Semaphore:
+    """Get or create the Docker API read semaphore.
 
-    Limits concurrent Docker API calls to prevent overwhelming the daemon.
-    Default limit of 10 is suitable for most deployments.
+    Higher limit for read operations (list, inspect) which are lightweight
+    and can be safely parallelized.
 
     Args:
-        limit: Maximum concurrent Docker API calls.
+        limit: Maximum concurrent Docker API read calls (default: 50).
     """
-    global _docker_semaphore
-    if _docker_semaphore is None:
-        _docker_semaphore = asyncio.Semaphore(limit)
-    return _docker_semaphore
+    global _docker_read_semaphore
+    if _docker_read_semaphore is None:
+        _docker_read_semaphore = asyncio.Semaphore(limit)
+    return _docker_read_semaphore
+
+
+def get_docker_write_semaphore(limit: int = 10) -> asyncio.Semaphore:
+    """Get or create the Docker API write semaphore.
+
+    Conservative limit for write operations (create, start, stop, remove)
+    which are more resource-intensive.
+
+    Args:
+        limit: Maximum concurrent Docker API write calls (default: 10).
+    """
+    global _docker_write_semaphore
+    if _docker_write_semaphore is None:
+        _docker_write_semaphore = asyncio.Semaphore(limit)
+    return _docker_write_semaphore
+
+
+# Backward compatibility
+def get_docker_semaphore(limit: int = 10) -> asyncio.Semaphore:
+    """Deprecated: Use get_docker_read_semaphore() or get_docker_write_semaphore()."""
+    return get_docker_write_semaphore(limit)
 
 
 # =============================================================================
@@ -133,7 +156,8 @@ class DockerClient:
         """Create a new HTTP client with connection pooling."""
         timeout = _agent_config.docker.api_timeout
         # Connection pool limits for high-concurrency scenarios
-        limits = httpx.Limits(max_connections=100, max_keepalive_connections=20)
+        # Increased keepalive connections for better connection reuse
+        limits = httpx.Limits(max_connections=100, max_keepalive_connections=50)
 
         if self._host.startswith("unix://"):
             socket_path = self._host.replace("unix://", "")
@@ -196,7 +220,7 @@ class ContainerAPI:
 
     async def list(self, filters: dict | None = None) -> list[dict]:
         """List containers."""
-        async with get_docker_semaphore():
+        async with get_docker_read_semaphore():
             client = await self._docker.get()
             params: dict = {"all": "true"}
             if filters:
@@ -207,7 +231,7 @@ class ContainerAPI:
 
     async def inspect(self, name: str) -> dict | None:
         """Inspect a container."""
-        async with get_docker_semaphore():
+        async with get_docker_read_semaphore():
             client = await self._docker.get()
             resp = await client.get(f"/containers/{name}/json")
             if resp.status_code == 404:
@@ -217,7 +241,7 @@ class ContainerAPI:
 
     async def create(self, config: ContainerConfig) -> None:
         """Create a container (idempotent)."""
-        async with get_docker_semaphore():
+        async with get_docker_write_semaphore():
             client = await self._docker.get()
             resp = await client.post(
                 "/containers/create",
@@ -238,7 +262,7 @@ class ContainerAPI:
 
     async def start(self, name: str) -> None:
         """Start a container."""
-        async with get_docker_semaphore():
+        async with get_docker_write_semaphore():
             client = await self._docker.get()
             resp = await client.post(f"/containers/{name}/start")
             if resp.status_code not in (204, 304):
@@ -250,7 +274,7 @@ class ContainerAPI:
 
     async def stop(self, name: str, timeout: int = 10) -> None:
         """Stop a container."""
-        async with get_docker_semaphore():
+        async with get_docker_write_semaphore():
             client = await self._docker.get()
             resp = await client.post(f"/containers/{name}/stop", params={"t": str(timeout)})
             if resp.status_code not in (204, 304, 404):
@@ -262,7 +286,7 @@ class ContainerAPI:
 
     async def remove(self, name: str, force: bool = True) -> None:
         """Remove a container."""
-        async with get_docker_semaphore():
+        async with get_docker_write_semaphore():
             client = await self._docker.get()
             resp = await client.delete(
                 f"/containers/{name}", params={"force": "true" if force else "false"}
@@ -326,7 +350,7 @@ class VolumeAPI:
 
     async def list(self, filters: dict | None = None) -> list[dict]:
         """List volumes."""
-        async with get_docker_semaphore():
+        async with get_docker_read_semaphore():
             client = await self._docker.get()
             params: dict = {}
             if filters:
@@ -338,7 +362,7 @@ class VolumeAPI:
 
     async def inspect(self, name: str) -> dict | None:
         """Inspect a volume."""
-        async with get_docker_semaphore():
+        async with get_docker_read_semaphore():
             client = await self._docker.get()
             resp = await client.get(f"/volumes/{name}")
             if resp.status_code == 404:
@@ -348,7 +372,7 @@ class VolumeAPI:
 
     async def create(self, config: VolumeConfig) -> None:
         """Create a volume (idempotent)."""
-        async with get_docker_semaphore():
+        async with get_docker_write_semaphore():
             client = await self._docker.get()
             resp = await client.post("/volumes/create", json=config.to_api())
             if resp.status_code == 409:
@@ -365,7 +389,7 @@ class VolumeAPI:
 
     async def remove(self, name: str) -> None:
         """Remove a volume."""
-        async with get_docker_semaphore():
+        async with get_docker_write_semaphore():
             client = await self._docker.get()
             resp = await client.delete(f"/volumes/{name}")
             if resp.status_code == 404:
@@ -396,7 +420,7 @@ class ImageAPI:
 
     async def exists(self, image_ref: str) -> bool:
         """Check if image exists locally."""
-        async with get_docker_semaphore():
+        async with get_docker_read_semaphore():
             client = await self._docker.get()
             resp = await client.get(f"/images/{image_ref}/json")
             return resp.status_code == 200

@@ -6,6 +6,7 @@ combining container, volume, and archive information.
 """
 
 import asyncio
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -165,39 +166,39 @@ async def observe(
     - Archive status (exists, archive_key)
     - Restore status (restore_op_id, archive_key from .restore_marker)
     """
-    # Get all data in parallel
-    containers, volumes, archives, restore_markers = await asyncio.gather(
+    # Get all data in parallel (S3 operations merged for efficiency)
+    containers, volumes, (archives, restore_markers) = await asyncio.gather(
         runtime.instances.list_all(),
         runtime.volumes.list_all(),
-        runtime.storage.list_archives(),
-        runtime.storage.list_restore_markers(),
+        runtime.storage.list_archives_and_markers(),
     )
 
     # Update metrics
     AGENT_CONTAINERS_TOTAL.set(len(containers))
     AGENT_VOLUMES_TOTAL.set(len(volumes))
 
-    # Index by workspace_id for fast lookup
-    container_map: dict[str, dict] = {c["workspace_id"]: c for c in containers}
-    volume_map: dict[str, dict] = {v["workspace_id"]: v for v in volumes}
-    archive_map: dict[str, object] = {a.workspace_id: a for a in archives}
-    restore_map: dict[str, object] = {r.workspace_id: r for r in restore_markers}
-
-    # Collect all unique workspace IDs
-    all_workspace_ids = (
-        set(container_map.keys())
-        | set(volume_map.keys())
-        | set(archive_map.keys())
-        | set(restore_map.keys())
+    # Single-pass aggregation with defaultdict (optimized)
+    workspace_data: dict[str, dict] = defaultdict(
+        lambda: {"container": None, "volume": None, "archive": None, "restore": None}
     )
 
-    # Build workspace states
+    # Aggregate in single pass
+    for c in containers:
+        workspace_data[c["workspace_id"]]["container"] = c
+    for v in volumes:
+        workspace_data[v["workspace_id"]]["volume"] = v
+    for a in archives:
+        workspace_data[a.workspace_id]["archive"] = a
+    for r in restore_markers:
+        workspace_data[r.workspace_id]["restore"] = r
+
+    # Build response WITHOUT sorting (client can sort if needed)
     workspaces = []
-    for ws_id in sorted(all_workspace_ids):
-        container_info = container_map.get(ws_id)
-        volume_info = volume_map.get(ws_id)
-        archive_info = archive_map.get(ws_id)
-        restore_info = restore_map.get(ws_id)
+    for ws_id, data in workspace_data.items():
+        container_info = data["container"]
+        volume_info = data["volume"]
+        archive_info = data["archive"]
+        restore_info = data["restore"]
 
         state = WorkspaceState(
             workspace_id=ws_id,
@@ -339,6 +340,7 @@ async def archive(
     """
     from codehub_agent.api.errors import ContainerRunningError, VolumeNotFoundError
 
+    # Acquire lock only for precondition checks
     async with get_workspace_lock(workspace_id):
         # Precondition checks
         container_status = await runtime.instances.get_status(workspace_id)
@@ -357,20 +359,23 @@ async def archive(
         existing = await runtime.jobs.find_running_job(
             workspace_id, JobType.ARCHIVE, request.archive_op_id
         )
-        if not existing:
-            # Fire-and-Forget: Start job in background, don't wait
-            asyncio.create_task(
-                runtime.jobs.run_archive(workspace_id, request.archive_op_id)
-            )
+    # Lock released here - background task runs outside lock
 
-        # Always return in_progress - WC will detect completion via Observer
-        archive_key = runtime.get_archive_key(workspace_id, request.archive_op_id)
-
-        return ArchiveResponse(
-            status="in_progress",
-            workspace_id=workspace_id,
-            archive_key=archive_key,
+    # Spawn background task OUTSIDE lock
+    if not existing:
+        # Fire-and-Forget: Start job in background, don't wait
+        asyncio.create_task(
+            runtime.jobs.run_archive(workspace_id, request.archive_op_id)
         )
+
+    # Always return in_progress - WC will detect completion via Observer
+    archive_key = runtime.get_archive_key(workspace_id, request.archive_op_id)
+
+    return ArchiveResponse(
+        status="in_progress",
+        workspace_id=workspace_id,
+        archive_key=archive_key,
+    )
 
 
 @router.post("/{workspace_id}/restore", response_model=RestoreResponse)
@@ -392,6 +397,7 @@ async def restore(
     """
     from codehub_agent.api.errors import ArchiveNotFoundError, ContainerRunningError
 
+    # Acquire lock only for precondition checks
     async with get_workspace_lock(workspace_id):
         # Precondition checks
         container_status = await runtime.instances.get_status(workspace_id)
@@ -408,20 +414,23 @@ async def restore(
 
         # Check if job is already running (idempotency)
         existing = await runtime.jobs.find_running_job(workspace_id, JobType.RESTORE)
-        if not existing:
-            # Fire-and-Forget: Start job in background, don't wait
-            asyncio.create_task(
-                runtime.jobs.run_restore(
-                    workspace_id, request.archive_key, request.restore_op_id
-                )
-            )
+    # Lock released here - background task runs outside lock
 
-        # Always return in_progress - WC will detect completion via Observer
-        return RestoreResponse(
-            status="in_progress",
-            workspace_id=workspace_id,
-            restore_marker=request.restore_op_id,
+    # Spawn background task OUTSIDE lock
+    if not existing:
+        # Fire-and-Forget: Start job in background, don't wait
+        asyncio.create_task(
+            runtime.jobs.run_restore(
+                workspace_id, request.archive_key, request.restore_op_id
+            )
         )
+
+    # Always return in_progress - WC will detect completion via Observer
+    return RestoreResponse(
+        status="in_progress",
+        workspace_id=workspace_id,
+        restore_marker=request.restore_op_id,
+    )
 
 
 @router.delete("/archives", response_model=DeleteArchiveResponse)

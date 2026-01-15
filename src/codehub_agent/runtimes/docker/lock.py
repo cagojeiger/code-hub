@@ -1,8 +1,9 @@
 """Workspace lock for Docker operations."""
 
 import asyncio
+import weakref
 
-_workspace_locks: dict[str, asyncio.Lock] = {}
+_workspace_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
 
 
 def get_workspace_lock(workspace_id: str) -> asyncio.Lock:

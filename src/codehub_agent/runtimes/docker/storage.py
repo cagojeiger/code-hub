@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import heapq
 import logging
 import re
 from collections import defaultdict
@@ -18,6 +20,19 @@ if TYPE_CHECKING:
     from codehub_agent.runtimes.docker.naming import ResourceNaming
 
 logger = logging.getLogger(__name__)
+
+# Regex pattern cache for GC operations
+_ARCHIVE_PATTERN_CACHE: dict[str, re.Pattern] = {}
+
+
+def _get_archive_pattern(resource_prefix: str, archive_suffix: str) -> re.Pattern:
+    """Get or create cached compiled regex pattern for archive matching."""
+    cache_key = f"{resource_prefix}||{archive_suffix}"
+    if cache_key not in _ARCHIVE_PATTERN_CACHE:
+        _ARCHIVE_PATTERN_CACHE[cache_key] = re.compile(
+            rf"^{re.escape(resource_prefix)}([^/]+)/([^/]+)/{re.escape(archive_suffix)}$"
+        )
+    return _ARCHIVE_PATTERN_CACHE[cache_key]
 
 
 class ArchiveInfo(BaseModel):
@@ -89,9 +104,7 @@ class StorageManager:
 
         # 3. Group archives by workspace
         #    Pattern: {prefix}{ws_id}/{archive_op_id}/home.tar.zst
-        pattern = re.compile(
-            rf"^{re.escape(resource_prefix)}([^/]+)/([^/]+)/{re.escape(archive_suffix)}$"
-        )
+        pattern = _get_archive_pattern(resource_prefix, archive_suffix)
 
         # Group: {ws_id: [(archive_prefix, last_modified), ...]}
         workspace_archives: dict[str, list[tuple[str, datetime]]] = defaultdict(list)
@@ -109,13 +122,16 @@ class StorageManager:
         prefixes_to_delete: set[str] = set()
 
         for ws_id, archives in workspace_archives.items():
-            # Sort by date descending (newest first)
-            archives.sort(key=lambda x: x[1], reverse=True)
+            if len(archives) <= retention_count:
+                continue  # All archives retained
 
-            # Keep latest N, mark rest for deletion
-            for archive_prefix, _ in archives[retention_count:]:
-                # Check if protected
-                if archive_prefix not in protected_prefixes:
+            # Use heapq to find top N (more efficient than full sort for large lists)
+            latest_n = heapq.nlargest(retention_count, archives, key=lambda x: x[1])
+            latest_prefixes = {prefix for prefix, _ in latest_n}
+
+            # Mark rest for deletion
+            for archive_prefix, _ in archives:
+                if archive_prefix not in latest_prefixes and archive_prefix not in protected_prefixes:
                     prefixes_to_delete.add(archive_prefix)
 
         # 5. Collect all keys under prefixes to delete
@@ -276,3 +292,96 @@ class StorageManager:
                 )
 
         return markers
+
+    async def list_archives_and_markers(self) -> tuple[list[ArchiveInfo], list[RestoreMarkerInfo]]:
+        """List archives and restore markers in a single S3 scan (optimized).
+
+        This method combines list_archives() and list_restore_markers() to avoid
+        duplicate S3 list operations. It also parallelizes marker content fetching.
+
+        Returns:
+            tuple of (archives, restore_markers)
+        """
+        import json
+
+        resource_prefix = self._naming.prefix
+        archive_suffix = self._naming.archive_suffix
+        marker_suffix = ".restore_marker"
+        meta_suffix = ".meta"
+
+        # Single S3 list call
+        all_objects = await self._s3.list_objects_with_metadata(resource_prefix)
+
+        # Build key set for .meta lookup
+        all_keys = {obj["Key"] for obj in all_objects}
+
+        # Pattern for archive matching
+        pattern = re.compile(
+            rf"^{re.escape(resource_prefix)}([^/]+)/([^/]+)/{re.escape(archive_suffix)}$"
+        )
+
+        # Single-pass processing
+        workspace_archives: dict[str, list[tuple[str, datetime]]] = defaultdict(list)
+        marker_keys_to_fetch: list[tuple[str, str]] = []  # (key, workspace_id)
+
+        for obj in all_objects:
+            key = obj["Key"]
+
+            # Handle tar.zst files
+            match = pattern.match(key)
+            if match:
+                meta_key = f"{key}{meta_suffix}"
+                if meta_key in all_keys:  # Only include complete archives
+                    workspace_id = match.group(1)
+                    workspace_archives[workspace_id].append((key, obj["LastModified"]))
+                continue
+
+            # Handle restore markers
+            if key.endswith(marker_suffix):
+                path_after_prefix = key[len(resource_prefix) :]
+                if "/" in path_after_prefix:
+                    workspace_id = path_after_prefix.split("/")[0]
+                    marker_keys_to_fetch.append((key, workspace_id))
+
+        # Build archive list (latest per workspace)
+        archives: list[ArchiveInfo] = []
+        for workspace_id, archive_list in workspace_archives.items():
+            if archive_list:
+                # Use max() instead of sort for efficiency when finding single latest
+                latest_key = max(archive_list, key=lambda x: x[1])[0]
+                archives.append(
+                    ArchiveInfo(
+                        workspace_id=workspace_id,
+                        archive_key=latest_key,
+                        exists=True,
+                        reason="ArchiveComplete",
+                        message="",
+                    )
+                )
+
+        # Fetch all restore markers in parallel
+        marker_contents = await asyncio.gather(
+            *[self._s3.get_object(key) for key, _ in marker_keys_to_fetch],
+            return_exceptions=True,
+        )
+
+        # Parse markers
+        markers: list[RestoreMarkerInfo] = []
+        for (key, workspace_id), content in zip(marker_keys_to_fetch, marker_contents):
+            if content and not isinstance(content, Exception):
+                try:
+                    data = json.loads(content.decode("utf-8"))
+                    markers.append(
+                        RestoreMarkerInfo(
+                            workspace_id=workspace_id,
+                            restore_op_id=data.get("restore_op_id", ""),
+                            archive_key=data.get("archive_key", ""),
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to parse restore marker",
+                        extra={"event": LogEvent.S3_GET_FAILED, "key": key, "error": str(e)},
+                    )
+
+        return archives, markers

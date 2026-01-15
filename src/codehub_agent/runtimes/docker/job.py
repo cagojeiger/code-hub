@@ -33,14 +33,15 @@ _job_semaphore: asyncio.Semaphore | None = None
 STUCK_THRESHOLD_SECONDS = 300
 
 
-def get_job_semaphore(limit: int = 3) -> asyncio.Semaphore:
+def get_job_semaphore(limit: int = 10) -> asyncio.Semaphore:
     """Get or create the job semaphore.
 
     Limits concurrent archive/restore jobs to prevent resource exhaustion.
-    Default limit of 3 balances throughput with system stability.
+    Default limit increased to 10 for better throughput on modern systems.
+    Archive/restore jobs are mostly I/O bound, so higher concurrency is safe.
 
     Args:
-        limit: Maximum concurrent jobs.
+        limit: Maximum concurrent jobs (default: 10, configurable).
     """
     global _job_semaphore
     if _job_semaphore is None:

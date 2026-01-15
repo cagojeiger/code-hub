@@ -132,6 +132,12 @@ class RuntimeConfig(BaseSettings):
         description="Image for archive/restore jobs",
     )
 
+    # Concurrency limits
+    max_concurrent_jobs: int = Field(
+        default=10,
+        description="Maximum concurrent archive/restore jobs (increased from 3 for better throughput)",
+    )
+
 
 class ServerConfig(BaseSettings):
     """HTTP server configuration."""
