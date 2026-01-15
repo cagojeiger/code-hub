@@ -33,8 +33,10 @@ Docker Agent는 단일 노드에서 workspace 리소스(Container, Volume)를 �
 s3://{bucket}/{prefix}/{workspace_id}/
 ├── {archive_op_id}/
 │   ├── home.tar.zst           # Archive 데이터
-│   └── home.tar.zst.meta      # Archive 완료 마커
-└── .restore_marker            # Restore 완료 마커
+│   ├── home.tar.zst.meta      # Archive 완료 마커
+│   └── .error                 # Archive 실패 마커 (실패 시)
+├── .restore_marker            # Restore 완료 마커
+└── .restore_error             # Restore 실패 마커 (실패 시)
 ```
 
 ---
@@ -102,6 +104,12 @@ GET /workspaces
       "restore": {
         "restore_op_id": "restore-789",
         "archive_key": "prefix/ws-123/op-456/home.tar.zst"
+      },
+      "error": {
+        "operation": "archive",
+        "error_code": 1,
+        "error_at": "2024-01-15T10:30:00Z",
+        "archive_op_id": "op-456"
       }
     }
   ]
@@ -123,6 +131,12 @@ GET /workspaces
 | `restore` | object \| null | 마지막 Restore 정보 (없으면 null) |
 | `restore.restore_op_id` | string | Restore 작업 ID |
 | `restore.archive_key` | string | 복원된 archive의 S3 key |
+| `error` | object \| null | 마지막 작업 실패 정보 (없으면 null) |
+| `error.operation` | string | 실패한 작업 종류 (`archive` \| `restore`) |
+| `error.error_code` | int | 종료 코드 |
+| `error.error_at` | string | 실패 시각 (ISO 8601) |
+| `error.archive_op_id` | string \| null | Archive 실패 시 operation ID |
+| `error.restore_op_id` | string \| null | Restore 실패 시 operation ID |
 
 ---
 
@@ -173,18 +187,20 @@ POST /workspaces/{workspace_id}/start
 | 항목 | 값 |
 |------|---|
 | Precondition | Volume exists (없으면 에러) |
-| Action | Container 생성 및 시작 |
-| Idempotency | 이미 running이면 `already_running` 반환 |
-| Completion | Container running AND Volume exists |
+| Action | Container 생성 및 시작 (Fire-and-Forget) |
+| Idempotency | Background task로 처리, 항상 `in_progress` 반환 |
+| Completion | Observer에서 container.running=true 확인 |
 
 **Response**
 
 ```json
 {
-  "status": "completed",  // completed | already_running
+  "status": "in_progress",
   "workspace_id": "ws-123"
 }
 ```
+
+> **Fire-and-Forget**: 작업은 백그라운드에서 실행되며, 완료는 Observer를 통해 감지합니다.
 
 **Errors**
 
@@ -205,18 +221,20 @@ POST /workspaces/{workspace_id}/stop
 | 항목 | 값 |
 |------|---|
 | Precondition | 없음 |
-| Action | Container 중지 및 삭제 |
-| Idempotency | Container 없으면 `already_stopped` 반환 |
-| Completion | Container NOT exists AND Volume exists |
+| Action | Container 중지 및 삭제 (Fire-and-Forget) |
+| Idempotency | Background task로 처리, 항상 `in_progress` 반환 |
+| Completion | Observer에서 container=null 확인 |
 
 **Response**
 
 ```json
 {
-  "status": "completed",  // completed | already_stopped
+  "status": "in_progress",
   "workspace_id": "ws-123"
 }
 ```
+
+> **Fire-and-Forget**: 작업은 백그라운드에서 실행되며, 완료는 Observer를 통해 감지합니다.
 
 ---
 
@@ -231,18 +249,20 @@ DELETE /workspaces/{workspace_id}
 | 항목 | 값 |
 |------|---|
 | Precondition | 없음 |
-| Action | Container 삭제 → Job Container 삭제 → Volume 삭제 |
-| Idempotency | 리소스 없으면 `deleted` 반환 |
-| Completion | Container NOT exists AND Volume NOT exists |
+| Action | Container 삭제 → Volume 삭제 (Fire-and-Forget) |
+| Idempotency | Background task로 처리, 항상 `in_progress` 반환 |
+| Completion | Observer에서 container=null AND volume=null 확인 |
 
 **Response**
 
 ```json
 {
-  "status": "deleted",
+  "status": "in_progress",
   "workspace_id": "ws-123"
 }
 ```
+
+> **Fire-and-Forget**: 작업은 백그라운드에서 실행되며, 완료는 Observer를 통해 감지합니다.
 
 ---
 
@@ -267,19 +287,22 @@ POST /workspaces/{workspace_id}/archive
 | 항목 | 값 |
 |------|---|
 | Precondition | Container NOT running, Volume exists |
-| Action | Job 실행 (Volume → S3) → Volume 삭제 |
-| Idempotency | Job 실행 중이면 `in_progress`, 완료됐으면 `completed` |
-| Completion | S3 `.meta` exists AND Volume NOT exists |
+| Action | Job 실행 (Volume → S3) (Fire-and-Forget) |
+| Idempotency | Background task로 처리, 항상 `in_progress` 반환 |
+| Completion | Observer에서 archive.exists=true (`.meta` 존재) 확인 |
 
 **Response**
 
 ```json
 {
-  "status": "completed",  // completed | in_progress
+  "status": "in_progress",
   "workspace_id": "ws-123",
   "archive_key": "prefix/ws-123/op-456/home.tar.zst"
 }
 ```
+
+> **Fire-and-Forget**: Job은 백그라운드에서 실행되며, 완료는 Observer를 통해 `.meta` 마커로 감지합니다.
+> **2단계 ARCHIVING**: Phase 1에서 Archive 생성 후, WC가 Phase 2에서 Volume 삭제를 명령합니다.
 
 **Errors**
 
@@ -318,19 +341,22 @@ POST /workspaces/{workspace_id}/restore
 | 항목 | 값 |
 |------|---|
 | Precondition | Container NOT running, Archive exists |
-| Action | Volume 생성 (없으면) → Job 실행 (S3 → Volume) → Marker 기록 |
-| Idempotency | Job 실행 중이면 `in_progress`, 완료됐으면 `completed` |
-| Completion | S3 `.restore_marker` exists AND Volume exists |
+| Action | Volume 생성 (없으면) → Job 실행 (S3 → Volume) (Fire-and-Forget) |
+| Idempotency | Workspace당 1개의 restore job만 허용, 항상 `in_progress` 반환 |
+| Completion | Observer에서 restore.restore_op_id 확인 AND volume.exists=true 확인 |
 
 **Response**
 
 ```json
 {
-  "status": "completed",  // completed | in_progress
+  "status": "in_progress",
   "workspace_id": "ws-123",
   "restore_marker": "restore-789"
 }
 ```
+
+> **Fire-and-Forget**: Job은 백그라운드에서 실행되며, 완료는 Observer를 통해 `.restore_marker`로 감지합니다.
+> **하이브리드 멱등성**: Workspace당 1개만 실행 허용 (동시성 안전), restore_op_id는 Dual Check용으로 사용됩니다.
 
 **Errors**
 
@@ -411,14 +437,20 @@ POST /workspaces/gc
 ```json
 {
   "archive_keys": ["prefix/ws-1/op-1/home.tar.zst"],
-  "protected_workspaces": [["ws-2", "op-2"]]
+  "protected_workspaces": [["ws-2", "op-2"]],
+  "retention_count": 3
 }
 ```
 
-| 필드 | 설명 |
-|------|------|
-| `archive_keys` | 보호할 archive key 목록 (RESTORING 대상) |
-| `protected_workspaces` | 보호할 (workspace_id, archive_op_id) 튜플 목록 (ARCHIVING 진행 중) |
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `archive_keys` | list[str] | 보호할 archive key 목록 (RESTORING 대상) |
+| `protected_workspaces` | list[tuple] | 보호할 (workspace_id, archive_op_id) 튜플 목록 (ARCHIVING 진행 중) |
+| `retention_count` | int | Workspace당 유지할 최신 archive 수 (기본값: 3) |
+
+**Retention 정책**:
+- 각 workspace별로 최신 `retention_count`개의 archive를 유지합니다
+- 보호 목록(`archive_keys`, `protected_workspaces`)에 있는 archive는 절대 삭제되지 않습니다
 
 **Response**
 
@@ -577,13 +609,29 @@ Agent API는 **즉시 응답**할 수 있습니다:
 
 ## Appendix: Status Values
 
-### Operation Status
+### Operation Status (Fire-and-Forget)
 
-| Status | 설명 |
-|--------|------|
-| `completed` | 작업 완료 |
-| `in_progress` | 작업 진행 중 (job running) |
-| `already_exists` | 이미 존재 (provision) |
-| `already_running` | 이미 실행 중 (start) |
-| `already_stopped` | 이미 중지됨 (stop) |
-| `deleted` | 삭제 완료 |
+모든 Lifecycle/Persistence 작업은 **Fire-and-Forget** 패턴을 따르며, 대부분 `in_progress`를 반환합니다.
+완료 판정은 API 응답이 아닌 Observer를 통한 실제 상태 확인으로 이루어집니다.
+
+| Operation | 반환 Status | 완료 판정 방법 |
+|-----------|-------------|----------------|
+| Provision | `completed` \| `already_exists` | 동기 완료 (예외) |
+| Start | `in_progress` | Observer: container.running=true |
+| Stop | `in_progress` | Observer: container=null |
+| Delete | `in_progress` | Observer: container=null AND volume=null |
+| Archive | `in_progress` | Observer: archive.exists=true (`.meta` 존재) |
+| Restore | `in_progress` | Observer: restore 필드 존재 AND volume.exists=true |
+
+### 참고: Legacy Status Values
+
+아래 값들은 Fire-and-Forget 전환 전 사용되었으나, 현재는 대부분 `in_progress`로 통일되었습니다:
+
+| Status | 설명 | 현재 상태 |
+|--------|------|----------|
+| `completed` | 작업 완료 | Provision에서만 사용 |
+| `in_progress` | 작업 진행 중 | 대부분의 작업에서 사용 |
+| `already_exists` | 이미 존재 | Provision에서만 사용 |
+| `already_running` | 이미 실행 중 | 미사용 (deprecated) |
+| `already_stopped` | 이미 중지됨 | 미사용 (deprecated) |
+| `deleted` | 삭제 완료 | 미사용 (deprecated) |

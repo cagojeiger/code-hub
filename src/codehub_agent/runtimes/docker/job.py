@@ -199,6 +199,10 @@ class JobRunner:
             f"S3_BUCKET={self._config.s3.bucket}",
         ]
 
+        # Add archive-specific env vars for .error marker creation
+        if archive_op_id:
+            env.append(f"ARCHIVE_OP_ID={archive_op_id}")
+
         # Add restore-specific env vars for .restore_marker creation
         if restore_op_id:
             env.append(f"RESTORE_OP_ID={restore_op_id}")

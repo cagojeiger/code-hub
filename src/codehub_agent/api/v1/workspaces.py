@@ -6,7 +6,9 @@ combining container, volume, and archive information.
 """
 
 import asyncio
+import logging
 from collections import defaultdict
+from typing import Any, Coroutine
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -17,7 +19,39 @@ from codehub_agent.runtimes import DockerRuntime
 from codehub_agent.runtimes.docker.job import JobType
 from codehub_agent.runtimes.docker.lock import get_workspace_lock
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+
+async def _safe_background_task(
+    coro: Coroutine[Any, Any, Any],
+    context: dict[str, Any],
+) -> None:
+    """Execute background task with exception logging.
+
+    Fire-and-Forget 패턴에서 예외가 발생해도 "Task exception was never retrieved"
+    경고 대신 구조화된 로그를 남깁니다.
+
+    Args:
+        coro: 실행할 코루틴
+        context: 로깅에 포함할 컨텍스트 정보 (workspace_id, operation 등)
+    """
+    try:
+        await coro
+    except Exception:
+        logger.exception(
+            "Background task failed",
+            extra={
+                "event": "BACKGROUND_TASK_FAILED",
+                **context,
+            },
+        )
 
 
 # =============================================================================
@@ -52,6 +86,16 @@ class RestoreStatus(BaseModel):
     archive_key: str
 
 
+class ErrorStatus(BaseModel):
+    """Error status within a workspace (from .error or .restore_error marker)."""
+
+    operation: str  # "archive" or "restore"
+    error_code: int
+    error_at: str
+    archive_op_id: str | None = None  # For archive errors
+    restore_op_id: str | None = None  # For restore errors
+
+
 class WorkspaceState(BaseModel):
     """Complete state of a workspace."""
 
@@ -60,6 +104,7 @@ class WorkspaceState(BaseModel):
     volume: VolumeStatus | None = None
     archive: ArchiveStatus | None = None
     restore: RestoreStatus | None = None
+    error: ErrorStatus | None = None
 
 
 class ObserveResponse(BaseModel):
@@ -165,9 +210,10 @@ async def observe(
     - Volume status (exists)
     - Archive status (exists, archive_key)
     - Restore status (restore_op_id, archive_key from .restore_marker)
+    - Error status (operation failures from .error or .restore_error marker)
     """
     # Get all data in parallel (S3 operations merged for efficiency)
-    containers, volumes, (archives, restore_markers) = await asyncio.gather(
+    containers, volumes, (archives, restore_markers, error_markers) = await asyncio.gather(
         runtime.instances.list_all(),
         runtime.volumes.list_all(),
         runtime.storage.list_archives_and_markers(),
@@ -179,7 +225,7 @@ async def observe(
 
     # Single-pass aggregation with defaultdict (optimized)
     workspace_data: dict[str, dict] = defaultdict(
-        lambda: {"container": None, "volume": None, "archive": None, "restore": None}
+        lambda: {"container": None, "volume": None, "archive": None, "restore": None, "error": None}
     )
 
     # Aggregate in single pass
@@ -191,6 +237,8 @@ async def observe(
         workspace_data[a.workspace_id]["archive"] = a
     for r in restore_markers:
         workspace_data[r.workspace_id]["restore"] = r
+    for e in error_markers:
+        workspace_data[e.workspace_id]["error"] = e
 
     # Build response WITHOUT sorting (client can sort if needed)
     workspaces = []
@@ -199,6 +247,7 @@ async def observe(
         volume_info = data["volume"]
         archive_info = data["archive"]
         restore_info = data["restore"]
+        error_info = data["error"]
 
         state = WorkspaceState(
             workspace_id=ws_id,
@@ -231,6 +280,17 @@ async def observe(
                 if restore_info
                 else None
             ),
+            error=(
+                ErrorStatus(
+                    operation=error_info.operation,
+                    error_code=error_info.error_code,
+                    error_at=error_info.error_at,
+                    archive_op_id=error_info.archive_op_id,
+                    restore_op_id=error_info.restore_op_id,
+                )
+                if error_info
+                else None
+            ),
         )
         workspaces.append(state)
 
@@ -261,13 +321,30 @@ async def start(
 ) -> OperationResponse:
     """Start workspace container (Fire-and-Forget).
 
+    Preconditions:
+    - Volume must exist
+
     Fire-and-Forget pattern:
     - Container start is initiated in background
     - Returns immediately with status=in_progress
     - WC detects completion via Observer (container.running=true)
     """
+    from codehub_agent.api.errors import VolumeNotFoundError
+
     async with get_workspace_lock(workspace_id):
-        asyncio.create_task(runtime.instances.start(workspace_id, request.image))
+        # Precondition: Volume must exist
+        volume_status = await runtime.volumes.exists(workspace_id)
+        if not volume_status.exists:
+            raise VolumeNotFoundError(
+                f"Volume does not exist for workspace {workspace_id}"
+            )
+
+        asyncio.create_task(
+            _safe_background_task(
+                runtime.instances.start(workspace_id, request.image),
+                {"workspace_id": workspace_id, "operation": "start"},
+            )
+        )
         return OperationResponse(status="in_progress", workspace_id=workspace_id)
 
 
@@ -284,7 +361,12 @@ async def stop(
     - WC detects completion via Observer (container=null)
     """
     async with get_workspace_lock(workspace_id):
-        asyncio.create_task(runtime.instances.delete(workspace_id))
+        asyncio.create_task(
+            _safe_background_task(
+                runtime.instances.delete(workspace_id),
+                {"workspace_id": workspace_id, "operation": "stop"},
+            )
+        )
         return OperationResponse(status="in_progress", workspace_id=workspace_id)
 
 
@@ -312,7 +394,12 @@ async def delete(
             pass  # Volume might not exist
 
     async with get_workspace_lock(workspace_id):
-        asyncio.create_task(_delete_all())
+        asyncio.create_task(
+            _safe_background_task(
+                _delete_all(),
+                {"workspace_id": workspace_id, "operation": "delete"},
+            )
+        )
         return OperationResponse(status="in_progress", workspace_id=workspace_id)
 
 
@@ -365,7 +452,14 @@ async def archive(
     if not existing:
         # Fire-and-Forget: Start job in background, don't wait
         asyncio.create_task(
-            runtime.jobs.run_archive(workspace_id, request.archive_op_id)
+            _safe_background_task(
+                runtime.jobs.run_archive(workspace_id, request.archive_op_id),
+                {
+                    "workspace_id": workspace_id,
+                    "operation": "archive",
+                    "archive_op_id": request.archive_op_id,
+                },
+            )
         )
 
     # Always return in_progress - WC will detect completion via Observer
@@ -412,7 +506,13 @@ async def restore(
                 f"Archive not found: {request.archive_key}"
             )
 
+        # Create volume if not exists (대칭성: Archive는 Volume 필수, Restore는 Volume 생성)
+        volume_status = await runtime.volumes.exists(workspace_id)
+        if not volume_status.exists:
+            await runtime.volumes.create(workspace_id)
+
         # Check if job is already running (idempotency)
+        # 하이브리드 방식: workspace당 1개만 허용 (동시성 안전)
         existing = await runtime.jobs.find_running_job(workspace_id, JobType.RESTORE)
     # Lock released here - background task runs outside lock
 
@@ -420,8 +520,16 @@ async def restore(
     if not existing:
         # Fire-and-Forget: Start job in background, don't wait
         asyncio.create_task(
-            runtime.jobs.run_restore(
-                workspace_id, request.archive_key, request.restore_op_id
+            _safe_background_task(
+                runtime.jobs.run_restore(
+                    workspace_id, request.archive_key, request.restore_op_id
+                ),
+                {
+                    "workspace_id": workspace_id,
+                    "operation": "restore",
+                    "restore_op_id": request.restore_op_id,
+                    "archive_key": request.archive_key,
+                },
             )
         )
 

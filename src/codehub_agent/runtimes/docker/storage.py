@@ -53,6 +53,18 @@ class RestoreMarkerInfo(BaseModel):
     archive_key: str
 
 
+class ErrorMarkerInfo(BaseModel):
+    """Error marker observation result (archive or restore failure)."""
+
+    workspace_id: str
+    operation: str  # "archive" or "restore"
+    error_code: int
+    error_at: str
+    archive_op_id: str | None = None  # For archive errors
+    restore_op_id: str | None = None  # For restore errors
+    archive_key: str | None = None  # For restore errors
+
+
 class StorageManager:
     """S3 storage manager for archive operations."""
 
@@ -293,20 +305,24 @@ class StorageManager:
 
         return markers
 
-    async def list_archives_and_markers(self) -> tuple[list[ArchiveInfo], list[RestoreMarkerInfo]]:
-        """List archives and restore markers in a single S3 scan (optimized).
+    async def list_archives_and_markers(
+        self,
+    ) -> tuple[list[ArchiveInfo], list[RestoreMarkerInfo], list[ErrorMarkerInfo]]:
+        """List archives, restore markers, and error markers in a single S3 scan.
 
-        This method combines list_archives() and list_restore_markers() to avoid
-        duplicate S3 list operations. It also parallelizes marker content fetching.
+        This method combines list_archives(), list_restore_markers(), and error marker
+        collection to avoid duplicate S3 list operations. It parallelizes content fetching.
 
         Returns:
-            tuple of (archives, restore_markers)
+            tuple of (archives, restore_markers, error_markers)
         """
         import json
 
         resource_prefix = self._naming.prefix
         archive_suffix = self._naming.archive_suffix
-        marker_suffix = ".restore_marker"
+        restore_marker_suffix = ".restore_marker"
+        archive_error_suffix = ".error"
+        restore_error_suffix = ".restore_error"
         meta_suffix = ".meta"
 
         # Single S3 list call
@@ -315,20 +331,26 @@ class StorageManager:
         # Build key set for .meta lookup
         all_keys = {obj["Key"] for obj in all_objects}
 
-        # Pattern for archive matching
-        pattern = re.compile(
+        # Pattern for archive matching: {prefix}{ws_id}/{archive_op_id}/home.tar.zst
+        archive_pattern = re.compile(
             rf"^{re.escape(resource_prefix)}([^/]+)/([^/]+)/{re.escape(archive_suffix)}$"
+        )
+        # Pattern for archive error: {prefix}{ws_id}/{archive_op_id}/.error
+        archive_error_pattern = re.compile(
+            rf"^{re.escape(resource_prefix)}([^/]+)/([^/]+)/{re.escape(archive_error_suffix)}$"
         )
 
         # Single-pass processing
         workspace_archives: dict[str, list[tuple[str, datetime]]] = defaultdict(list)
-        marker_keys_to_fetch: list[tuple[str, str]] = []  # (key, workspace_id)
+        restore_marker_keys: list[tuple[str, str]] = []  # (key, workspace_id)
+        archive_error_keys: list[tuple[str, str, str]] = []  # (key, workspace_id, archive_op_id)
+        restore_error_keys: list[tuple[str, str]] = []  # (key, workspace_id)
 
         for obj in all_objects:
             key = obj["Key"]
 
             # Handle tar.zst files
-            match = pattern.match(key)
+            match = archive_pattern.match(key)
             if match:
                 meta_key = f"{key}{meta_suffix}"
                 if meta_key in all_keys:  # Only include complete archives
@@ -336,12 +358,28 @@ class StorageManager:
                     workspace_archives[workspace_id].append((key, obj["LastModified"]))
                 continue
 
+            # Handle archive error markers (.error)
+            error_match = archive_error_pattern.match(key)
+            if error_match:
+                workspace_id = error_match.group(1)
+                archive_op_id = error_match.group(2)
+                archive_error_keys.append((key, workspace_id, archive_op_id))
+                continue
+
             # Handle restore markers
-            if key.endswith(marker_suffix):
-                path_after_prefix = key[len(resource_prefix) :]
+            if key.endswith(restore_marker_suffix):
+                path_after_prefix = key[len(resource_prefix):]
                 if "/" in path_after_prefix:
                     workspace_id = path_after_prefix.split("/")[0]
-                    marker_keys_to_fetch.append((key, workspace_id))
+                    restore_marker_keys.append((key, workspace_id))
+                continue
+
+            # Handle restore error markers (.restore_error)
+            if key.endswith(restore_error_suffix):
+                path_after_prefix = key[len(resource_prefix):]
+                if "/" in path_after_prefix:
+                    workspace_id = path_after_prefix.split("/")[0]
+                    restore_error_keys.append((key, workspace_id))
 
         # Build archive list (latest per workspace)
         archives: list[ArchiveInfo] = []
@@ -359,19 +397,28 @@ class StorageManager:
                     )
                 )
 
-        # Fetch all restore markers in parallel
-        marker_contents = await asyncio.gather(
-            *[self._s3.get_object(key) for key, _ in marker_keys_to_fetch],
-            return_exceptions=True,
-        )
+        # Fetch all markers in parallel
+        all_fetch_tasks = [
+            *[self._s3.get_object(key) for key, _ in restore_marker_keys],
+            *[self._s3.get_object(key) for key, _, _ in archive_error_keys],
+            *[self._s3.get_object(key) for key, _ in restore_error_keys],
+        ]
+        all_contents = await asyncio.gather(*all_fetch_tasks, return_exceptions=True)
 
-        # Parse markers
-        markers: list[RestoreMarkerInfo] = []
-        for (key, workspace_id), content in zip(marker_keys_to_fetch, marker_contents):
+        # Split results back
+        restore_marker_count = len(restore_marker_keys)
+        archive_error_count = len(archive_error_keys)
+        restore_marker_contents = all_contents[:restore_marker_count]
+        archive_error_contents = all_contents[restore_marker_count:restore_marker_count + archive_error_count]
+        restore_error_contents = all_contents[restore_marker_count + archive_error_count:]
+
+        # Parse restore markers
+        restore_markers: list[RestoreMarkerInfo] = []
+        for (key, workspace_id), content in zip(restore_marker_keys, restore_marker_contents):
             if content and not isinstance(content, Exception):
                 try:
                     data = json.loads(content.decode("utf-8"))
-                    markers.append(
+                    restore_markers.append(
                         RestoreMarkerInfo(
                             workspace_id=workspace_id,
                             restore_op_id=data.get("restore_op_id", ""),
@@ -384,4 +431,48 @@ class StorageManager:
                         extra={"event": LogEvent.S3_GET_FAILED, "key": key, "error": str(e)},
                     )
 
-        return archives, markers
+        # Parse error markers
+        error_markers: list[ErrorMarkerInfo] = []
+
+        # Archive errors
+        for (key, workspace_id, archive_op_id), content in zip(archive_error_keys, archive_error_contents):
+            if content and not isinstance(content, Exception):
+                try:
+                    data = json.loads(content.decode("utf-8"))
+                    error_markers.append(
+                        ErrorMarkerInfo(
+                            workspace_id=workspace_id,
+                            operation=data.get("operation", "archive"),
+                            error_code=data.get("error_code", -1),
+                            error_at=data.get("error_at", ""),
+                            archive_op_id=data.get("archive_op_id", archive_op_id),
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to parse archive error marker",
+                        extra={"event": LogEvent.S3_GET_FAILED, "key": key, "error": str(e)},
+                    )
+
+        # Restore errors
+        for (key, workspace_id), content in zip(restore_error_keys, restore_error_contents):
+            if content and not isinstance(content, Exception):
+                try:
+                    data = json.loads(content.decode("utf-8"))
+                    error_markers.append(
+                        ErrorMarkerInfo(
+                            workspace_id=workspace_id,
+                            operation=data.get("operation", "restore"),
+                            error_code=data.get("error_code", -1),
+                            error_at=data.get("error_at", ""),
+                            restore_op_id=data.get("restore_op_id"),
+                            archive_key=data.get("archive_key"),
+                        )
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Failed to parse restore error marker",
+                        extra={"event": LogEvent.S3_GET_FAILED, "key": key, "error": str(e)},
+                    )
+
+        return archives, restore_markers, error_markers

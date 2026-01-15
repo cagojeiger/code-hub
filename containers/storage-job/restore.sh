@@ -22,11 +22,48 @@ set -e
 META_URL="${ARCHIVE_URL}.meta"
 MARKER_KEY="${S3_PREFIX}${WORKSPACE_ID}/.restore_marker"
 MARKER_URL="s3://${S3_BUCKET}/${MARKER_KEY}"
+ERROR_KEY="${S3_PREFIX}${WORKSPACE_ID}/.restore_error"
+ERROR_URL="s3://${S3_BUCKET}/${ERROR_KEY}"
 
 # AWS CLI options for S3-compatible storage
 AWS_OPTS=""
 if [ -n "$AWS_ENDPOINT_URL" ]; then
     AWS_OPTS="--endpoint-url $AWS_ENDPOINT_URL"
+fi
+
+# Error handler: upload error marker to S3 on failure
+upload_error_marker() {
+    ERROR_CODE=$?
+    ERROR_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    echo "Uploading restore error marker (exit code: $ERROR_CODE)..."
+    cat > /tmp/restore_error.json <<EOF
+{
+  "status": "Failed",
+  "operation": "restore",
+  "restore_op_id": "${RESTORE_OP_ID}",
+  "archive_key": "${RESTORE_ARCHIVE_KEY}",
+  "error_code": $ERROR_CODE,
+  "error_at": "$ERROR_TIME"
+}
+EOF
+    aws $AWS_OPTS s3 cp /tmp/restore_error.json "$ERROR_URL" || true
+}
+trap upload_error_marker ERR
+
+# 0. Idempotency check: skip if already completed with same restore_op_id
+echo "Checking for existing restore marker..."
+if aws $AWS_OPTS s3api head-object --bucket "$S3_BUCKET" --key "$MARKER_KEY" 2>/dev/null; then
+    echo "Restore marker found, checking restore_op_id..."
+    EXISTING_CONTENT=$(aws $AWS_OPTS s3 cp "$MARKER_URL" - 2>/dev/null || echo "{}")
+    EXISTING_OP_ID=$(echo "$EXISTING_CONTENT" | jq -r '.restore_op_id // empty' 2>/dev/null || echo "")
+
+    if [ -n "$EXISTING_OP_ID" ] && [ "$EXISTING_OP_ID" = "$RESTORE_OP_ID" ]; then
+        echo "Already restored with same restore_op_id ($RESTORE_OP_ID), skipping"
+        exit 0
+    fi
+
+    echo "Different restore_op_id detected (existing: $EXISTING_OP_ID, requested: $RESTORE_OP_ID)"
+    echo "Proceeding with new restore..."
 fi
 
 # 1. Download archive and metadata
@@ -67,5 +104,10 @@ cat > /tmp/restore_marker.json <<EOF
 }
 EOF
 aws $AWS_OPTS s3 cp /tmp/restore_marker.json "$MARKER_URL"
+
+# 6. Delete error marker if exists (cleanup on success)
+# Note: .restore_marker 존재 = 성공 판정이므로 삭제 실패해도 무방 (precedence rule)
+echo "Cleaning up restore error marker..."
+aws $AWS_OPTS s3 rm "$ERROR_URL" 2>/dev/null || true
 
 echo "Restore complete: $ARCHIVE_URL"
