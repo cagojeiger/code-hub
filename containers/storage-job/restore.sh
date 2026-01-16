@@ -75,7 +75,7 @@ aws $AWS_OPTS s3 cp "$META_URL" /tmp/home.tar.zst.meta
 
 # 2. Verify checksum
 echo "Verifying checksum..."
-EXPECTED=$(cat /tmp/home.tar.zst.meta)
+EXPECTED=$(head -n 1 /tmp/home.tar.zst.meta)
 ACTUAL="sha256:$(sha256sum /tmp/home.tar.zst | awk '{print $1}')"
 
 if [ "$EXPECTED" != "$ACTUAL" ]; then
@@ -105,7 +105,21 @@ cat > /tmp/restore_marker.json <<EOF
 EOF
 aws $AWS_OPTS s3 cp /tmp/restore_marker.json "$MARKER_URL"
 
-# 6. Delete error marker if exists (cleanup on success)
+# 6. Upload .volume_origin to S3 (volume source tracking)
+echo "Uploading volume origin marker..."
+ORIGIN_KEY="${S3_PREFIX}${WORKSPACE_ID}/.volume_origin"
+ORIGIN_URL="s3://${S3_BUCKET}/${ORIGIN_KEY}"
+cat > /tmp/volume_origin.json <<EOF
+{
+  "kind": "restored",
+  "source_archive_key": "${RESTORE_ARCHIVE_KEY}",
+  "restore_op_id": "${RESTORE_OP_ID}",
+  "restored_at": "${RESTORED_AT}"
+}
+EOF
+aws $AWS_OPTS s3 cp /tmp/volume_origin.json "$ORIGIN_URL"
+
+# 7. Delete error marker if exists (cleanup on success)
 # Note: .restore_marker 존재 = 성공 판정이므로 삭제 실패해도 무방 (precedence rule)
 echo "Cleaning up restore error marker..."
 aws $AWS_OPTS s3 rm "$ERROR_URL" 2>/dev/null || true
