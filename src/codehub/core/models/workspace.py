@@ -41,7 +41,7 @@ class Workspace(SQLModel, table=True):
     op_started_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True))
     )
-    op_id: str | None = None  # UUID for idempotency
+    archive_op_id: str | None = None  # UUID for archiving idempotency (S3 path)
     desired_state: DesiredState = Field(default=DesiredState.RUNNING, sa_type=String)
     archive_key: str | None = Field(default=None, max_length=512)
     observed_at: datetime | None = Field(

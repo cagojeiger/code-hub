@@ -108,7 +108,7 @@ WorkspaceController는 리소스 **관측**, 상태 **판정**, 상태 **수렴*
 
 **읽기**: desired_state, operation, op_started_at, error_count, archive_key, deleted_at, Container/Volume/Archive Provider
 
-**쓰기**: conditions, observed_at, phase, operation, op_started_at, op_id, archive_key, error_count, error_reason, home_ctx (Single Writer)
+**쓰기**: conditions, observed_at, phase, operation, op_started_at, archive_op_id, archive_key, error_count, error_reason, home_ctx (Single Writer)
 
 ### 주기
 
@@ -203,7 +203,7 @@ flowchart TB
 PENDING에서 ARCHIVED로 직접 전이 시 사용 (Ordered SM 단조 경로):
 
 1. 빈 tar.zst 생성 (메모리, ~50 bytes)
-2. S3 업로드 (`{workspace_id}/{op_id}/home.tar.zst`)
+2. S3 업로드 (`{workspace_id}/{archive_op_id}/home.tar.zst`)
 3. archive_key 설정
 4. 관측 → `archive_ready = true`
 5. conditions 확인 → phase = ARCHIVED, operation = NONE
@@ -243,7 +243,7 @@ WHERE id = ? AND operation != 'NONE'
 |------|------|
 | 1 | 에러 감지 (timeout, 재시도 초과, 불변식 위반 등) |
 | 2 | `phase=ERROR, operation=NONE, error_reason, error_count` 원자적 설정 |
-| 3 | `op_id` 유지 (GC 보호) |
+| 3 | `archive_op_id` 유지 (GC 보호) |
 
 > **원자성 보장**: 크래시 시에도 에러 유실 없음 (단일 트랜잭션)
 > **CAS 실패 처리**: operation 선점 CAS 실패 시 다음 reconcile 사이클에서 재시도
@@ -498,7 +498,7 @@ sequenceDiagram
 | error_reason | O | 에러 정보 초기화 |
 | error_count | O | 재시도 횟수 초기화 |
 | operation | X | ERROR 전환 시 이미 NONE |
-| op_id | X | GC 보호용으로 유지 |
+| archive_op_id | X | GC 보호용으로 유지 |
 | phase | X | WC가 다음 reconcile에서 재계산 |
 | conditions | X | WC가 reconcile에서 갱신 |
 

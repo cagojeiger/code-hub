@@ -113,13 +113,18 @@ class TTLRunner:
         return len(updated_ids)
 
     async def _check_standby_ttl(self) -> int:
-        """Check standby_ttl for RUNNING workspaces."""
+        """Check standby_ttl for RUNNING workspaces.
+
+        CAS 보호: desired_state가 RUNNING인 경우에만 STANDBY로 변경.
+        사용자가 이미 desired_state를 변경한 경우 덮어쓰지 않음.
+        """
         result = await self._conn.execute(
             text("""
                 UPDATE workspaces
-                SET desired_state = :desired_state
+                SET desired_state = :target_desired_state
                 WHERE phase = :phase
                   AND operation = :operation
+                  AND desired_state = :current_desired_state
                   AND deleted_at IS NULL
                   AND last_access_at IS NOT NULL
                   AND NOW() - last_access_at > make_interval(secs := :standby_ttl)
@@ -128,8 +133,9 @@ class TTLRunner:
             {
                 "phase": Phase.RUNNING.value,
                 "operation": Operation.NONE.value,
+                "current_desired_state": DesiredState.RUNNING.value,
+                "target_desired_state": DesiredState.STANDBY.value,
                 "standby_ttl": self._standby_ttl,
-                "desired_state": DesiredState.STANDBY.value,
             },
         )
         updated_ids = [row[0] for row in result.fetchall()]
@@ -146,13 +152,18 @@ class TTLRunner:
         return len(updated_ids)
 
     async def _check_archive_ttl(self) -> int:
-        """Check archive_ttl for STANDBY workspaces."""
+        """Check archive_ttl for STANDBY workspaces.
+
+        CAS 보호: desired_state가 STANDBY인 경우에만 ARCHIVED로 변경.
+        사용자가 이미 desired_state를 변경한 경우 덮어쓰지 않음.
+        """
         result = await self._conn.execute(
             text("""
                 UPDATE workspaces
-                SET desired_state = :desired_state
+                SET desired_state = :target_desired_state
                 WHERE phase = :phase
                   AND operation = :operation
+                  AND desired_state = :current_desired_state
                   AND deleted_at IS NULL
                   AND phase_changed_at IS NOT NULL
                   AND NOW() - phase_changed_at > make_interval(secs := :archive_ttl)
@@ -161,8 +172,9 @@ class TTLRunner:
             {
                 "phase": Phase.STANDBY.value,
                 "operation": Operation.NONE.value,
+                "current_desired_state": DesiredState.STANDBY.value,
+                "target_desired_state": DesiredState.ARCHIVED.value,
                 "archive_ttl": self._archive_ttl,
-                "desired_state": DesiredState.ARCHIVED.value,
             },
         )
         updated_ids = [row[0] for row in result.fetchall()]

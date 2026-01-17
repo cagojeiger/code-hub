@@ -160,31 +160,33 @@ COORDINATOR_IS_LEADER = Gauge(
 )
 
 # =============================================================================
-# Observer Metrics
+# Observer Metrics (Legacy - will be deprecated)
 # =============================================================================
 # Resource counts from ObserverCoordinator observations
+# NOTE: These metrics are deprecated and will be removed in a future release.
+# Use codehub_workspaces{state=...} instead.
 
 OBSERVER_WORKSPACES = Gauge(
     "codehub_observer_workspaces",
-    "Number of workspaces observed",
+    "Number of workspaces observed (deprecated: use codehub_workspaces)",
     multiprocess_mode="livesum",
 )
 
 OBSERVER_CONTAINERS = Gauge(
     "codehub_observer_containers",
-    "Number of containers observed",
+    "Number of containers observed (deprecated: use codehub_workspaces)",
     multiprocess_mode="livesum",
 )
 
 OBSERVER_VOLUMES = Gauge(
     "codehub_observer_volumes",
-    "Number of volumes observed",
+    "Number of volumes observed (deprecated: use codehub_workspaces)",
     multiprocess_mode="livesum",
 )
 
 OBSERVER_ARCHIVES = Gauge(
     "codehub_observer_archives",
-    "Number of archives observed",
+    "Number of archives observed (deprecated: use codehub_workspaces)",
     multiprocess_mode="livesum",
 )
 
@@ -200,6 +202,32 @@ OBSERVER_STAGE_DURATION = Histogram(
 OBSERVER_OBSERVE_DURATION = Histogram(
     "codehub_observer_observe_duration_seconds",
     "Duration of observer observe stage",
+    buckets=_BUCKETS_MEDIUM,
+)
+
+# =============================================================================
+# Workspace Metrics (NEW - Workspace-centric)
+# =============================================================================
+# Workspace state counts - domain-driven metrics replacing resource counts
+# States:
+#   - running: container running and healthy
+#   - unhealthy: container running but not healthy
+#   - stopped: container stopped, volume exists
+#   - archived: no container/volume, archive exists
+#   - provisioning: volume exists, no container started yet
+#   - unknown: no resources detected (orphan or deleted)
+
+WORKSPACES_BY_STATE = Gauge(
+    "codehub_workspaces",
+    "Number of workspaces by runtime state",
+    ["state"],  # running, unhealthy, stopped, archived, provisioning, unknown
+    multiprocess_mode="livesum",
+)
+
+# Runtime observe duration - single unified API call
+RUNTIME_OBSERVE_DURATION = Histogram(
+    "codehub_runtime_observe_duration_seconds",
+    "Duration of WorkspaceRuntime.observe() call",
     buckets=_BUCKETS_MEDIUM,
 )
 
@@ -435,6 +463,10 @@ def _init_metrics() -> None:
     SSE_MESSAGES_TOTAL.labels(event_type="connected")
     SSE_ERRORS_TOTAL.labels(error_type="redis_read")
     SSE_ERRORS_TOTAL.labels(error_type="json_decode")
+
+    # Workspace state metrics (NEW)
+    for state in ["running", "unhealthy", "stopped", "archived", "provisioning", "unknown"]:
+        WORKSPACES_BY_STATE.labels(state=state).set(0)
 
     # WC Operations (may never happen if no state changes)
     for op in ["STARTING", "STOPPING", "PROVISIONING", "DELETING", "CREATE_EMPTY_ARCHIVE", "ARCHIVING", "RESTORING"]:

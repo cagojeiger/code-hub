@@ -37,16 +37,17 @@ from codehub.control.coordinator.base import (
 from codehub.control.coordinator.wc_planner import (
     PlanAction,
     PlanInput,
+    is_this_archive_ready,
     needs_execute,
     plan,
 )
+from codehub.core.domain.conditions import ConditionInput
 from codehub.core.domain.workspace import (
     ErrorReason,
     Operation,
     Phase,
 )
-from codehub.core.interfaces.instance import InstanceController
-from codehub.core.interfaces.storage import StorageProvider
+from codehub.core.interfaces.runtime import WorkspaceRuntime
 from codehub.core.models import Workspace
 from codehub.core.logging_schema import LogEvent
 from codehub.core.retryable import classify_error, with_retry
@@ -75,21 +76,22 @@ class WorkspaceController(CoordinatorBase):
 
     # Operation timeout from config
     OPERATION_TIMEOUT = _coordinator_config.operation_timeout
+    MAX_CONCURRENT = _coordinator_config.max_concurrent_executions
 
     def __init__(
         self,
         conn: AsyncConnection,
         leader: LeaderElection,
         subscriber: ChannelSubscriber,
-        ic: InstanceController,
-        sp: StorageProvider,
+        runtime: WorkspaceRuntime,
     ) -> None:
         super().__init__(conn, leader, subscriber)
-        self._ic = ic
-        self._sp = sp
+        self._runtime = runtime
         # Track previous state to log only on changes (reduces noise)
         self._prev_state: tuple[int, int] | None = None
         self._last_heartbeat: float = 0.0
+        # Semaphore to limit concurrent external operations (Agent/Docker)
+        self._execute_semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
 
     async def reconcile(self) -> None:
         """Reconcile loop: Load → Judge → Plan → Execute → Persist.
@@ -136,9 +138,10 @@ class WorkspaceController(CoordinatorBase):
                 plan_ms = plan_duration * 1000
 
                 # Stage 3: Execute 병렬 (Docker/S3 - DB 미사용!)
+                # Semaphore limits concurrent operations (ADR-012 준수)
                 exec_start = time.monotonic()
                 results = await asyncio.gather(
-                    *[self._execute_one(ws, action) for ws, action in plans],
+                    *[self._execute_with_limit(ws, action) for ws, action in plans],
                     return_exceptions=False,  # 개별 예외 처리됨
                 )
                 exec_duration = time.monotonic() - exec_start
@@ -234,6 +237,17 @@ class WorkspaceController(CoordinatorBase):
         """
         return needs_execute(action, Operation(ws.operation))
 
+    async def _execute_with_limit(
+        self, ws: Workspace, action: PlanAction
+    ) -> tuple[Workspace, PlanAction]:
+        """Execute with semaphore to limit concurrent external operations.
+
+        Prevents overwhelming Agent/Docker API with too many concurrent requests.
+        MAX_CONCURRENT is configured via COORDINATOR_MAX_CONCURRENT_EXECUTIONS.
+        """
+        async with self._execute_semaphore:
+            return await self._execute_one(ws, action)
+
     async def _execute_one(
         self, ws: Workspace, action: PlanAction
     ) -> tuple[Workspace, PlanAction]:
@@ -284,44 +298,53 @@ class WorkspaceController(CoordinatorBase):
         """Actuator 호출.
 
         계약 #8: 순서 보장
-        - ARCHIVING: archive() → delete_volume()
-        - DELETING: delete() → delete_volume()
+        - ARCHIVING: archive() → delete()
+        - DELETING: delete()
         """
         start = time.perf_counter()
         try:
             match action.operation:
                 case Operation.PROVISIONING:
-                    await self._sp.provision(ws.id)
+                    await self._runtime.provision(ws.id)
 
                 case Operation.RESTORING:
                     if ws.archive_key:
-                        await self._sp.restore(ws.id, ws.archive_key)
-                        action.restore_marker = ws.archive_key  # 완료 확인용 marker
+                        # Generate unique restore_op_id for Dual Check verification
+                        restore_op_id = str(uuid4())
+                        restore_marker = await self._runtime.restore(
+                            ws.id, ws.archive_key, restore_op_id
+                        )
+                        action.restore_marker = restore_marker
 
                 case Operation.STARTING:
-                    await self._ic.start(ws.id, ws.image_ref)
+                    await self._runtime.start(ws.id, ws.image_ref)
 
                 case Operation.STOPPING:
-                    await self._ic.delete(ws.id)
+                    await self._runtime.stop(ws.id)
 
                 case Operation.ARCHIVING:
-                    # 3단계 operation: archive → delete container → delete_volume
-                    # 컨테이너 삭제 추가: Exited 컨테이너도 볼륨 참조하므로 먼저 삭제 필요
-                    op_id = action.op_id or ws.op_id or str(uuid4())
-                    archive_key = await self._sp.archive(ws.id, op_id)
-                    action.archive_key = archive_key
-                    await self._ic.delete(ws.id)  # Exited 컨테이너 정리 (idempotent)
-                    await self._sp.delete_volume(ws.id)
+                    # 2단계 operation (Fire-and-Forget 대응)
+                    archive_op_id = action.archive_op_id or ws.archive_op_id or str(uuid4())
+
+                    # Phase 1/2 분기: 현재 archive_op_id의 archive 완료 여부로 판단
+                    if not is_this_archive_ready(ws.conditions or {}, archive_op_id):
+                        # Phase 1: Archive 생성
+                        archive_key = await self._runtime.archive(ws.id, archive_op_id)
+                        action.archive_key = archive_key
+                    else:
+                        # Phase 2: Archive 완료, Volume 삭제
+                        cond = ConditionInput.from_conditions(ws.conditions or {})
+                        if cond.volume_ready:
+                            await self._runtime.delete(ws.id)
 
                 case Operation.CREATE_EMPTY_ARCHIVE:
-                    op_id = action.op_id or ws.op_id or str(uuid4())
-                    archive_key = await self._sp.create_empty_archive(ws.id, op_id)
+                    archive_op_id = action.archive_op_id or ws.archive_op_id or str(uuid4())
+                    archive_key = await self._runtime.archive(ws.id, archive_op_id)
                     action.archive_key = archive_key
 
                 case Operation.DELETING:
-                    # 2단계 operation: delete container → delete_volume (계약 #8)
-                    await self._ic.delete(ws.id)
-                    await self._sp.delete_volume(ws.id)
+                    # Container + Volume 삭제 (Agent가 처리)
+                    await self._runtime.delete(ws.id)
         finally:
             duration = time.perf_counter() - start
             WC_OPERATION_DURATION.labels(operation=action.operation.name).observe(duration)
@@ -339,15 +362,19 @@ class WorkspaceController(CoordinatorBase):
         if action.operation != Operation.NONE and ws_op == Operation.NONE:
             # 새 operation 시작
             op_started_at = now
-            op_id = action.op_id or str(uuid4())
+            # archive_op_id는 ARCHIVING/CREATE_EMPTY에서만 새로 생성
+            if action.operation in (Operation.ARCHIVING, Operation.CREATE_EMPTY_ARCHIVE):
+                archive_op_id = action.archive_op_id or str(uuid4())
+            else:
+                archive_op_id = ws.archive_op_id  # 다른 operation은 기존 값 유지
         elif action.operation == Operation.NONE:
             # operation 완료 또는 no-op
             op_started_at = None
-            op_id = ws.op_id  # GC 보호용 유지
+            archive_op_id = ws.archive_op_id  # GC 보호용 유지
         else:
             # 진행 중
             op_started_at = ws.op_started_at
-            op_id = ws.op_id
+            archive_op_id = ws.archive_op_id
 
         # error_count 계산
         if action.error_reason:
@@ -369,7 +396,7 @@ class WorkspaceController(CoordinatorBase):
             phase=action.phase,
             operation=action.operation,
             op_started_at=op_started_at,
-            op_id=op_id,
+            archive_op_id=archive_op_id,
             archive_key=action.archive_key,
             error_count=error_count,
             error_reason=action.error_reason,
@@ -429,7 +456,7 @@ class WorkspaceController(CoordinatorBase):
         phase: Phase,
         operation: Operation,
         op_started_at: datetime | None,
-        op_id: str | None,
+        archive_op_id: str | None,
         archive_key: str | None,
         error_count: int,
         error_reason: ErrorReason | None,
@@ -444,7 +471,7 @@ class WorkspaceController(CoordinatorBase):
             "phase": phase.value,
             "operation": operation.value,
             "op_started_at": op_started_at,
-            "op_id": op_id,
+            "archive_op_id": archive_op_id,
             "error_count": error_count,
             "error_reason": error_reason.value if error_reason else None,
             "updated_at": updated_at or datetime.now(UTC),

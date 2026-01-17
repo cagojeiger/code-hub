@@ -1,0 +1,67 @@
+"""Docker runtime for Agent."""
+
+from codehub_agent.config import AgentConfig, get_agent_config
+from codehub_agent.infra import S3Operations
+from codehub_agent.runtimes.docker.instance import InstanceManager
+from codehub_agent.runtimes.docker.job import JobRunner
+from codehub_agent.runtimes.docker.naming import ResourceNaming
+from codehub_agent.runtimes.docker.result import OperationResult, OperationStatus
+from codehub_agent.runtimes.docker.storage import StorageManager
+from codehub_agent.runtimes.docker.volume import VolumeManager
+
+
+class DockerRuntime:
+    """Docker runtime combining instance, volume, job, and storage management."""
+
+    def __init__(self, config: AgentConfig | None = None) -> None:
+        """Initialize DockerRuntime.
+
+        Args:
+            config: Agent configuration (optional, uses default if not provided).
+
+        Note:
+            Call init() after construction to initialize async resources (S3).
+        """
+        self._config = config or get_agent_config()
+        self._naming = ResourceNaming(self._config)
+        self._s3: S3Operations | None = None
+
+        self.instances = InstanceManager(self._config, self._naming)
+        self.volumes = VolumeManager(self._config, self._naming)
+        self.jobs = JobRunner(self._config, self._naming)
+        # storage is initialized in init() after S3 is ready
+        self.storage: StorageManager | None = None
+
+    async def init(self) -> None:
+        """Initialize async resources (S3 client).
+
+        Must be called before using storage operations.
+        """
+        self._s3 = S3Operations(self._config)
+        await self._s3.init()
+        self.storage = StorageManager(self._config, self._naming, self._s3)
+
+    async def close(self) -> None:
+        """Close async resources."""
+        if self._s3:
+            await self._s3.close()
+            self._s3 = None
+
+    def get_archive_key(self, workspace_id: str, archive_op_id: str) -> str:
+        """Get the S3 key for an archive.
+
+        Public method to avoid direct access to _naming.
+        """
+        return self._naming.archive_s3_key(workspace_id, archive_op_id)
+
+
+__all__ = [
+    "DockerRuntime",
+    "InstanceManager",
+    "VolumeManager",
+    "JobRunner",
+    "StorageManager",
+    "ResourceNaming",
+    "OperationResult",
+    "OperationStatus",
+]

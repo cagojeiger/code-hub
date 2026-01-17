@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from codehub import __version__
 from codehub.app.api.v1 import auth_router, events_router, workspaces_router
 from codehub.app.config import get_settings
-from codehub.app.logging import setup_logging
+from codehub.app.logging import get_trace_id, setup_logging
 from codehub.app.middleware import LoggingMiddleware
 from codehub.core.errors import CodeHubError
 from codehub.core.logging_schema import LogEvent
@@ -37,18 +37,15 @@ from codehub.app.metrics.collector import (
     REDIS_POOL_IDLE,
     REDIS_POOL_TOTAL,
 )
+from codehub.agent.client import AgentClient, AgentConfig
 from codehub.control import run_control_plane
 from codehub.infra import (
     close_db,
-    close_docker,
     close_redis,
-    close_storage,
     get_engine,
     get_redis,
-    get_s3_client,
     init_db,
     init_redis,
-    init_storage,
 )
 
 setup_logging()
@@ -102,7 +99,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     await init_db()
     await init_redis()
-    await init_storage()
     await _ensure_admin_user()
 
     logger.info("Starting application", extra={"event": LogEvent.APP_STARTED})
@@ -127,8 +123,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         pass
 
     await close_http_client()
-    await close_docker()
-    await close_storage()
     await close_redis()
     await close_db()
 
@@ -143,6 +137,24 @@ async def codehub_error_handler(request: Request, exc: CodeHubError) -> JSONResp
     return JSONResponse(
         status_code=exc.status_code,
         content=exc.to_response().model_dump(),
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Handle unhandled exceptions with logging."""
+    logger.exception(
+        "Unhandled exception",
+        extra={
+            "event": LogEvent.UNHANDLED_EXCEPTION,
+            "path": request.url.path,
+            "method": request.method,
+            "trace_id": get_trace_id(),
+        },
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal server error"},
     )
 
 
@@ -174,9 +186,19 @@ async def _check_redis() -> None:
     await redis_client.ping()
 
 
-async def _check_s3() -> None:
-    async with get_s3_client() as s3:
-        await s3.list_buckets()
+async def _check_agent() -> None:
+    settings = get_settings()
+    config = AgentConfig(
+        endpoint=settings.agent.endpoint,
+        api_key=settings.agent.api_key,
+        timeout=5.0,
+    )
+    client = AgentClient(config)
+    try:
+        if not await client.health_check():
+            raise RuntimeError("Agent health check failed")
+    finally:
+        await client.close()
 
 
 @app.get("/health")
@@ -184,13 +206,13 @@ async def health():
     results = await asyncio.gather(
         _check_service(_check_postgres),
         _check_service(_check_redis),
-        _check_service(_check_s3),
+        _check_service(_check_agent),
     )
 
     services = {
         "postgres": results[0],
         "redis": results[1],
-        "s3": results[2],
+        "agent": results[2],
     }
 
     is_degraded = any(s != "connected" for s in services.values())

@@ -8,7 +8,7 @@ Partially Superseded by [ADR-011](./011-declarative-conditions.md)
 
 ### 여전히 유효한 부분
 - operation 분리 개념 (동시성 제어)
-- operation/op_id CAS 규칙
+- operation/archive_op_id CAS 규칙 (ARCHIVING/CREATE_EMPTY_ARCHIVE 전용)
 - Reconciler 로직 단순화 (operation != NONE 체크)
 
 ## 컨텍스트
