@@ -1,0 +1,235 @@
+"""Agent HTTP client for Control Plane.
+
+This client communicates with the Agent service to manage workspaces.
+It implements the WorkspaceRuntime interface for workspace lifecycle management.
+"""
+
+from __future__ import annotations
+
+import logging
+from dataclasses import dataclass
+from typing import Any, Literal
+
+import httpx
+
+from codehub.core.interfaces.runtime import WorkspaceRuntime
+from codehub.core.schemas.agent_api import (
+    # Response types
+    ArchiveResponse,
+    GCResult,
+    ObserveResponse,
+    RestoreResponse,
+    UpstreamInfo,
+    WorkspaceState,
+    # Request types
+    ArchiveRequest,
+    GCRequest,
+    RestoreRequest,
+    StartRequest,
+)
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class AgentConfig:
+    """Agent connection configuration."""
+
+    endpoint: str
+    api_key: str = ""
+    timeout: float = 30.0
+    job_timeout: float = 600.0
+
+
+class AgentClient(WorkspaceRuntime):
+    """HTTP client for Agent API.
+
+    Implements WorkspaceRuntime interface for workspace lifecycle management.
+    """
+
+    def __init__(self, config: AgentConfig) -> None:
+        self._config = config
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_headers(self) -> dict[str, str]:
+        """Get request headers with API key."""
+        headers = {"Content-Type": "application/json"}
+        if self._config.api_key:
+            headers["Authorization"] = f"Bearer {self._config.api_key}"
+        return headers
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or create HTTP client."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
+                base_url=self._config.endpoint,
+                headers=self._get_headers(),
+                timeout=self._config.timeout,
+            )
+        return self._client
+
+    async def _request(
+        self,
+        method: Literal["get", "post", "delete"],
+        path: str,
+        *,
+        on_404: Literal["raise", "none", "false"] = "raise",
+        timeout: float | None = None,
+        **kwargs: Any,
+    ) -> httpx.Response | None:
+        """Make HTTP request with common error handling."""
+        client = await self._get_client()
+        if timeout:
+            kwargs["timeout"] = timeout
+
+        resp = await getattr(client, method)(path, **kwargs)
+
+        if resp.status_code == 404:
+            if on_404 == "raise":
+                resp.raise_for_status()
+            elif on_404 == "none":
+                return None
+
+        if resp.status_code != 404:
+            resp.raise_for_status()
+
+        return resp
+
+    async def close(self) -> None:
+        """Close HTTP client."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+
+    # =========================================================================
+    # WorkspaceRuntime interface (NEW)
+    # =========================================================================
+
+    async def observe(self) -> list[WorkspaceState]:
+        """Observe all workspaces and return their current state.
+
+        Calls the new unified /api/v1/workspaces endpoint.
+        """
+        resp = await self._request("get", "/api/v1/workspaces")
+        if resp is None:
+            return []
+
+        return ObserveResponse.model_validate(resp.json()).workspaces
+
+    async def provision(self, workspace_id: str) -> None:
+        """Provision a new workspace (create volume)."""
+        await self._request("post", f"/api/v1/workspaces/{workspace_id}/provision")
+        logger.info("Provisioned workspace: %s", workspace_id)
+
+    async def start(self, workspace_id: str, image: str) -> None:
+        """Start workspace container (Fire-and-Forget)."""
+        await self._request(
+            "post",
+            f"/api/v1/workspaces/{workspace_id}/start",
+            json=StartRequest(image=image).model_dump(),
+        )
+        logger.info("Started workspace (async): %s", workspace_id)
+
+    async def stop(self, workspace_id: str) -> None:
+        """Stop workspace container (Fire-and-Forget)."""
+        await self._request("post", f"/api/v1/workspaces/{workspace_id}/stop")
+        logger.info("Stopped workspace (async): %s", workspace_id)
+
+    async def delete(self, workspace_id: str) -> None:
+        """Delete workspace completely (Fire-and-Forget)."""
+        await self._request("delete", f"/api/v1/workspaces/{workspace_id}")
+        logger.info("Deleted workspace (async): %s", workspace_id)
+
+    async def archive(self, workspace_id: str, archive_op_id: str) -> str:
+        """Archive workspace to S3 (Fire-and-Forget).
+
+        Returns immediately with archive_key. Completion detected via Observer.
+        """
+        resp = await self._request(
+            "post",
+            f"/api/v1/workspaces/{workspace_id}/archive",
+            json=ArchiveRequest(archive_op_id=archive_op_id).model_dump(),
+        )
+        if resp is None:
+            raise RuntimeError(f"Archive failed for {workspace_id}")
+        result = ArchiveResponse.model_validate(resp.json())
+        logger.info("Archive started (async): %s", workspace_id)
+        return result.archive_key
+
+    async def restore(
+        self, workspace_id: str, archive_key: str, restore_op_id: str
+    ) -> str:
+        """Restore workspace from S3 archive (Fire-and-Forget).
+
+        Returns immediately with restore_marker. Completion detected via Observer.
+
+        Args:
+            workspace_id: Workspace identifier
+            archive_key: Full archive key from S3
+            restore_op_id: Unique restore operation ID for Dual Check
+
+        Returns:
+            restore_marker: The restore_op_id for completion verification
+        """
+        resp = await self._request(
+            "post",
+            f"/api/v1/workspaces/{workspace_id}/restore",
+            json=RestoreRequest(
+                archive_key=archive_key, restore_op_id=restore_op_id
+            ).model_dump(),
+        )
+        if resp is None:
+            raise RuntimeError(f"Restore failed for {workspace_id}")
+        result = RestoreResponse.model_validate(resp.json())
+        logger.info("Restore started (async): %s from %s", workspace_id, archive_key)
+        return result.restore_marker
+
+    async def get_upstream(self, workspace_id: str) -> UpstreamInfo | None:
+        """Get upstream address for proxy routing."""
+        resp = await self._request(
+            "get",
+            f"/api/v1/workspaces/{workspace_id}/upstream",
+            on_404="none",
+        )
+        if resp is None:
+            return None
+        # UpstreamResponse has url field, but interface only needs hostname and port
+        data = resp.json()
+        return UpstreamInfo(hostname=data["hostname"], port=data["port"])
+
+    async def run_gc(
+        self,
+        archive_keys: list[str],
+        protected_workspaces: list[tuple[str, str]],
+    ) -> GCResult:
+        """Run garbage collection on archives.
+
+        Args:
+            archive_keys: archive_key column values (RESTORING target protection)
+            protected_workspaces: (ws_id, archive_op_id) tuples (ARCHIVING crash recovery)
+        """
+        request = GCRequest(
+            archive_keys=archive_keys,
+            protected_workspaces=protected_workspaces,
+        )
+        resp = await self._request(
+            "post",
+            "/api/v1/workspaces/gc",
+            json=request.model_dump(),
+        )
+        if resp is None:
+            return GCResult(deleted_count=0, deleted_keys=[])
+        return GCResult.model_validate(resp.json())
+
+    # =========================================================================
+    # Health Check
+    # =========================================================================
+
+    async def health_check(self) -> bool:
+        """Check Agent health."""
+        try:
+            resp = await self._request("get", "/health", on_404="false")
+            return resp is not None and resp.status_code == 200
+        except Exception as e:
+            logger.warning("Agent health check failed: %s", e)
+            return False
