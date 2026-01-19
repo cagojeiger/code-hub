@@ -1,7 +1,6 @@
 """Operation result types for Docker runtime."""
 
 from enum import Enum
-from typing import Literal
 
 from pydantic import BaseModel
 
@@ -55,3 +54,17 @@ class OperationResult(BaseModel):
     def needs_retry(self) -> bool:
         """Check if operation is in progress and needs retry."""
         return self.status == OperationStatus.IN_PROGRESS
+
+
+class PrepareArchiveResult(BaseModel):
+    """Result of prepare_archive() service method."""
+
+    should_run_job: bool
+    archive_key: str
+
+
+class PrepareRestoreResult(BaseModel):
+    """Result of prepare_restore() service method."""
+
+    should_run_job: bool
+    restore_marker: str
