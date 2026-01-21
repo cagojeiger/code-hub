@@ -45,7 +45,7 @@
 
 | 컴포넌트 | 소유 컬럼 |
 |---------|----------|
-| WorkspaceController | conditions, observed_at, phase, phase_changed_at, operation, op_started_at, op_id, archive_key, error_count, error_reason, home_ctx |
+| WorkspaceController | conditions, observed_at, phase, phase_changed_at, operation, op_started_at, archive_op_id, archive_key, error_count, error_reason, home_ctx |
 | API | desired_state, deleted_at, last_access_at |
 
 > **단일 컨트롤러**: WC가 관측 + 제어 컬럼 모두 소유 (원자성 보장)
@@ -142,9 +142,9 @@
 
 | 항목 | 값 |
 |------|---|
-| 정의 | 같은 (workspace_id, op_id)에 대해 멱등 |
+| 정의 | 같은 (workspace_id, archive_op_id)에 대해 멱등 |
 | 구현 | HEAD 체크로 기존 archive 확인 후 skip |
-| 경로 | `{workspace_id}/{op_id}/home.tar.zst` |
+| 경로 | `{workspace_id}/{archive_op_id}/home.tar.zst` |
 
 ### Restore (Crash-Only)
 
@@ -199,11 +199,11 @@
 
 ### 보호 규칙
 
-| 우선순위 | 조건 | archive_key 경로 | op_id 경로 |
+| 우선순위 | 조건 | archive_key 경로 | archive_op_id 경로 |
 |---------|------|-----------------|-----------|
 | 1 | deleted_at != NULL | **보호 해제** | **보호 해제** |
 | 2 | healthy = false | 보호 | 보호 |
-| 3 | op_id 존재 | - | 보호 |
+| 3 | archive_op_id 존재 | - | 보호 |
 
 > **사용자 의도 우선**: deleted_at 설정 = 사용자가 삭제 원함 → 모든 보호 해제
 
@@ -243,9 +243,9 @@ is_terminal = error_reason in TERMINAL_REASONS or error_count >= MAX_RETRY
 | 4 | Non-preemptive | ERROR 전환은 원자적 (phase+operation+error_reason) |
 | 5 | Ordered SM | 인접 레벨만 전이 (step_up/step_down) |
 | 6 | Container↔Volume | Container 있으면 Volume 필수 |
-| 7 | Archive/Restore | op_id로 멱등, Crash-Only |
+| 7 | Archive/Restore | archive_op_id로 멱등, Crash-Only |
 | 8 | Ordering | archive_key 저장 → Volume 삭제 |
-| 9 | GC Protection | deleted_at 시 op_id 보호 해제 |
+| 9 | GC Protection | deleted_at 시 archive_op_id 보호 해제 |
 | 10 | Retry Policy | 단말 에러 또는 MAX_RETRY까지 재시도 |
 
 ---

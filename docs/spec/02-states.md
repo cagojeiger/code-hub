@@ -401,5 +401,5 @@ sequenceDiagram
 - [03-schema.md](./03-schema.md) - DB 스키마 (Conditions SSOT)
 - [04-control-plane.md#workspacecontroller](./04-control-plane.md#workspacecontroller) - WorkspaceController 구현
 - [ADR-008](../adr/008-ordered-state-machine.md) - Ordered SM
-- [ADR-009](../adr/009-status-operation-separation.md) - operation/op_id CAS
+- [ADR-009](../adr/009-status-operation-separation.md) - operation/archive_op_id CAS
 - [ADR-011](../adr/011-declarative-conditions.md) - Conditions 패턴

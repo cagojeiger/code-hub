@@ -26,14 +26,11 @@ WC는 워크스페이스의 상태를 desired_state로 수렴시키는 컨트롤
 ```mermaid
 flowchart TB
     subgraph OBS_COORD["Observer Coordinator (별도)"]
-        IC["IC.list_all()"]
-        SPV["SP.list_volumes()"]
-        SPA["SP.list_archives()"]
-        SAVE_COND["conditions 저장"]
+        OBSERVE["WorkspaceRuntime.observe()"]
+        COND["conditions 구성"]
+        SAVE_COND["DB 저장"]
 
-        IC --> SAVE_COND
-        SPV --> SAVE_COND
-        SPA --> SAVE_COND
+        OBSERVE --> COND --> SAVE_COND
     end
 
     subgraph WC["WC Reconcile Loop"]
@@ -179,7 +176,7 @@ Plan에서 결정된 operation에 따라 Actuator를 호출합니다.
 |------|------|
 | Observe | DB에서 conditions 읽기 (저장 없음) |
 | Judge | phase 계산 |
-| Control | phase, operation, op_started_at, op_id, archive_key, error_count, error_reason, home_ctx 저장 |
+| Control | phase, operation, op_started_at, archive_op_id, archive_key, error_count, error_reason, home_ctx 저장 |
 
 > **Note**: conditions, observed_at은 Observer Coordinator가 저장
 
@@ -190,7 +187,7 @@ UPDATE workspaces
 SET phase        = $phase,
     operation    = $operation,
     op_started_at = $op_started_at,
-    op_id        = $op_id,
+    archive_op_id = $archive_op_id,
     archive_key  = $archive_key,
     error_count  = $error_count,
     error_reason = $error_reason,
@@ -287,7 +284,7 @@ WC가 에러 감지 시 단일 트랜잭션으로 원자적 전환:
 | phase | WC |
 | operation | WC |
 | op_started_at | WC |
-| op_id | WC |
+| archive_op_id | WC (ARCHIVING/CREATE_EMPTY만 사용) |
 | archive_key | WC |
 | error_count | WC |
 | error_reason | WC |

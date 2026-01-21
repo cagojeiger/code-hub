@@ -12,8 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from codehub.control.coordinator.observer import ObserverCoordinator
 from codehub.core.models import Workspace, User
-from codehub.core.interfaces.storage import VolumeInfo
-from codehub.core.interfaces.instance import ContainerInfo
+from codehub.core.interfaces.runtime import (
+    WorkspaceRuntime,
+    WorkspaceState,
+    ContainerStatus,
+    VolumeStatus,
+    ArchiveStatus,
+)
 
 
 class TestObserverReconcile:
@@ -66,20 +71,16 @@ class TestObserverReconcile:
         """OBS-INT-001: tick()이 conditions를 DB에 저장하는지 검증."""
         ws_id = test_workspace.id
 
-        # Arrange: Mock adapters to return volume info
-        mock_ic = AsyncMock()
-        mock_ic.list_all.return_value = []
-
-        mock_sp = AsyncMock()
-        mock_sp.list_volumes.return_value = [
-            VolumeInfo(
+        # Arrange: Mock runtime to return workspace state with volume
+        mock_runtime = AsyncMock(spec=WorkspaceRuntime)
+        mock_runtime.observe.return_value = [
+            WorkspaceState(
                 workspace_id=ws_id,
-                exists=True,
-                reason="VolumeExists",
-                message="Test volume",
+                container=None,
+                volume=VolumeStatus(exists=True),
+                archive=None,
             )
         ]
-        mock_sp.list_archives.return_value = []
 
         mock_leader = AsyncMock()
         mock_subscriber = AsyncMock()
@@ -90,8 +91,7 @@ class TestObserverReconcile:
                 conn,
                 mock_leader,
                 mock_subscriber,
-                mock_ic,
-                mock_sp,
+                mock_runtime,
             )
             await observer.reconcile()
 
@@ -117,26 +117,15 @@ class TestObserverReconcile:
         """OBS-INT-002: container + volume이 함께 존재할 때."""
         ws_id = test_workspace.id
 
-        mock_ic = AsyncMock()
-        mock_ic.list_all.return_value = [
-            ContainerInfo(
+        mock_runtime = AsyncMock(spec=WorkspaceRuntime)
+        mock_runtime.observe.return_value = [
+            WorkspaceState(
                 workspace_id=ws_id,
-                running=True,
-                reason="Running",
-                message="Up 5 minutes",
+                container=ContainerStatus(running=True, healthy=True),
+                volume=VolumeStatus(exists=True),
+                archive=None,
             )
         ]
-
-        mock_sp = AsyncMock()
-        mock_sp.list_volumes.return_value = [
-            VolumeInfo(
-                workspace_id=ws_id,
-                exists=True,
-                reason="VolumeExists",
-                message="Volume exists",
-            )
-        ]
-        mock_sp.list_archives.return_value = []
 
         mock_leader = AsyncMock()
         mock_subscriber = AsyncMock()
@@ -146,8 +135,7 @@ class TestObserverReconcile:
                 conn,
                 mock_leader,
                 mock_subscriber,
-                mock_ic,
-                mock_sp,
+                mock_runtime,
             )
             await observer.reconcile()
 
@@ -166,19 +154,16 @@ class TestObserverReconcile:
     ):
         """OBS-INT-003: DB에 없는 workspace volume은 무시."""
         # Mock: volume for non-existent workspace
-        mock_sp = AsyncMock()
-        mock_sp.list_volumes.return_value = [
-            VolumeInfo(
+        mock_runtime = AsyncMock(spec=WorkspaceRuntime)
+        mock_runtime.observe.return_value = [
+            WorkspaceState(
                 workspace_id="orphan-ws-999",  # DB에 없는 ID
-                exists=True,
-                reason="VolumeExists",
-                message="Orphan volume",
+                container=None,
+                volume=VolumeStatus(exists=True),
+                archive=None,
             )
         ]
-        mock_sp.list_archives.return_value = []
 
-        mock_ic = AsyncMock()
-        mock_ic.list_all.return_value = []
         mock_leader = AsyncMock()
         mock_subscriber = AsyncMock()
 
@@ -187,8 +172,7 @@ class TestObserverReconcile:
                 conn,
                 mock_leader,
                 mock_subscriber,
-                mock_ic,
-                mock_sp,
+                mock_runtime,
             )
             await observer.reconcile()
 
@@ -224,18 +208,15 @@ class TestObserverReconcile:
             session.add(ws)
             await session.commit()
 
-        mock_ic = AsyncMock()
-        mock_ic.list_all.return_value = []
-        mock_sp = AsyncMock()
-        mock_sp.list_volumes.return_value = [
-            VolumeInfo(
+        mock_runtime = AsyncMock(spec=WorkspaceRuntime)
+        mock_runtime.observe.return_value = [
+            WorkspaceState(
                 workspace_id="deleted-ws-001",
-                exists=True,
-                reason="VolumeExists",
-                message="Volume for deleted workspace",
+                container=None,
+                volume=VolumeStatus(exists=True),
+                archive=None,
             )
         ]
-        mock_sp.list_archives.return_value = []
 
         mock_leader = AsyncMock()
         mock_subscriber = AsyncMock()
@@ -245,8 +226,7 @@ class TestObserverReconcile:
                 conn,
                 mock_leader,
                 mock_subscriber,
-                mock_ic,
-                mock_sp,
+                mock_runtime,
             )
             await observer.reconcile()
 
@@ -269,13 +249,9 @@ class TestObserverReconcile:
         """
         ws_id = test_workspace.id
 
-        # Mock: 모든 리소스가 비어있음 (컨테이너, 볼륨, 아카이브 없음)
-        mock_ic = AsyncMock()
-        mock_ic.list_all.return_value = []
-
-        mock_sp = AsyncMock()
-        mock_sp.list_volumes.return_value = []
-        mock_sp.list_archives.return_value = []
+        # Mock: observe 결과에 해당 workspace가 없음 (모든 리소스 없음)
+        mock_runtime = AsyncMock(spec=WorkspaceRuntime)
+        mock_runtime.observe.return_value = []
 
         mock_leader = AsyncMock()
         mock_subscriber = AsyncMock()
@@ -285,8 +261,7 @@ class TestObserverReconcile:
                 conn,
                 mock_leader,
                 mock_subscriber,
-                mock_ic,
-                mock_sp,
+                mock_runtime,
             )
             await observer.reconcile()
 
@@ -311,18 +286,15 @@ class TestObserverReconcile:
         """OBS-INT-006: conditions 업데이트가 DB에 커밋되는지 검증."""
         ws_id = test_workspace.id
 
-        mock_ic = AsyncMock()
-        mock_ic.list_all.return_value = []
-        mock_sp = AsyncMock()
-        mock_sp.list_volumes.return_value = [
-            VolumeInfo(
+        mock_runtime = AsyncMock(spec=WorkspaceRuntime)
+        mock_runtime.observe.return_value = [
+            WorkspaceState(
                 workspace_id=ws_id,
-                exists=True,
-                reason="VolumeExists",
-                message="Test",
+                container=None,
+                volume=VolumeStatus(exists=True),
+                archive=None,
             )
         ]
-        mock_sp.list_archives.return_value = []
 
         mock_leader = AsyncMock()
         mock_subscriber = AsyncMock()
@@ -332,8 +304,7 @@ class TestObserverReconcile:
                 conn,
                 mock_leader,
                 mock_subscriber,
-                mock_ic,
-                mock_sp,
+                mock_runtime,
             )
             await observer.reconcile()
 
@@ -395,10 +366,7 @@ class TestConcurrentCoordinators:
                 desired_state="RUNNING",  # Needs to start → WC will update
                 conditions={
                     "volume": {
-                        "workspace_id": "test-ws-concurrent",
                         "exists": True,
-                        "reason": "VolumeExists",
-                        "message": "",
                     },
                     "container": None,
                     "archive": None,
@@ -433,29 +401,23 @@ class TestConcurrentCoordinators:
 
         ws_id = test_workspace.id
 
-        # Mock adapters for Observer - container NOT running yet
-        # Observer sees volume but no running container
-        mock_ic_obs = AsyncMock()
-        mock_ic_obs.list_all.return_value = []  # No container
-
-        mock_sp_obs = AsyncMock()
-        mock_sp_obs.list_volumes.return_value = [
-            VolumeInfo(
+        # Mock runtime for Observer - container NOT running yet
+        mock_runtime_obs = AsyncMock(spec=WorkspaceRuntime)
+        mock_runtime_obs.observe.return_value = [
+            WorkspaceState(
                 workspace_id=ws_id,
-                exists=True,
-                reason="VolumeExists",
-                message="Volume exists",
+                container=None,
+                volume=VolumeStatus(exists=True),
+                archive=None,
             )
         ]
-        mock_sp_obs.list_archives.return_value = []
 
         mock_leader_obs = AsyncMock()
         mock_subscriber_obs = AsyncMock()
 
-        # Mock adapters for WC
-        mock_ic_wc = AsyncMock()
-        mock_ic_wc.start.return_value = None
-        mock_sp_wc = AsyncMock()
+        # Mock runtime for WC
+        mock_runtime_wc = AsyncMock(spec=WorkspaceRuntime)
+        mock_runtime_wc.start.return_value = None
         mock_leader_wc = AsyncMock()
         mock_subscriber_wc = AsyncMock()
 
@@ -470,8 +432,7 @@ class TestConcurrentCoordinators:
                     conn,
                     mock_leader_obs,
                     mock_subscriber_obs,
-                    mock_ic_obs,
-                    mock_sp_obs,
+                    mock_runtime_obs,
                 )
                 await observer.reconcile()
                 observer_done = True
@@ -483,8 +444,7 @@ class TestConcurrentCoordinators:
                     conn,
                     mock_leader_wc,
                     mock_subscriber_wc,
-                    mock_ic_wc,
-                    mock_sp_wc,
+                    mock_runtime_wc,
                 )
                 await wc.reconcile()
                 wc_done = True
@@ -541,26 +501,15 @@ class TestConcurrentCoordinators:
 
         ws_id = test_workspace.id
 
-        mock_ic = AsyncMock()
-        mock_ic.list_all.return_value = [
-            ContainerInfo(
+        mock_runtime = AsyncMock(spec=WorkspaceRuntime)
+        mock_runtime.observe.return_value = [
+            WorkspaceState(
                 workspace_id=ws_id,
-                running=True,
-                reason="Running",
-                message="Up 5 seconds",
+                container=ContainerStatus(running=True, healthy=True),
+                volume=VolumeStatus(exists=True),
+                archive=None,
             )
         ]
-
-        mock_sp = AsyncMock()
-        mock_sp.list_volumes.return_value = [
-            VolumeInfo(
-                workspace_id=ws_id,
-                exists=True,
-                reason="VolumeExists",
-                message="Volume exists",
-            )
-        ]
-        mock_sp.list_archives.return_value = []
 
         mock_leader = AsyncMock()
         mock_subscriber = AsyncMock()
@@ -571,8 +520,7 @@ class TestConcurrentCoordinators:
                 conn,
                 mock_leader,
                 mock_subscriber,
-                mock_ic,
-                mock_sp,
+                mock_runtime,
             )
 
             for i in range(3):

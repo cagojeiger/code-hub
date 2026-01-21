@@ -92,7 +92,9 @@ UPDATE workspaces
 SET desired_state = 'STANDBY'
 WHERE phase = 'RUNNING'
   AND operation = 'NONE'
+  AND desired_state = 'RUNNING'  -- CAS 보호: 사용자 의도 덮어쓰기 방지
   AND deleted_at IS NULL
+  AND last_access_at IS NOT NULL
   AND NOW() - last_access_at > make_interval(secs := :ttl_standby_seconds)
 RETURNING id
 ```
@@ -109,7 +111,9 @@ UPDATE workspaces
 SET desired_state = 'ARCHIVED'
 WHERE phase = 'STANDBY'
   AND operation = 'NONE'
+  AND desired_state = 'STANDBY'  -- CAS 보호: 사용자 의도 덮어쓰기 방지
   AND deleted_at IS NULL
+  AND phase_changed_at IS NOT NULL
   AND NOW() - phase_changed_at > make_interval(secs := :ttl_archive_seconds)
 RETURNING id
 ```

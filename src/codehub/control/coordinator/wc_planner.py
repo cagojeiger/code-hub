@@ -38,7 +38,7 @@ class PlanInput(BaseModel):
     conditions: dict
     archive_key: str | None
     op_started_at: datetime | None
-    op_id: str | None
+    archive_op_id: str | None  # archiving 전용 (S3 경로 생성용)
     deleted_at: datetime | None
     home_ctx: dict | None
 
@@ -55,7 +55,7 @@ class PlanInput(BaseModel):
             conditions=ws.conditions or {},
             archive_key=ws.archive_key,
             op_started_at=ws.op_started_at,
-            op_id=ws.op_id,
+            archive_op_id=ws.archive_op_id,
             deleted_at=ws.deleted_at,
             home_ctx=ws.home_ctx,
         )
@@ -68,7 +68,7 @@ class PlanAction(BaseModel):
     phase: Phase
     error_reason: ErrorReason | None = None
     archive_key: str | None = None
-    op_id: str | None = None
+    archive_op_id: str | None = None  # ARCHIVING/CREATE_EMPTY 전용 (S3 경로)
     complete: bool = False  # operation 완료 여부
     restore_marker: str | None = None  # restore 완료 확인용 marker
 
@@ -107,7 +107,7 @@ def plan(input: PlanInput, timeout_seconds: float = 300.0) -> PlanAction:
             return PlanAction(
                 operation=Operation.DELETING,
                 phase=Phase.DELETING,
-                op_id=str(uuid4()),
+                # DELETING은 archive_op_id 불필요 (S3에 파일 안 만듦)
             )
         # ERROR 상태 유지 (수동 복구 필요)
         return PlanAction(
@@ -132,10 +132,15 @@ def plan(input: PlanInput, timeout_seconds: float = 300.0) -> PlanAction:
             phase=judge_output.phase,
         )
 
+    # archive_op_id는 ARCHIVING/CREATE_EMPTY에서만 생성 (S3 경로용)
+    archive_op_id = None
+    if operation in (Operation.ARCHIVING, Operation.CREATE_EMPTY_ARCHIVE):
+        archive_op_id = str(uuid4())
+
     return PlanAction(
         operation=operation,
         phase=judge_output.phase,
-        op_id=str(uuid4()),
+        archive_op_id=archive_op_id,
     )
 
 
@@ -145,6 +150,25 @@ def needs_execute(action: PlanAction, current_operation: Operation) -> bool:
         return False
     # 새 operation 시작 또는 재시도
     return current_operation == Operation.NONE or current_operation == action.operation
+
+
+def is_this_archive_ready(conditions: dict, archive_op_id: str | None) -> bool:
+    """현재 operation의 archive가 완료되었는지 확인.
+
+    Desired vs Actual 패턴:
+    - Desired: archive_op_id (DB에 저장된 현재 operation ID)
+    - Actual: conditions.archive.archive_key (S3에서 Observer가 읽어온 값)
+
+    archive_key 형식: {prefix}{ws_id}/{archive_op_id}/home.tar.zst
+
+    Returns:
+        True if archive_key contains the expected archive_op_id
+    """
+    if not archive_op_id:
+        return False
+    archive = conditions.get("archive") or {}
+    actual_key = archive.get("archive_key", "")
+    return f"/{archive_op_id}/" in actual_key
 
 
 # === Private helpers ===
@@ -186,33 +210,48 @@ def _handle_in_progress(
         )
 
     # 진행 중 → 재시도 (멱등)
+    # ARCHIVING/CREATE_EMPTY는 archive_op_id 유지 (S3 경로 멱등성)
+    archive_op_id = None
+    if input.operation in (Operation.ARCHIVING, Operation.CREATE_EMPTY_ARCHIVE):
+        archive_op_id = input.archive_op_id
+
     return PlanAction(
         operation=input.operation,
         phase=input.phase,
-        op_id=input.op_id,
+        archive_op_id=archive_op_id,
     )
 
 
 def _check_completion(operation: Operation, input: PlanInput) -> bool:
-    """operation 완료 조건 체크."""
+    """operation 완료 조건 체크.
+
+    kubelet 패턴: Desired(archive_op_id) vs Actual(archive_key) 비교로 완료 판단.
+    """
     cond = ConditionInput.from_conditions(input.conditions)
 
     match operation:
         case Operation.PROVISIONING:
             return cond.volume_ready
         case Operation.RESTORING:
-            # marker 있으면 현재 archive_key와 일치하는지 검증
-            if input.home_ctx and input.home_ctx.get("restore_marker"):
-                return cond.volume_ready and input.home_ctx["restore_marker"] == input.archive_key
-            return cond.volume_ready
+            # Dual Check: S3 restore_marker + Volume exists
+            # Agent writes .restore_marker to S3 with archive_key after restore
+            # Observer reads it and stores in conditions.restore
+            restore = input.conditions.get("restore") or {}
+            if restore.get("archive_key") == input.archive_key:
+                return cond.volume_ready
+            return False
         case Operation.STARTING:
             return cond.container_ready
         case Operation.STOPPING:
             return not cond.container_ready
         case Operation.ARCHIVING:
-            return not cond.volume_ready and cond.archive_ready
+            # 완료 조건: 현재 operation의 archive 완료 + volume 삭제됨
+            if not is_this_archive_ready(input.conditions, input.archive_op_id):
+                return False
+            return not cond.volume_ready
         case Operation.CREATE_EMPTY_ARCHIVE:
-            return cond.archive_ready
+            # 완료 조건: 현재 operation의 archive 완료
+            return is_this_archive_ready(input.conditions, input.archive_op_id)
         case Operation.DELETING:
             return not cond.container_ready and not cond.volume_ready
         case _:

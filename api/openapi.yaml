@@ -1,0 +1,505 @@
+openapi: 3.1.0
+info:
+  title: Agent API
+  description: |
+    Workspace Runtime Agent API.
+    Provides workspace lifecycle management for Docker/K8s backends.
+  version: 1.0.0
+
+servers:
+  - url: /api/v1
+    description: API v1
+
+paths:
+  /workspaces:
+    get:
+      operationId: observe
+      summary: Observe all workspaces
+      description: Returns complete state snapshot of all workspaces
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObserveResponse'
+
+  /workspaces/{workspace_id}/provision:
+    post:
+      operationId: provision
+      summary: Provision workspace
+      description: Create volume for workspace
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '201':
+          description: Volume created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+
+  /workspaces/{workspace_id}/start:
+    post:
+      operationId: start
+      summary: Start workspace
+      description: Start workspace container (Fire-and-Forget)
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartRequest'
+      responses:
+        '200':
+          description: Start initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+
+  /workspaces/{workspace_id}/stop:
+    post:
+      operationId: stop
+      summary: Stop workspace
+      description: Stop workspace container (Fire-and-Forget)
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Stop initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+
+  /workspaces/{workspace_id}:
+    delete:
+      operationId: delete
+      summary: Delete workspace
+      description: Delete workspace completely (Fire-and-Forget)
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Delete initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResponse'
+
+  /workspaces/{workspace_id}/archive:
+    post:
+      operationId: archive
+      summary: Archive workspace
+      description: Archive workspace to S3 (Fire-and-Forget)
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArchiveRequest'
+      responses:
+        '200':
+          description: Archive initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArchiveResponse'
+
+  /workspaces/{workspace_id}/restore:
+    post:
+      operationId: restore
+      summary: Restore workspace
+      description: Restore workspace from S3 archive (Fire-and-Forget)
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreRequest'
+      responses:
+        '200':
+          description: Restore initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RestoreResponse'
+
+  /workspaces/{workspace_id}/upstream:
+    get:
+      operationId: getUpstream
+      summary: Get upstream
+      description: Get upstream address for proxy routing
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: Upstream info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamResponse'
+        '404':
+          description: Workspace not found or not running
+
+  /workspaces/gc:
+    post:
+      operationId: runGc
+      summary: Run garbage collection
+      description: Run garbage collection on archives
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GCRequest'
+      responses:
+        '200':
+          description: GC completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GCResponse'
+
+components:
+  parameters:
+    WorkspaceId:
+      name: workspace_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Workspace identifier
+
+  schemas:
+    # ==========================================================================
+    # Status Models (used in WorkspaceState)
+    # ==========================================================================
+
+    ContainerStatus:
+      type: object
+      description: Container status within a workspace
+      properties:
+        running:
+          type: boolean
+        ready:
+          type: boolean
+      required:
+        - running
+        - ready
+
+    VolumeStatus:
+      type: object
+      description: Volume status within a workspace
+      properties:
+        exists:
+          type: boolean
+      required:
+        - exists
+
+    ArchiveLatest:
+      type: object
+      description: Latest completed archive
+      properties:
+        archive_key:
+          type: string
+          description: S3 key of the archive
+        archive_op_id:
+          type: string
+          description: Archive operation ID
+        archived_at:
+          type: string
+          description: ISO 8601 timestamp
+      required:
+        - archive_key
+        - archive_op_id
+        - archived_at
+
+    ArchiveStatus:
+      type: object
+      description: Archive status within a workspace
+      properties:
+        latest:
+          oneOf:
+            - $ref: '#/components/schemas/ArchiveLatest'
+            - type: 'null'
+
+    RestoreLast:
+      type: object
+      description: Last restore operation result
+      properties:
+        source_archive_key:
+          type: string
+          description: Archive that was restored from
+        restore_op_id:
+          type: string
+          description: Restore operation ID
+        restored_at:
+          type: string
+          description: ISO 8601 timestamp
+      required:
+        - source_archive_key
+        - restore_op_id
+        - restored_at
+
+    RestoreStatus:
+      type: object
+      description: Restore status within a workspace
+      properties:
+        last:
+          oneOf:
+            - $ref: '#/components/schemas/RestoreLast'
+            - type: 'null'
+
+    ErrorLast:
+      type: object
+      description: Last operation failure
+      properties:
+        operation:
+          type: string
+          description: "ARCHIVING or RESTORING"
+        code:
+          type: string
+          description: Error code or exit code as string
+        error_at:
+          type: string
+          description: ISO 8601 timestamp
+        archive_op_id:
+          type: string
+          nullable: true
+          description: For archive errors
+        restore_op_id:
+          type: string
+          nullable: true
+          description: For restore errors
+      required:
+        - operation
+        - code
+        - error_at
+
+    ErrorStatus:
+      type: object
+      description: Error status within a workspace
+      properties:
+        last:
+          oneOf:
+            - $ref: '#/components/schemas/ErrorLast'
+            - type: 'null'
+
+    # ==========================================================================
+    # Main Models
+    # ==========================================================================
+
+    WorkspaceState:
+      type: object
+      description: Complete state of a workspace
+      properties:
+        workspace_id:
+          type: string
+        container:
+          oneOf:
+            - $ref: '#/components/schemas/ContainerStatus'
+            - type: 'null'
+        volume:
+          oneOf:
+            - $ref: '#/components/schemas/VolumeStatus'
+            - type: 'null'
+        archive:
+          oneOf:
+            - $ref: '#/components/schemas/ArchiveStatus'
+            - type: 'null'
+        restore:
+          oneOf:
+            - $ref: '#/components/schemas/RestoreStatus'
+            - type: 'null'
+        error:
+          oneOf:
+            - $ref: '#/components/schemas/ErrorStatus'
+            - type: 'null'
+      required:
+        - workspace_id
+
+    UpstreamInfo:
+      type: object
+      description: Upstream address for proxy routing
+      properties:
+        hostname:
+          type: string
+        port:
+          type: integer
+      required:
+        - hostname
+        - port
+
+    GCResult:
+      type: object
+      description: Result of garbage collection operation
+      properties:
+        deleted_count:
+          type: integer
+        deleted_keys:
+          type: array
+          items:
+            type: string
+      required:
+        - deleted_count
+        - deleted_keys
+
+    # ==========================================================================
+    # Request/Response Models
+    # ==========================================================================
+
+    OperationStatusValue:
+      type: string
+      enum:
+        - in_progress
+        - completed
+        - already_exists
+        - already_running
+        - already_stopped
+        - already_deleted
+      description: API operation status values
+
+    ObserveResponse:
+      type: object
+      properties:
+        workspaces:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceState'
+      required:
+        - workspaces
+
+    OperationResponse:
+      type: object
+      description: Common operation response
+      properties:
+        status:
+          $ref: '#/components/schemas/OperationStatusValue'
+        workspace_id:
+          type: string
+      required:
+        - status
+        - workspace_id
+
+    StartRequest:
+      type: object
+      description: Start request with optional image
+      properties:
+        image:
+          type: string
+          nullable: true
+
+    ArchiveRequest:
+      type: object
+      description: Archive request with archive_op_id
+      properties:
+        archive_op_id:
+          type: string
+      required:
+        - archive_op_id
+
+    ArchiveResponse:
+      type: object
+      description: Archive operation response
+      properties:
+        status:
+          $ref: '#/components/schemas/OperationStatusValue'
+        workspace_id:
+          type: string
+        archive_key:
+          type: string
+      required:
+        - status
+        - workspace_id
+        - archive_key
+
+    RestoreRequest:
+      type: object
+      description: Restore request with archive_key and restore_op_id
+      properties:
+        archive_key:
+          type: string
+        restore_op_id:
+          type: string
+      required:
+        - archive_key
+        - restore_op_id
+
+    RestoreResponse:
+      type: object
+      description: Restore operation response
+      properties:
+        status:
+          $ref: '#/components/schemas/OperationStatusValue'
+        workspace_id:
+          type: string
+        restore_marker:
+          type: string
+      required:
+        - status
+        - workspace_id
+        - restore_marker
+
+    UpstreamResponse:
+      type: object
+      description: Upstream address for proxy routing
+      properties:
+        hostname:
+          type: string
+        port:
+          type: integer
+        url:
+          type: string
+      required:
+        - hostname
+        - port
+        - url
+
+    GCRequest:
+      type: object
+      description: GC request with protected archives and retention policy
+      properties:
+        archive_keys:
+          type: array
+          items:
+            type: string
+          description: Direct archive_key column values (RESTORING target)
+        protected_workspaces:
+          type: array
+          items:
+            type: array
+            prefixItems:
+              - type: string
+              - type: string
+            minItems: 2
+            maxItems: 2
+          description: (ws_id, archive_op_id) tuples for path calculation
+        retention_count:
+          type: integer
+          default: 3
+          description: Number of archives to keep per workspace
+      required:
+        - archive_keys
+        - protected_workspaces
+
+    GCResponse:
+      type: object
+      description: GC result response
+      properties:
+        deleted_count:
+          type: integer
+        deleted_keys:
+          type: array
+          items:
+            type: string
+      required:
+        - deleted_count
+        - deleted_keys

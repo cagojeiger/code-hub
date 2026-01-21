@@ -3,7 +3,14 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
+  # Control Plane metrics (Tier 1 - workspace-centric)
   - job_name: 'codehub'
     static_configs:
       - targets: ['control-plane:8000']
+    metrics_path: '/metrics'
+
+  # Agent metrics (Tier 2 - infrastructure operations)
+  - job_name: 'codehub-agent'
+    static_configs:
+      - targets: ['agent:8081']
     metrics_path: '/metrics'

@@ -1,0 +1,21 @@
+"""Agent metrics for Prometheus."""
+
+from codehub_agent.metrics.collector import (
+    AGENT_CONTAINERS_TOTAL,
+    AGENT_DOCKER_DURATION,
+    AGENT_DOCKER_ERRORS,
+    AGENT_S3_BYTES,
+    AGENT_S3_DURATION,
+    AGENT_S3_ERRORS,
+    AGENT_VOLUMES_TOTAL,
+)
+
+__all__ = [
+    "AGENT_DOCKER_DURATION",
+    "AGENT_DOCKER_ERRORS",
+    "AGENT_S3_DURATION",
+    "AGENT_S3_BYTES",
+    "AGENT_S3_ERRORS",
+    "AGENT_CONTAINERS_TOTAL",
+    "AGENT_VOLUMES_TOTAL",
+]

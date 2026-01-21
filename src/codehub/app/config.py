@@ -204,6 +204,7 @@ class CoordinatorConfig(BaseSettings):
 
     # WC specific
     operation_timeout: int = Field(default=600)  # seconds (10 minutes)
+    max_concurrent_executions: int = Field(default=20)  # concurrent external operations
 
     # TTL specific
     ttl_interval: float = Field(default=60.0)  # seconds (1 minute)
@@ -254,6 +255,17 @@ class MetricsConfig(BaseSettings):
     update_interval: float = Field(default=10.0)  # seconds
 
 
+class AgentConfig(BaseSettings):
+    """Agent connection configuration."""
+
+    model_config = SettingsConfigDict(env_prefix="AGENT_")
+
+    endpoint: str = Field(default="http://localhost:8081")
+    api_key: str = Field(default="")
+    timeout: float = Field(default=30.0)
+    job_timeout: float = Field(default=600.0)
+
+
 class LoggingConfig(BaseSettings):
     """Logging configuration.
 
@@ -299,6 +311,7 @@ class Settings(BaseSettings):
     activity: ActivityConfig = Field(default_factory=ActivityConfig)
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    agent: AgentConfig = Field(default_factory=AgentConfig)
 
 
 @lru_cache
