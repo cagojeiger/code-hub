@@ -68,9 +68,8 @@ PENDING(0) → ARCHIVED(5) → STANDBY(10) → RUNNING(20)
 |------|------|
 | coordinator-runtime.md | Tick Loop, Leader Election |
 | event-listener.md | CDC + SSE (PUB/SUB) |
-| ttl-manager.md | Activity ZSET, TTL 체크 |
-| wc.md | Judge + Hybrid Execution |
-| wc-judge.md | Phase 계산 로직 |
+| lifecycle.md | TTL Runner + GC Runner |
+| wc.md | Judge + Control + Plan (통합) |
 | wc-observer.md | Bulk Observer 패턴 |
 
 ### adr/ - 결정 (Why)

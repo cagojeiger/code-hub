@@ -151,10 +151,9 @@ PENDING(0) < ARCHIVED(5) < STANDBY(10) < RUNNING(20)
 
 | 컴포넌트 | 역할 | 상세 문서 |
 |---------|------|----------|
-| **WorkspaceController** | Reconcile 루프, 상태 수렴 | [wc.md](./wc.md), [wc-planner.md](./wc-planner.md) |
+| **WorkspaceController** | Reconcile 루프, 상태 수렴 | [wc.md](./wc.md) |
 | **Observer** | 리소스 관측 → conditions DB 저장 | [wc-observer.md](./wc-observer.md) |
-| **TTL Runner** | desired_state 자동 강등 | [ttl-manager.md](./ttl-manager.md) |
-| **GC Runner** | orphan archive 정리 | [gc-runner.md](./gc-runner.md) |
+| **TTL/GC Runner** | 생명주기 관리 (TTL + GC) | [lifecycle.md](./lifecycle.md) |
 | **EventListener** | CDC (PG → Redis) | [event-listener.md](./event-listener.md) |
 
 ### Container Runtime (Docker|K8s)
