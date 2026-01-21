@@ -23,7 +23,7 @@ COMMON_OPTS=(
   --input "$OPENAPI_SPEC"
   --output-model-type pydantic_v2.BaseModel
   --use-union-operator
-  --target-python-version 3.12
+  --target-python-version 3.13
   --collapse-root-models
   --field-constraints
   --use-standard-collections
