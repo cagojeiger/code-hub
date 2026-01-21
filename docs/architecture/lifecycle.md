@@ -1,6 +1,6 @@
-# TTL Runner
+# Lifecycle Management (TTL + GC)
 
-> 워크스페이스 TTL 관리: 활동 기반 STANDBY 전환, 시간 기반 ARCHIVE 전환
+> 워크스페이스 생명주기 관리: TTL 기반 상태 전환 및 orphan archive 정리
 >
 > **관련**: [wc.md](./wc.md) (WorkspaceController), [coordinator-runtime.md](./coordinator-runtime.md)
 
@@ -8,7 +8,18 @@
 
 ## 개요
 
-TTL Runner는 두 가지 TTL을 관리합니다:
+Lifecycle 관리는 두 가지 Runner로 구성됩니다:
+
+| Runner | 역할 | 주기 |
+|--------|------|------|
+| **TTL Runner** | 활동 기반 STANDBY 전환, 시간 기반 ARCHIVE 전환 | 60초 |
+| **GC Runner** | orphan archive 정리 | 4시간 |
+
+---
+
+# TTL Runner
+
+## TTL 유형
 
 | TTL 유형 | 트리거 상태 | 기준 컬럼 | 의미 |
 |----------|-------------|-----------|------|
@@ -123,8 +134,6 @@ RETURNING id
 | `phase_changed_at` | STANDBY 전환 시점 (WC 소유) |
 | `TTL_ARCHIVE_SECONDS` | 환경변수 (기본: 1800초 = 30분) |
 
-> **TTL 설정**: 워크스페이스별 TTL 컬럼 대신 환경변수 기반 TtlConfig 사용
-
 ---
 
 ## 컬럼 소유자
@@ -135,112 +144,20 @@ RETURNING id
 | `phase_changed_at` | WC | phase 변경 시 (CASE WHEN) |
 | `desired_state` | TTL Runner | TTL 만료 시 |
 
-### WC의 phase_changed_at 업데이트
-
-```sql
-UPDATE workspaces SET
-  phase = :new_phase,
-  phase_changed_at = CASE
-    WHEN phase != :new_phase THEN NOW()
-    ELSE phase_changed_at
-  END,
-  ...
-WHERE id = :id AND operation = :expected_op
-```
-
-> phase가 실제로 변경될 때만 `phase_changed_at` 갱신
-
----
-
-## 다중 Proxy 인스턴스
-
-```mermaid
-flowchart TB
-    subgraph Proxies["Proxy Instances"]
-        P1["Proxy #1<br/>buffer: {ws1: t1}"]
-        P2["Proxy #2<br/>buffer: {ws1: t2, ws2: t3}"]
-        P3["Proxy #3<br/>buffer: {ws3: t4}"]
-    end
-
-    subgraph Redis["Redis ZSET"]
-        ZS["codehub:activity<br/>ws1: max(t1, t2)<br/>ws2: t3<br/>ws3: t4"]
-    end
-
-    P1 -->|ZADD| ZS
-    P2 -->|ZADD| ZS
-    P3 -->|ZADD| ZS
-```
-
-| 상황 | 동작 | 결과 |
-|------|------|------|
-| 같은 ws_id에 여러 Proxy가 ZADD | 더 큰 score(최신 timestamp)가 유지 | OK (최신값 보장) |
-| 순서 역전 (t2 < t1이 나중에 도착) | GT 옵션으로 기존 값 유지 | 순서 역전 방지 |
-
-> **ZSET GT 옵션**: 새 score > 기존 score일 때만 업데이트
-
 ---
 
 ## Activity 정의
 
 `last_access_at`는 사용자가 워크스페이스에서 **실제 작업**을 할 때 업데이트됩니다.
 
-### 활동으로 감지되는 행동
-
 | 행동 | 감지 여부 | 설명 |
 |------|:--------:|------|
-| 코드 타이핑 | ✅ | WebSocket 메시지 (키 입력) |
-| 터미널 출력 | ✅ | WebSocket 메시지 (stdout/stderr) |
-| 파일 저장 | ✅ | WebSocket 메시지 또는 HTTP 요청 |
-| 파일 탐색 | ✅ | HTTP 요청 (파일 목록 조회) |
-| 탭만 열어둠 | ❌ | 네트워크 트래픽 없음 |
-| 브라우저 최소화 | ❌ | 네트워크 트래픽 없음 |
-
-### 기록 위치
-
-```
-Proxy (router.py)
-├── HTTP 요청 → record(workspace_id)
-└── WebSocket
-    ├── 연결 시 → record(workspace_id)
-    ├── 클라이언트→백엔드 메시지 → record(workspace_id)
-    └── 백엔드→클라이언트 메시지 → record(workspace_id)
-```
-
-> **요점**: WebSocket 연결만으로는 활동이 아님. 실제 메시지(타이핑, 출력 등)가 있어야 활동으로 인정
-
----
-
-## TTL Runner 동작
-
-### tick() 구조
-
-```mermaid
-flowchart TD
-    START["tick()"]
-    SYNC["1. _sync_to_db()<br/>Redis → DB 동기화"]
-    STB["2. _check_standby_ttl()<br/>RUNNING 상태 체크"]
-    ARC["3. _check_archive_ttl()<br/>STANDBY 상태 체크"]
-    WAKE{"expired 있음?"}
-    NOTIFY["wake_wc()"]
-    END["완료"]
-
-    START --> SYNC
-    SYNC --> STB
-    STB --> ARC
-    ARC --> WAKE
-    WAKE -->|Yes| NOTIFY
-    WAKE -->|No| END
-    NOTIFY --> END
-```
-
-### 단계별 동작
-
-| 단계 | 메서드 | 동작 |
-|------|--------|------|
-| 1 | `_sync_to_db()` | Redis ZSET → DB `last_access_at` 벌크 업데이트 (unnest) |
-| 2 | `_check_standby_ttl()` | RUNNING + TTL 만료 → `desired_state = STANDBY` |
-| 3 | `_check_archive_ttl()` | STANDBY + TTL 만료 → `desired_state = ARCHIVED` |
-| 4 | `wake_wc()` | 만료 발견 시 WC에 NOTIFY (빠른 reconcile)
+| 코드 타이핑 | O | WebSocket 메시지 (키 입력) |
+| 터미널 출력 | O | WebSocket 메시지 (stdout/stderr) |
+| 파일 저장 | O | WebSocket 메시지 또는 HTTP 요청 |
+| 파일 탐색 | O | HTTP 요청 (파일 목록 조회) |
+| 탭만 열어둠 | X | 네트워크 트래픽 없음 |
+| 브라우저 최소화 | X | 네트워크 트래픽 없음 |
 
 ---
 
@@ -251,8 +168,6 @@ flowchart TD
 | Memory → Redis flush | `ACTIVITY_FLUSH_INTERVAL` | 30초 | Proxy 인스턴스별 |
 | TTL Runner tick | `COORDINATOR_TTL_INTERVAL` | 60초 | Redis → DB + TTL 체크 |
 
-> **설정 클래스**: `ActivityConfig`, `CoordinatorConfig` (config.py)
-
 ### 최악의 경우 지연
 
 | 시나리오 | 최대 지연 |
@@ -262,41 +177,93 @@ flowchart TD
 
 ---
 
-## Edge Cases
+# GC Runner
 
-### Redis 재시작
+## 개요
 
-| 상황 | 동작 | 결과 |
-|------|------|------|
-| codehub:activity ZSET 손실 | DB last_access_at 기준 | 정상 (최대 90초 지연) |
+GC Runner는 S3에서 orphan archive를 탐지하고 삭제합니다.
 
-> TTL 체크는 DB 기준이므로 Redis 재시작 영향 없음
+| 항목 | 설명 |
+|------|------|
+| 역할 | orphan archive 정리 |
+| 주기 | 4시간 |
+| 보호 대상 | archive_key + archive_op_id 경로 |
 
-### Proxy 인스턴스 crash
+---
 
-| 상황 | 동작 | 결과 |
-|------|------|------|
-| 메모리 버퍼 손실 | Redis/DB에 이전 값 유지 | 최대 30초 지연 |
-
-### 활동 중 TTL 만료
+## 아키텍처
 
 ```mermaid
-sequenceDiagram
-    participant P as Proxy
-    participant T as TTL Runner
-    participant D as DB
+flowchart TB
+    subgraph CP["Control Plane"]
+        GC["GC Runner"]
 
-    Note over T,D: TTL Runner tick (60초 전 DB 기준)
-    T->>D: last_access_at 오래됨 → STANDBY
+        subgraph Query["DB 쿼리"]
+            Q1["archive_keys<br/>(RESTORING 보호)"]
+            Q2["(ws_id, archive_op_id)<br/>(ARCHIVING crash 보호)"]
+        end
+    end
 
-    Note over P,D: 동시에 Proxy 활동
-    P->>D: last_access_at = NOW()
+    subgraph Agent["Agent"]
+        API["POST /gc"]
 
-    Note over T,D: 다음 tick
-    T->>D: 활동 있음 → 변경 없음
+        subgraph Calc["보호 키 계산"]
+            C1["protected = set(archive_keys)"]
+            C2["for ws_id, archive_op_id:<br/>  protected.add(<br/>    naming.s3_key(ws_id, archive_op_id)<br/>  )"]
+        end
+
+        subgraph Delete["삭제"]
+            D1["all_keys = S3.list()"]
+            D2["orphans = all - protected"]
+            D3["S3.delete(orphans)"]
+        end
+    end
+
+    GC --> Q1 & Q2
+    Q1 & Q2 -->|"HTTP"| API
+    API --> C1 --> C2 --> D1 --> D2 --> D3
 ```
 
-> **결과**: WC가 reconcile할 때 활동 감지 → RUNNING 유지
+---
+
+## 두 가지 보호 유형
+
+| 보호 대상 | 목적 | 시나리오 |
+|----------|------|---------|
+| `archive_key` | 실제 존재하는 아카이브 보호 | RESTORING 중 복원 대상 파일 |
+| `archive_op_id` 경로 | ARCHIVING crash 대비 | archive → delete → crash → persist 안 됨 |
+
+### 보호 로직
+
+```python
+# Control Plane (scheduler_gc.py)
+# 1. archive_key 조회 (RESTORING 대상 보호)
+archive_keys = SELECT archive_key FROM workspaces
+               WHERE archive_key IS NOT NULL AND deleted_at IS NULL
+
+# 2. (ws_id, archive_op_id) 조회 (ARCHIVING crash 대비)
+protected_workspaces = SELECT id, archive_op_id FROM workspaces
+                       WHERE archive_op_id IS NOT NULL AND deleted_at IS NULL
+
+# Agent (storage.py)
+# 보호 키 계산
+protected_keys = set(archive_keys)
+for ws_id, archive_op_id in protected_workspaces:
+    protected_keys.add(naming.archive_s3_key(ws_id, archive_op_id))
+
+# 삭제
+all_keys = S3.list_objects(prefix)
+orphans = all_keys - protected_keys
+S3.delete_objects(orphans)
+```
+
+### 시나리오별 보호
+
+| 시나리오 | DB 상태 | 보호 키 |
+|---------|--------|---------|
+| RESTORING | archive_key="ws/op-aaa/...", archive_op_id="op-bbb" | archive_key 값 + archive_op_id 경로 |
+| ARCHIVING 완료 | archive_key="ws/op-ccc/...", archive_op_id="op-ccc" | 둘 다 같은 경로 |
+| ARCHIVING crash | archive_key=NULL, archive_op_id="op-ddd" | archive_op_id 경로만 |
 
 ---
 
@@ -305,3 +272,5 @@ sequenceDiagram
 - [wc.md](./wc.md) - WorkspaceController (phase 변경 주체)
 - [coordinator-runtime.md](./coordinator-runtime.md) - Coordinator 공통 인프라
 - [04-control-plane.md](../spec/04-control-plane.md) - Control Plane 스펙
+- [05-data-plane.md](../spec/05-data-plane.md#gc-runner) - GC Runner 스펙
+- [00-contracts.md](../spec/00-contracts.md#9-gc-separation--protection) - GC 계약
