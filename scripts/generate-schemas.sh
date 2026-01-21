@@ -27,6 +27,7 @@ COMMON_OPTS=(
   --collapse-root-models
   --field-constraints
   --use-standard-collections
+  --disable-timestamp
 )
 
 # Generate Agent schemas
