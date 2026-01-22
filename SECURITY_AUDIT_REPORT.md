@@ -11,9 +11,9 @@
 | 심각도 | 발견 항목 수 |
 |--------|-------------|
 | 🔴 높음 (High) | 2 |
-| 🟠 중간 (Medium) | 3 |
+| 🟠 중간 (Medium) | 6 |
 | 🟡 낮음 (Low) | 2 |
-| ✅ 양호 | 8 |
+| ✅ 양호 | 14 |
 
 ---
 
@@ -253,8 +253,196 @@ DOCKER_HOST=tcp://docker-proxy:2375
 
 ---
 
+---
+
+## 🌐 웹 브라우저 보안 분석
+
+외부 공개 후 브라우저에서 사용할 때의 보안 취약점 분석입니다.
+
+### 🟠 중간 (Medium) - 웹 취약점
+
+#### 8. CSP (Content-Security-Policy) 헤더 미설정
+
+**위치**: `src/codehub/app/static/index.html`
+
+**현황**:
+- Content-Security-Policy 헤더가 설정되어 있지 않음
+- 외부 CDN에서 스크립트 로드 중
+
+```html
+<!-- 현재 외부 CDN 의존 -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+```
+
+**위험**:
+- XSS 공격 시 인라인 스크립트 실행 가능
+- CDN 해킹 시 공급망 공격(Supply Chain Attack) 가능
+
+**권장 조치**:
+```python
+# FastAPI 미들웨어로 CSP 헤더 추가
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self';"
+    )
+    return response
+```
+
+---
+
+#### 9. 외부 CDN 의존성 (공급망 공격 위험)
+
+**현황**: 3개의 외부 CDN에서 JavaScript 라이브러리 로드
+
+| 라이브러리 | CDN | 용도 |
+|-----------|-----|------|
+| Tailwind CSS | cdn.tailwindcss.com | 스타일링 |
+| Marked | cdn.jsdelivr.net | Markdown 파싱 |
+| DOMPurify | cdnjs.cloudflare.com | XSS 방지 |
+
+**위험**: CDN이 해킹되면 악성 스크립트가 주입될 수 있음
+
+**권장 조치**:
+1. **SRI (Subresource Integrity) 해시 추가**:
+```html
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"
+        integrity="sha384-XXXXX"
+        crossorigin="anonymous"></script>
+```
+
+2. **또는 로컬 번들링**: npm으로 설치 후 빌드 시 번들링
+
+---
+
+#### 10. API Rate Limiting 미적용
+
+**현황**:
+- ✅ 로그인 API: Account lockout 적용됨
+- ❌ 워크스페이스 API: Rate limiting 없음
+
+**위험**:
+- 워크스페이스 대량 생성 공격
+- API 남용으로 인한 서비스 거부
+
+**권장 조치**:
+```python
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
+
+@app.post("/api/v1/workspaces")
+@limiter.limit("10/minute")
+async def create_workspace(...):
+    ...
+```
+
+---
+
+### ✅ 양호한 웹 보안 사항
+
+#### 1. IDOR (Insecure Direct Object Reference) 방지 ✅
+
+```python
+# src/codehub/services/workspace_service.py:100-101
+if user_id is not None and workspace.owner_user_id != user_id:
+    raise ForbiddenError()
+```
+- 모든 워크스페이스 접근 시 소유자 검증
+- 다른 사용자의 워크스페이스 접근 불가
+
+#### 2. XSS 방지 - DOMPurify ✅
+
+```javascript
+// src/codehub/app/static/js/detail-panel.js:45
+memoEl.innerHTML = DOMPurify.sanitize(marked.parse(workspace.memo));
+```
+- 사용자 입력(memo)을 렌더링할 때 sanitize 적용
+- Markdown 렌더링 시에도 보호됨
+
+#### 3. CSRF 기본 보호 ✅
+
+```python
+# src/codehub/app/api/v1/auth.py:103
+samesite="lax",  # Cross-site 요청 시 쿠키 전송 제한
+```
+- `SameSite=Lax` 쿠키 설정으로 기본적인 CSRF 보호
+
+#### 4. 프록시 인증/인가 ✅
+
+```python
+# src/codehub/app/proxy/router.py:69-70
+user_id = await get_user_id_from_session(db, session)
+workspace = await get_workspace_for_user(db, workspace_id, user_id)
+```
+- 워크스페이스 프록시 접근 시 세션 + 소유자 이중 검증
+- SSRF 방지: 고정된 내부 컨테이너로만 프록시
+
+#### 5. SSE 채널 격리 ✅
+
+```python
+# src/codehub/app/api/v1/events.py:114
+channel = f"{_channel_config.sse_prefix}:{user_id}"
+```
+- 사용자별 독립된 SSE 채널
+- 다른 사용자의 이벤트 수신 불가
+
+#### 6. 입력 길이 제한 ✅
+
+```python
+# src/codehub/app/api/v1/workspaces.py:27-29
+name: str = Field(min_length=1, max_length=255)
+description: str | None = Field(default=None, max_length=500)
+image_ref: str = Field(default=..., max_length=512)
+```
+- 모든 입력에 길이 제한 적용
+- 버퍼 오버플로우 및 DoS 방지
+
+---
+
+## OWASP Top 10 점검 결과
+
+| # | 취약점 | 상태 | 비고 |
+|---|--------|------|------|
+| A01 | Broken Access Control | ✅ 양호 | 소유자 검증, 세션 관리 |
+| A02 | Cryptographic Failures | ✅ 양호 | Argon2id, 환경변수 주입 필요 |
+| A03 | Injection | ✅ 양호 | ORM 사용, Pydantic 검증 |
+| A04 | Insecure Design | ✅ 양호 | 프록시 인증, 권한 분리 |
+| A05 | Security Misconfiguration | 🟠 보통 | CSP 미설정, CORS 확인 필요 |
+| A06 | Vulnerable Components | 🟠 보통 | 외부 CDN 의존성 |
+| A07 | Auth Failures | ✅ 양호 | Lockout, 세션 만료 |
+| A08 | Data Integrity Failures | 🟠 보통 | SRI 해시 미적용 |
+| A09 | Logging Failures | ✅ 양호 | 구조화된 로깅, 추적 ID |
+| A10 | SSRF | ✅ 양호 | 고정된 upstream만 프록시 |
+
+---
+
+## 추가 체크리스트 (웹 보안)
+
+- [ ] CSP 헤더 추가
+- [ ] 외부 CDN에 SRI 해시 적용
+- [ ] API Rate Limiting 구현 (slowapi 등)
+- [ ] X-Frame-Options 헤더 추가 (clickjacking 방지)
+- [ ] X-Content-Type-Options: nosniff 헤더 추가
+
+---
+
 ## 결론
 
 CodeHub는 전반적으로 양호한 보안 아키텍처를 가지고 있습니다. 주요 보안 메커니즘(Argon2id 해싱, 세션 보안, ORM 사용 등)이 적절히 구현되어 있습니다.
 
-**공개 전 필수 조치**: docker-compose.yml 및 코드 내 하드코딩된 자격 증명을 환경변수로 대체해야 합니다. 이 작업만 완료되면 공개 배포에 적합합니다.
+**공개 전 필수 조치**:
+1. docker-compose.yml 및 코드 내 하드코딩된 자격 증명을 환경변수로 대체
+2. CSP 헤더 추가 권장
+3. 외부 CDN에 SRI 해시 적용 권장
+
+**웹 브라우저 사용 시 보안 수준**: 🟢 양호 (인증/인가/XSS 방지 잘 되어 있음)
