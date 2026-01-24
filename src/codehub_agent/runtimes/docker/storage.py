@@ -85,6 +85,7 @@ class StorageManager:
         archive_keys: list[str],
         protected_workspaces: list[tuple[str, str]],
         retention_count: int = 3,
+        restore_retention_count: int = 1,
     ) -> tuple[int, list[str]]:
         """Delete old archives while keeping latest N per workspace.
 
