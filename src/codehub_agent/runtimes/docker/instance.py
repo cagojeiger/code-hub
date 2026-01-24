@@ -71,7 +71,7 @@ class InstanceManager:
 
         results = []
         for container in containers:
-            names = container.Names
+            names = container.get("Names", [])
             name = names[0].lstrip("/") if names else ""
             if not name.startswith(prefix):
                 continue
@@ -81,7 +81,7 @@ class InstanceManager:
                 continue
 
             workspace_id = name[len(prefix) :]
-            state = container.State
+            state = container.get("State", "unknown")
             running = state == "running"
 
             results.append(
@@ -89,7 +89,7 @@ class InstanceManager:
                     workspace_id=workspace_id,
                     running=running,
                     reason="Running" if running else state.capitalize(),
-                    message=container.Status,
+                    message=container.get("Status", ""),
                 )
             )
 
@@ -109,8 +109,8 @@ class InstanceManager:
 
         existing = await self._containers.inspect(container_name)
         if existing:
-            state = existing.State
-            if state.Running:
+            state = existing.get("State", {})
+            if state.get("Running", False):
                 logger.info(
                     "Container already running",
                     extra={
@@ -209,8 +209,8 @@ class InstanceManager:
                 message="Container does not exist",
             )
 
-        state = existing.State
-        if not state.Running:
+        state = existing.get("State", {})
+        if not state.get("Running", False):
             # Container exists but not running - just remove it
             await self._containers.remove(container_name)
             logger.info(
@@ -246,10 +246,9 @@ class InstanceManager:
                 message="Container not found",
             )
 
-        state = data.State
-        running = state.Running
-        health = state.Health
-        health_status = health.get("Status", "healthy") if health else "healthy"
+        state = data.get("State", {})
+        running = state.get("Running", False)
+        health_status = state.get("Health", {}).get("Status", "healthy")
         healthy = running and health_status in ("healthy", None)
 
         return InstanceStatus(
@@ -257,7 +256,7 @@ class InstanceManager:
             running=running,
             healthy=healthy,
             reason="Running" if running else "Stopped",
-            message=state.Status,
+            message=state.get("Status", ""),
         )
 
     async def get_upstream(self, workspace_id: str) -> UpstreamInfo:

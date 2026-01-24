@@ -112,15 +112,15 @@ class JobRunner:
         # Check each container, cleaning up stuck ones
         now = time.time()
         for container in containers:
-            state = container.State
-            created_ts = container.Created
+            state = container.get("State", "")
+            created_ts = container.get("Created", 0)
 
             # Handle stuck "created" containers (> 5 minutes)
             if state == "created" and created_ts:
                 # Docker API returns Created as Unix timestamp (int)
                 if isinstance(created_ts, int) and (now - created_ts) > STUCK_THRESHOLD_SECONDS:
-                    container_id = container.Id
-                    container_name = container.Names[0].lstrip("/") if container.Names else ""
+                    container_id = container.get("Id", "")
+                    container_name = container.get("Names", [""])[0].lstrip("/")
                     logger.warning(
                         "Removing stuck container",
                         extra={
