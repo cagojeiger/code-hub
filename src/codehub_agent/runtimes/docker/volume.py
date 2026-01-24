@@ -50,7 +50,7 @@ class VolumeManager:
 
         results = []
         for vol in volumes:
-            name = vol.get("Name", "")
+            name = vol.Name
             if not name.startswith(prefix) or not name.endswith("-home"):
                 continue
 
