@@ -40,8 +40,6 @@ class ArchiveInfo(BaseModel):
 
     workspace_id: str
     archive_key: str | None
-    archive_op_id: str | None = None
-    archived_at: datetime | None = None
     exists: bool
     reason: str
     message: str
@@ -124,13 +122,13 @@ class StorageManager:
         workspace_archives: dict[str, list[tuple[str, datetime]]] = defaultdict(list)
 
         for obj in all_objects:
-            key = obj.Key
+            key = obj["Key"]
             match = pattern.match(key)
             if match:
                 ws_id = match.group(1)
                 archive_op_id = match.group(2)
                 archive_prefix = f"{ws_id}/{archive_op_id}/"
-                workspace_archives[ws_id].append((archive_prefix, obj.LastModified))
+                workspace_archives[ws_id].append((archive_prefix, obj["LastModified"]))
 
         # 4. Determine archives to delete (retention + protection)
         prefixes_to_delete: set[str] = set()
@@ -151,7 +149,7 @@ class StorageManager:
         # 5. Collect all keys under prefixes to delete
         keys_to_delete: list[str] = []
         for obj in all_objects:
-            key = obj.Key
+            key = obj["Key"]
             relative = key[len(resource_prefix):]
 
             # Never delete .restore_marker
@@ -193,7 +191,7 @@ class StorageManager:
         all_objects = await self._s3.list_objects_with_metadata(resource_prefix)
 
         # 2. Build key set for O(1) .meta lookup
-        all_keys = {obj.Key for obj in all_objects}
+        all_keys = {obj["Key"] for obj in all_objects}
 
         # 3. Group archives by workspace_id
         pattern = re.compile(
@@ -202,7 +200,7 @@ class StorageManager:
         workspace_archives: dict[str, list[tuple[str, datetime]]] = defaultdict(list)
 
         for obj in all_objects:
-            key = obj.Key
+            key = obj["Key"]
             match = pattern.match(key)
             if not match:
                 continue
@@ -213,7 +211,7 @@ class StorageManager:
                 continue
 
             workspace_id = match.group(1)
-            workspace_archives[workspace_id].append((key, obj.LastModified))
+            workspace_archives[workspace_id].append((key, obj["LastModified"]))
 
         # 4. Select latest archive per workspace
         archives: list[ArchiveInfo] = []
@@ -223,16 +221,11 @@ class StorageManager:
 
             # Sort by LastModified descending, pick latest
             archive_list.sort(key=lambda x: x[1], reverse=True)
-            latest_key, latest_modified = archive_list[0]
-            # Extract archive_op_id from key pattern: {prefix}{ws_id}/{archive_op_id}/...
-            parts = latest_key.split("/")
-            archive_op_id = parts[-2] if len(parts) >= 2 else None
+            latest_key = archive_list[0][0]
 
             archives.append(ArchiveInfo(
                 workspace_id=workspace_id,
                 archive_key=latest_key,
-                archive_op_id=archive_op_id,
-                archived_at=latest_modified,
                 exists=True,
                 reason="ArchiveComplete",
                 message="",
@@ -336,7 +329,7 @@ class StorageManager:
         all_objects = await self._s3.list_objects_with_metadata(resource_prefix)
 
         # Build key set for .meta lookup
-        all_keys = {obj.Key for obj in all_objects}
+        all_keys = {obj["Key"] for obj in all_objects}
 
         # Pattern for archive matching: {prefix}{ws_id}/{archive_op_id}/home.tar.zst
         archive_pattern = re.compile(
@@ -354,7 +347,7 @@ class StorageManager:
         restore_error_keys: list[tuple[str, str]] = []  # (key, workspace_id)
 
         for obj in all_objects:
-            key = obj.Key
+            key = obj["Key"]
 
             # Handle tar.zst files
             match = archive_pattern.match(key)
@@ -362,7 +355,7 @@ class StorageManager:
                 meta_key = f"{key}{meta_suffix}"
                 if meta_key in all_keys:  # Only include complete archives
                     workspace_id = match.group(1)
-                    workspace_archives[workspace_id].append((key, obj.LastModified))
+                    workspace_archives[workspace_id].append((key, obj["LastModified"]))
                 continue
 
             # Handle archive error markers (.error)
@@ -393,16 +386,11 @@ class StorageManager:
         for workspace_id, archive_list in workspace_archives.items():
             if archive_list:
                 # Use max() instead of sort for efficiency when finding single latest
-                latest_key, latest_modified = max(archive_list, key=lambda x: x[1])
-                # Extract archive_op_id from key pattern: {prefix}{ws_id}/{archive_op_id}/...
-                parts = latest_key.split("/")
-                archive_op_id = parts[-2] if len(parts) >= 2 else None
+                latest_key = max(archive_list, key=lambda x: x[1])[0]
                 archives.append(
                     ArchiveInfo(
                         workspace_id=workspace_id,
                         archive_key=latest_key,
-                        archive_op_id=archive_op_id,
-                        archived_at=latest_modified,
                         exists=True,
                         reason="ArchiveComplete",
                         message="",

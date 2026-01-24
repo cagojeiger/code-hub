@@ -107,7 +107,7 @@ async def observe(
                         ArchiveLatest(
                             archive_key=archive_info.archive_key,
                             archive_op_id=archive_info.archive_op_id,
-                            archived_at=archive_info.archived_at.isoformat() if archive_info.archived_at else "",
+                            archived_at=archive_info.archived_at or "",
                         )
                         if archive_info.archive_key and archive_info.archive_op_id and archive_info.archived_at
                         else None

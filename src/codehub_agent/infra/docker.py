@@ -164,31 +164,11 @@ class DockerClient:
             self._client = None
 
 
-# Shared Docker client singleton
-_shared_docker_client: DockerClient | None = None
-
-
-def _get_shared_client() -> DockerClient:
-    """Get or create the shared Docker client."""
-    global _shared_docker_client
-    if _shared_docker_client is None:
-        _shared_docker_client = DockerClient()
-    return _shared_docker_client
-
-
-async def close_docker() -> None:
-    """Close the shared Docker client."""
-    global _shared_docker_client
-    if _shared_docker_client is not None:
-        await _shared_docker_client.close()
-        _shared_docker_client = None
-
-
 class BaseDockerAPI:
     """Base class for Docker API operations."""
 
-    def __init__(self, client: DockerClient | None = None) -> None:
-        self._docker = client or _get_shared_client()
+    def __init__(self, client: DockerClient) -> None:
+        self._docker = client
 
 
 class ContainerAPI(BaseDockerAPI):
