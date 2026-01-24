@@ -2,25 +2,14 @@
 
 import logging
 from contextlib import AsyncExitStack
-from datetime import datetime
 
 from aiobotocore.session import AioSession, get_session
-from pydantic import BaseModel
 from types_aiobotocore_s3 import S3Client
 
 from codehub_agent.config import AgentConfig
 from codehub_agent.logging_schema import LogEvent
 
 logger = logging.getLogger(__name__)
-
-
-class S3ObjectInfo(BaseModel):
-    """S3 object metadata."""
-
-    Key: str
-    LastModified: datetime
-
-    model_config = {"frozen": True}
 
 
 class S3Operations:
@@ -33,7 +22,8 @@ class S3Operations:
         self._client: S3Client | None = None
 
     async def init(self) -> None:
-        """Initialize S3 client."""
+        """Initialize S3 client singleton and ensure bucket exists."""
+        # Create singleton client using AsyncExitStack
         self._exit_stack = AsyncExitStack()
         self._client = await self._exit_stack.enter_async_context(
             self._session.create_client(
@@ -45,8 +35,7 @@ class S3Operations:
             )
         )
 
-    async def ensure_bucket(self) -> None:
-        """Ensure bucket exists (idempotent)."""
+        # Ensure bucket exists
         bucket = self._config.s3.bucket
         try:
             await self._client.head_bucket(Bucket=bucket)
@@ -70,25 +59,28 @@ class S3Operations:
 
     async def list_objects(self, prefix: str) -> list[str]:
         """List object keys with given prefix."""
-        keys: list[str] = []
+        keys = []
+        bucket = self._config.s3.bucket
         paginator = self._client.get_paginator("list_objects_v2")
-        async for page in paginator.paginate(Bucket=self._config.s3.bucket, Prefix=prefix):
-            keys.extend(obj["Key"] for obj in page.get("Contents", []))
+        async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                keys.append(obj["Key"])
         return keys
 
-    async def list_objects_with_metadata(self, prefix: str) -> list[S3ObjectInfo]:
+    async def list_objects_with_metadata(self, prefix: str) -> list[dict]:
         """List objects with Key and LastModified for sorting by recency."""
-        objects: list[S3ObjectInfo] = []
+        objects = []
+        bucket = self._config.s3.bucket
         paginator = self._client.get_paginator("list_objects_v2")
-        async for page in paginator.paginate(Bucket=self._config.s3.bucket, Prefix=prefix):
-            objects.extend(
-                S3ObjectInfo(Key=obj["Key"], LastModified=obj["LastModified"])
-                for obj in page.get("Contents", [])
-            )
+        async for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            for obj in page.get("Contents", []):
+                objects.append({
+                    "Key": obj["Key"],
+                    "LastModified": obj["LastModified"],
+                })
         return objects
 
     async def delete_object(self, key: str) -> bool:
-        """Delete a single object from S3."""
         try:
             await self._client.delete_object(Bucket=self._config.s3.bucket, Key=key)
             logger.debug(
@@ -120,7 +112,9 @@ class S3Operations:
                     Bucket=bucket,
                     Delete={"Objects": [{"Key": key} for key in batch]},
                 )
-                deleted_keys.extend(d["Key"] for d in response.get("Deleted", []))
+                # Collect successfully deleted keys
+                for deleted in response.get("Deleted", []):
+                    deleted_keys.append(deleted["Key"])
                 # Log errors if any
                 for error in response.get("Errors", []):
                     logger.warning(
@@ -144,7 +138,6 @@ class S3Operations:
         return deleted_keys
 
     async def object_exists(self, key: str) -> bool:
-        """Check if an object exists in S3."""
         try:
             await self._client.head_object(Bucket=self._config.s3.bucket, Key=key)
             return True
