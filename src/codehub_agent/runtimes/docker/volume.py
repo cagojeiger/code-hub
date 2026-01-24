@@ -23,14 +23,6 @@ class VolumeStatus(BaseModel):
     name: str
 
 
-class VolumeInfo(BaseModel):
-    """Volume information for list operations."""
-
-    workspace_id: str
-    exists: bool
-    name: str
-
-
 class VolumeManager:
     """Docker volume manager."""
 
@@ -44,7 +36,7 @@ class VolumeManager:
         self._naming = naming
         self._api = api or VolumeAPI()
 
-    async def list_all(self) -> list[VolumeInfo]:
+    async def list_all(self) -> list[dict]:
         prefix = self._naming.prefix
         volumes = await self._api.list(filters={"name": [prefix]})
 
@@ -56,11 +48,11 @@ class VolumeManager:
 
             workspace_id = name[len(prefix) : -5]  # -5 for "-home"
             results.append(
-                VolumeInfo(
-                    workspace_id=workspace_id,
-                    exists=True,
-                    name=name,
-                )
+                {
+                    "workspace_id": workspace_id,
+                    "exists": True,
+                    "name": name,
+                }
             )
 
         return results
