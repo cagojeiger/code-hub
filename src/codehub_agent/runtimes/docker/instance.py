@@ -40,6 +40,15 @@ class UpstreamInfo(BaseModel):
         return f"http://{self.hostname}:{self.port}"
 
 
+class ContainerInfo(BaseModel):
+    """Container information for list operations."""
+
+    workspace_id: str
+    running: bool
+    reason: str
+    message: str
+
+
 class InstanceManager:
     """Docker instance manager."""
 
@@ -55,7 +64,7 @@ class InstanceManager:
         self._containers = containers or ContainerAPI()
         self._images = images or ImageAPI()
 
-    async def list_all(self) -> list[dict]:
+    async def list_all(self) -> list[ContainerInfo]:
         """List all managed containers."""
         prefix = self._naming.prefix
         containers = await self._containers.list(filters={"name": [prefix]})
@@ -76,12 +85,12 @@ class InstanceManager:
             running = state == "running"
 
             results.append(
-                {
-                    "workspace_id": workspace_id,
-                    "running": running,
-                    "reason": "Running" if running else state.capitalize(),
-                    "message": container.get("Status", ""),
-                }
+                ContainerInfo(
+                    workspace_id=workspace_id,
+                    running=running,
+                    reason="Running" if running else state.capitalize(),
+                    message=container.get("Status", ""),
+                )
             )
 
         return results
