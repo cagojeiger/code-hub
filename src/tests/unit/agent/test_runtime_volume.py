@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from codehub_agent.infra.docker import VolumeListItem
 from codehub_agent.runtimes.docker.naming import ResourceNaming
 from codehub_agent.runtimes.docker.volume import VolumeManager, VolumeStatus
 
@@ -45,18 +46,18 @@ class TestVolumeManager:
     ) -> None:
         """Test list_all filters volumes by prefix and -home suffix."""
         mock_volume_api.list.return_value = [
-            {"Name": "codehub-ws1-home"},
-            {"Name": "codehub-ws2-home"},
-            {"Name": "codehub-ws3-data"},  # Wrong suffix
-            {"Name": "other-volume-home"},  # Wrong prefix
+            VolumeListItem(Name="codehub-ws1-home"),
+            VolumeListItem(Name="codehub-ws2-home"),
+            VolumeListItem(Name="codehub-ws3-data"),  # Wrong suffix
+            VolumeListItem(Name="other-volume-home"),  # Wrong prefix
         ]
 
         result = await manager.list_all()
 
         assert len(result) == 2
-        assert result[0]["workspace_id"] == "ws1"
-        assert result[0]["exists"] is True
-        assert result[1]["workspace_id"] == "ws2"
+        assert result[0].workspace_id == "ws1"
+        assert result[0].exists is True
+        assert result[1].workspace_id == "ws2"
 
     async def test_create_volume(
         self,
