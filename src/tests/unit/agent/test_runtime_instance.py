@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
-from codehub_agent.infra.docker import ContainerInspect, ContainerListItem, ContainerState
 from codehub_agent.runtimes.docker.instance import InstanceManager, InstanceStatus
 from codehub_agent.runtimes.docker.naming import ResourceNaming
 
@@ -49,18 +48,18 @@ class TestInstanceManager:
     ) -> None:
         """Test list_all filters containers by prefix."""
         mock_container_api.list.return_value = [
-            ContainerListItem(Id="1", Names=["/codehub-ws1"], State="running", Status="Up 5 minutes"),
-            ContainerListItem(Id="2", Names=["/codehub-ws2"], State="exited", Status="Exited"),
-            ContainerListItem(Id="3", Names=["/other-container"], State="running", Status="Up"),
+            {"Names": ["/codehub-ws1"], "State": "running", "Status": "Up 5 minutes"},
+            {"Names": ["/codehub-ws2"], "State": "exited", "Status": "Exited"},
+            {"Names": ["/other-container"], "State": "running", "Status": "Up"},
         ]
 
         result = await manager.list_all()
 
         assert len(result) == 2
-        assert result[0].workspace_id == "ws1"
-        assert result[0].running is True
-        assert result[1].workspace_id == "ws2"
-        assert result[1].running is False
+        assert result[0]["workspace_id"] == "ws1"
+        assert result[0]["running"] is True
+        assert result[1]["workspace_id"] == "ws2"
+        assert result[1]["running"] is False
 
     async def test_list_all_excludes_job_containers(
         self,
@@ -69,14 +68,14 @@ class TestInstanceManager:
     ) -> None:
         """Test list_all excludes job containers."""
         mock_container_api.list.return_value = [
-            ContainerListItem(Id="1", Names=["/codehub-ws1"], State="running", Status="Up"),
-            ContainerListItem(Id="2", Names=["/codehub-job-archive-abc123"], State="running", Status="Up"),
+            {"Names": ["/codehub-ws1"], "State": "running", "Status": "Up"},
+            {"Names": ["/codehub-job-archive-abc123"], "State": "running", "Status": "Up"},
         ]
 
         result = await manager.list_all()
 
         assert len(result) == 1
-        assert result[0].workspace_id == "ws1"
+        assert result[0]["workspace_id"] == "ws1"
 
     async def test_start_existing_container(
         self,
@@ -85,10 +84,10 @@ class TestInstanceManager:
     ) -> None:
         """Test start starts existing stopped container."""
         # Container exists but not running
-        mock_container_api.inspect.return_value = ContainerInspect(
-            Id="abc123",
-            State=ContainerState(Running=False, Status="exited"),
-        )
+        mock_container_api.inspect.return_value = {
+            "Id": "abc123",
+            "State": {"Running": False}
+        }
 
         result = await manager.start("ws1")
 
@@ -103,10 +102,10 @@ class TestInstanceManager:
     ) -> None:
         """Test start returns already_running for running container."""
         # Container exists and running
-        mock_container_api.inspect.return_value = ContainerInspect(
-            Id="abc123",
-            State=ContainerState(Running=True, Status="running"),
-        )
+        mock_container_api.inspect.return_value = {
+            "Id": "abc123",
+            "State": {"Running": True}
+        }
 
         result = await manager.start("ws1")
 
@@ -138,10 +137,10 @@ class TestInstanceManager:
     ) -> None:
         """Test start recreates container on 404 error."""
         # Container exists but not running
-        mock_container_api.inspect.return_value = ContainerInspect(
-            Id="abc123",
-            State=ContainerState(Running=False, Status="exited"),
-        )
+        mock_container_api.inspect.return_value = {
+            "Id": "abc123",
+            "State": {"Running": False}
+        }
 
         # First start fails with 404
         response = MagicMock()
@@ -165,10 +164,9 @@ class TestInstanceManager:
     ) -> None:
         """Test delete stops and removes running container."""
         # Container exists and is running
-        mock_container_api.inspect.return_value = ContainerInspect(
-            Id="abc123",
-            State=ContainerState(Running=True, Status="running"),
-        )
+        mock_container_api.inspect.return_value = {
+            "State": {"Running": True}
+        }
 
         result = await manager.delete("ws1")
 
@@ -183,10 +181,9 @@ class TestInstanceManager:
     ) -> None:
         """Test delete returns already_stopped for stopped container."""
         # Container exists but not running
-        mock_container_api.inspect.return_value = ContainerInspect(
-            Id="abc123",
-            State=ContainerState(Running=False, Status="exited"),
-        )
+        mock_container_api.inspect.return_value = {
+            "State": {"Running": False}
+        }
 
         result = await manager.delete("ws1")
 
@@ -229,10 +226,12 @@ class TestInstanceManager:
         mock_container_api: AsyncMock,
     ) -> None:
         """Test get_status returns running healthy status."""
-        mock_container_api.inspect.return_value = ContainerInspect(
-            Id="abc123",
-            State=ContainerState(Running=True, Status="running", Health={"Status": "healthy"}),
-        )
+        mock_container_api.inspect.return_value = {
+            "State": {
+                "Running": True,
+                "Health": {"Status": "healthy"},
+            }
+        }
 
         result = await manager.get_status("ws1")
 
@@ -247,10 +246,12 @@ class TestInstanceManager:
         mock_container_api: AsyncMock,
     ) -> None:
         """Test get_status returns running unhealthy status."""
-        mock_container_api.inspect.return_value = ContainerInspect(
-            Id="abc123",
-            State=ContainerState(Running=True, Status="running", Health={"Status": "unhealthy"}),
-        )
+        mock_container_api.inspect.return_value = {
+            "State": {
+                "Running": True,
+                "Health": {"Status": "unhealthy"},
+            }
+        }
 
         result = await manager.get_status("ws1")
 
@@ -264,10 +265,11 @@ class TestInstanceManager:
         mock_container_api: AsyncMock,
     ) -> None:
         """Test get_status returns stopped status."""
-        mock_container_api.inspect.return_value = ContainerInspect(
-            Id="abc123",
-            State=ContainerState(Running=False, Status="exited"),
-        )
+        mock_container_api.inspect.return_value = {
+            "State": {
+                "Running": False,
+            }
+        }
 
         result = await manager.get_status("ws1")
 

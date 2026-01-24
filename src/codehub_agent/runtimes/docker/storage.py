@@ -85,7 +85,6 @@ class StorageManager:
         archive_keys: list[str],
         protected_workspaces: list[tuple[str, str]],
         retention_count: int = 3,
-        restore_retention_count: int = 1,
     ) -> tuple[int, list[str]]:
         """Delete old archives while keeping latest N per workspace.
 
@@ -262,39 +261,6 @@ class StorageManager:
 
     async def archive_exists(self, archive_key: str) -> bool:
         return await self._s3.object_exists(archive_key)
-
-    async def delete_workspace_markers(self, workspace_id: str) -> int:
-        """Delete all markers (restore, error) for a specific workspace.
-
-        Deletes:
-        - {prefix}{workspace_id}/.restore_marker
-        - {prefix}{workspace_id}/.restore_error
-        - {prefix}{workspace_id}/{archive_op_id}/.error (all archive errors)
-
-        Returns the count of deleted objects.
-        """
-        resource_prefix = self._naming.prefix
-        workspace_prefix = f"{resource_prefix}{workspace_id}/"
-
-        # List all objects under workspace prefix
-        all_keys = await self._s3.list_objects(workspace_prefix)
-
-        # Filter for marker files only
-        marker_suffixes = (".restore_marker", ".restore_error", ".error")
-        keys_to_delete = [key for key in all_keys if key.endswith(marker_suffixes)]
-
-        if not keys_to_delete:
-            return 0
-
-        deleted_keys = await self._s3.delete_objects(keys_to_delete)
-        logger.debug(
-            "Workspace markers deleted",
-            extra={
-                "workspace_id": workspace_id,
-                "deleted_count": len(deleted_keys),
-            },
-        )
-        return len(deleted_keys)
 
     async def list_restore_markers(self) -> list[RestoreMarkerInfo]:
         """List all restore markers (.restore_marker files).

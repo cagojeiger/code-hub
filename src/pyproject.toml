@@ -52,28 +52,6 @@ codehub-agent = "codehub_agent.main:main"
 [tool.hatch.build.targets.wheel]
 packages = ["codehub", "codehub_agent"]
 
-[tool.mypy]
-python_version = "3.13"
-strict = true
-warn_return_any = true
-warn_unused_ignores = true
-plugins = ["pydantic.mypy"]
-
-[[tool.mypy.overrides]]
-module = "tests.*"
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-disallow_untyped_calls = false
-disable_error_code = ["arg-type", "attr-defined", "type-var", "misc"]
-
-[[tool.mypy.overrides]]
-module = [
-    "aiodocker.*",
-    "cachetools_async.*",
-    "alembic.*",
-]
-ignore_missing_imports = true
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

@@ -7,7 +7,6 @@ Uses structural typing (duck typing) - no inheritance required.
 from typing import Protocol
 
 from codehub_agent.runtimes.docker.instance import ContainerInfo, InstanceStatus, UpstreamInfo
-from codehub_agent.runtimes.docker.job import JobType
 from codehub_agent.runtimes.docker.result import (
     OperationResult,
     PrepareArchiveResult,
@@ -39,9 +38,7 @@ class VolumeManagerProtocol(Protocol):
 class JobRunnerProtocol(Protocol):
     """Protocol for archive/restore job execution."""
 
-    async def find_running_job(
-        self, workspace_id: str, job_type: JobType, archive_op_id: str | None = None
-    ) -> dict | None: ...
+    async def find_running_job(self, workspace_id: str): ...
     async def run_archive(self, workspace_id: str, archive_op_id: str) -> OperationResult: ...
     async def run_restore(
         self, workspace_id: str, archive_key: str, restore_op_id: str
