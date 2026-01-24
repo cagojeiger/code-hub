@@ -38,9 +38,9 @@ class DockerRuntime:
         self._naming = ResourceNaming(self._config)
         self._s3: S3Operations | None = None
 
-        self.instances = InstanceManager(self._config, self._naming, docker=self._docker)
-        self.volumes = VolumeManager(self._config, self._naming, docker=self._docker)
-        self.jobs = JobRunner(self._config, self._naming, docker=self._docker)
+        self.instances = InstanceManager(self._config, self._naming)
+        self.volumes = VolumeManager(self._config, self._naming)
+        self.jobs = JobRunner(self._config, self._naming)
         # storage is initialized in init() after S3 is ready
         self.storage: StorageManager | None = None
 
