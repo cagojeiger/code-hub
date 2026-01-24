@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from codehub_agent.api.errors import JobFailedError
+from codehub_agent.infra.docker import ContainerListItem
 from codehub_agent.runtimes.docker.job import (
     STUCK_THRESHOLD_SECONDS,
     JobRunner,
@@ -213,7 +214,12 @@ class TestJobRunner:
         """Test run_archive returns in_progress when job already running."""
         # Simulate existing running job
         mock_container_api.list.return_value = [
-            {"Names": ["/codehub-job-archive-abc123"], "State": "running"}
+            ContainerListItem(
+                Id="abc123",
+                Names=["/codehub-job-archive-abc123"],
+                State="running",
+                Status="Up 10 seconds",
+            )
         ]
 
         result = await runner.run_archive("ws1", "op123")
@@ -231,7 +237,12 @@ class TestJobRunner:
         """Test run_restore returns in_progress when job already running."""
         # Simulate existing running job
         mock_container_api.list.return_value = [
-            {"Names": ["/codehub-job-restore-abc123"], "State": "running"}
+            ContainerListItem(
+                Id="abc123",
+                Names=["/codehub-job-restore-abc123"],
+                State="running",
+                Status="Up 10 seconds",
+            )
         ]
 
         archive_key = "codehub-ws1/op123/home.tar.zst"
@@ -286,12 +297,13 @@ class TestJobRunner:
         # Simulate stuck container (created 10 minutes ago)
         stuck_time = int(time.time()) - (STUCK_THRESHOLD_SECONDS + 60)
         mock_container_api.list.return_value = [
-            {
-                "Id": "stuck123",
-                "Names": ["/codehub-job-archive-stuck"],
-                "State": "created",
-                "Created": stuck_time,
-            }
+            ContainerListItem(
+                Id="stuck123",
+                Names=["/codehub-job-archive-stuck"],
+                State="created",
+                Status="Created",
+                Created=stuck_time,
+            )
         ]
 
         result = await runner.find_running_job("ws1", JobType.ARCHIVE)
@@ -310,12 +322,13 @@ class TestJobRunner:
         # Simulate recently created container (1 minute ago)
         recent_time = int(time.time()) - 60
         mock_container_api.list.return_value = [
-            {
-                "Id": "recent123",
-                "Names": ["/codehub-job-archive-recent"],
-                "State": "created",
-                "Created": recent_time,
-            }
+            ContainerListItem(
+                Id="recent123",
+                Names=["/codehub-job-archive-recent"],
+                State="created",
+                Status="Created",
+                Created=recent_time,
+            )
         ]
 
         result = await runner.find_running_job("ws1", JobType.ARCHIVE)
@@ -324,7 +337,7 @@ class TestJobRunner:
         mock_container_api.remove.assert_not_called()
         # Container should be returned
         assert result is not None
-        assert result["Id"] == "recent123"
+        assert result.Id == "recent123"
 
     async def test_run_archive_different_op_id_starts_new_job(
         self,

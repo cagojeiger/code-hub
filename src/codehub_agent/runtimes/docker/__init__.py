@@ -10,7 +10,7 @@ from codehub_agent.api.errors import (
 from codehub_agent.config import AgentConfig, get_agent_config
 from codehub_agent.infra import DockerClient, S3Operations
 from codehub_agent.runtimes.docker.instance import InstanceManager
-from codehub_agent.runtimes.docker.job import JobRunner
+from codehub_agent.runtimes.docker.job import JobRunner, JobType
 from codehub_agent.runtimes.docker.naming import ResourceNaming
 from codehub_agent.runtimes.docker.result import (
     OperationResult,
@@ -87,7 +87,7 @@ class DockerRuntime:
         if not volume_status.exists:
             raise VolumeNotFoundError(f"Volume does not exist for workspace {workspace_id}")
 
-        existing_job = await self.jobs.find_running_job(workspace_id)
+        existing_job = await self.jobs.find_running_job(workspace_id, JobType.ARCHIVE, archive_op_id)
         archive_key = self.get_archive_key(workspace_id, archive_op_id)
 
         return PrepareArchiveResult(
@@ -114,7 +114,7 @@ class DockerRuntime:
         if not volume_status.exists:
             await self.volumes.create(workspace_id)
 
-        existing_job = await self.jobs.find_running_job(workspace_id)
+        existing_job = await self.jobs.find_running_job(workspace_id, JobType.RESTORE)
 
         return PrepareRestoreResult(
             should_run_job=existing_job is None,
