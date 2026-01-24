@@ -1,6 +1,12 @@
-"""Workspace API endpoints."""
+"""Workspace API endpoints.
+
+This is the new unified API for workspace management.
+It provides a single endpoint (observe) that returns complete workspace state,
+combining container, volume, and archive information.
+"""
 
 import asyncio
+import logging
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends
@@ -30,10 +36,36 @@ from codehub_agent.api.v1.schemas import (
     WorkspaceState,
 )
 from codehub_agent.metrics import AGENT_CONTAINERS_TOTAL, AGENT_VOLUMES_TOTAL
+from codehub_agent.runtimes import DockerRuntime
 from codehub_agent.runtimes.docker.lock import get_workspace_lock
-from codehub_agent.runtimes.protocols import RuntimeProtocol
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
+
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+
+async def _delete_all_workspace_resources(
+    runtime: DockerRuntime,
+    workspace_id: str,
+) -> None:
+    """Delete all workspace resources (container, volume, markers)."""
+    for coro, resource in [
+        (runtime.instances.delete(workspace_id), "container"),
+        (runtime.volumes.delete(workspace_id), "volume"),
+        (runtime.storage.delete_workspace_markers(workspace_id), "markers"),
+    ]:
+        try:
+            await coro
+        except Exception:
+            logger.debug(
+                f"Failed to delete {resource}",
+                extra={"workspace_id": workspace_id},
+            )
 
 
 # =============================================================================
@@ -43,18 +75,21 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 @router.get("", response_model=ObserveResponse)
 async def observe(
-    runtime: RuntimeProtocol = Depends(get_runtime),
+    runtime: DockerRuntime = Depends(get_runtime),
 ) -> ObserveResponse:
     """Return complete state snapshot of all workspaces."""
+    # Get all data in parallel (S3 operations merged for efficiency)
     containers, volumes, (archives, restore_markers, error_markers) = await asyncio.gather(
         runtime.instances.list_all(),
         runtime.volumes.list_all(),
         runtime.storage.list_archives_and_markers(),
     )
 
+    # Update metrics
     AGENT_CONTAINERS_TOTAL.set(len(containers))
     AGENT_VOLUMES_TOTAL.set(len(volumes))
 
+    # Single-pass aggregation with defaultdict (optimized)
     workspace_data: dict[str, dict] = defaultdict(
         lambda: {
             "container": None,
@@ -65,6 +100,7 @@ async def observe(
         }
     )
 
+    # Aggregate in single pass
     for c in containers:
         workspace_data[c.workspace_id]["container"] = c
     for v in volumes:
@@ -76,6 +112,7 @@ async def observe(
     for e in error_markers:
         workspace_data[e.workspace_id]["error"] = e
 
+    # Build response WITHOUT sorting (client can sort if needed)
     workspaces = []
     for ws_id, data in workspace_data.items():
         container_info = data["container"]
@@ -89,7 +126,7 @@ async def observe(
             container=(
                 ContainerStatus(
                     running=container_info.running,
-                    ready=container_info.running,
+                    ready=container_info.running,  # Simplified: ready = running
                 )
                 if container_info
                 else None
@@ -160,7 +197,7 @@ async def observe(
 @router.post("/{workspace_id}/provision", status_code=201, response_model=OperationResponse)
 async def provision(
     workspace_id: str,
-    runtime: RuntimeProtocol = Depends(get_runtime),
+    runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
     async with get_workspace_lock(workspace_id):
         result = await runtime.volumes.create(workspace_id)
@@ -174,25 +211,33 @@ async def provision(
 async def start(
     workspace_id: str,
     request: StartRequest,
-    runtime: RuntimeProtocol = Depends(get_runtime),
+    runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
     """Start workspace container. Fire-and-Forget."""
+    from codehub_agent.api.errors import VolumeNotFoundError
+
     async with get_workspace_lock(workspace_id):
-        await runtime.prepare_start(workspace_id)
+        # Precondition: Volume must exist
+        volume_status = await runtime.volumes.exists(workspace_id)
+        if not volume_status.exists:
+            raise VolumeNotFoundError(
+                f"Volume does not exist for workspace {workspace_id}"
+            )
+
         spawn_background_task(
             runtime.instances.start(workspace_id, request.image),
             {"workspace_id": workspace_id, "operation": "start"},
         )
-    return OperationResponse(
-        status=OperationStatusValue.in_progress,
-        workspace_id=workspace_id,
-    )
+        return OperationResponse(
+            status=OperationStatusValue.in_progress,
+            workspace_id=workspace_id,
+        )
 
 
 @router.post("/{workspace_id}/stop", response_model=OperationResponse)
 async def stop(
     workspace_id: str,
-    runtime: RuntimeProtocol = Depends(get_runtime),
+    runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
     """Stop workspace container. Fire-and-Forget."""
     async with get_workspace_lock(workspace_id):
@@ -209,18 +254,18 @@ async def stop(
 @router.delete("/{workspace_id}", response_model=OperationResponse)
 async def delete(
     workspace_id: str,
-    runtime: RuntimeProtocol = Depends(get_runtime),
+    runtime: DockerRuntime = Depends(get_runtime),
 ) -> OperationResponse:
     """Delete workspace completely. Fire-and-Forget."""
     async with get_workspace_lock(workspace_id):
         spawn_background_task(
-            runtime.delete_workspace(workspace_id),
+            _delete_all_workspace_resources(runtime, workspace_id),
             {"workspace_id": workspace_id, "operation": "delete"},
         )
-    return OperationResponse(
-        status=OperationStatusValue.in_progress,
-        workspace_id=workspace_id,
-    )
+        return OperationResponse(
+            status=OperationStatusValue.in_progress,
+            workspace_id=workspace_id,
+        )
 
 
 # =============================================================================
@@ -232,13 +277,33 @@ async def delete(
 async def archive(
     workspace_id: str,
     request: ArchiveRequest,
-    runtime: RuntimeProtocol = Depends(get_runtime),
+    runtime: DockerRuntime = Depends(get_runtime),
 ) -> ArchiveResponse:
     """Archive workspace to S3. Fire-and-Forget."""
-    async with get_workspace_lock(workspace_id):
-        result = await runtime.prepare_archive(workspace_id, request.archive_op_id)
+    from codehub_agent.api.errors import ContainerRunningError, VolumeNotFoundError
 
-    if result.should_run_job:
+    # Acquire lock only for precondition checks
+    async with get_workspace_lock(workspace_id):
+        # Precondition checks
+        container_status = await runtime.instances.get_status(workspace_id)
+        if container_status.running:
+            raise ContainerRunningError(
+                f"Cannot archive while container is running for workspace {workspace_id}"
+            )
+
+        volume_status = await runtime.volumes.exists(workspace_id)
+        if not volume_status.exists:
+            raise VolumeNotFoundError(
+                f"Volume does not exist for workspace {workspace_id}"
+            )
+
+        # Check if job is already running (workspace-level exclusive)
+        existing = await runtime.jobs.find_running_job(workspace_id)
+    # Lock released here - background task runs outside lock
+
+    # Spawn background task OUTSIDE lock
+    if not existing:
+        # Fire-and-Forget: Start job in background, don't wait
         spawn_background_task(
             runtime.jobs.run_archive(workspace_id, request.archive_op_id),
             {
@@ -248,10 +313,13 @@ async def archive(
             },
         )
 
+    # Always return in_progress - WC will detect completion via Observer
+    archive_key = runtime.get_archive_key(workspace_id, request.archive_op_id)
+
     return ArchiveResponse(
         status=OperationStatusValue.in_progress,
         workspace_id=workspace_id,
-        archive_key=result.archive_key,
+        archive_key=archive_key,
     )
 
 
@@ -259,15 +327,38 @@ async def archive(
 async def restore(
     workspace_id: str,
     request: RestoreRequest,
-    runtime: RuntimeProtocol = Depends(get_runtime),
+    runtime: DockerRuntime = Depends(get_runtime),
 ) -> RestoreResponse:
     """Restore workspace from S3 archive. Fire-and-Forget."""
-    async with get_workspace_lock(workspace_id):
-        result = await runtime.prepare_restore(
-            workspace_id, request.archive_key, request.restore_op_id
-        )
+    from codehub_agent.api.errors import ArchiveNotFoundError, ContainerRunningError
 
-    if result.should_run_job:
+    # Acquire lock only for precondition checks
+    async with get_workspace_lock(workspace_id):
+        # Precondition checks
+        container_status = await runtime.instances.get_status(workspace_id)
+        if container_status.running:
+            raise ContainerRunningError(
+                f"Cannot restore while container is running for workspace {workspace_id}"
+            )
+
+        archive_exists = await runtime.storage.archive_exists(request.archive_key)
+        if not archive_exists:
+            raise ArchiveNotFoundError(
+                f"Archive not found: {request.archive_key}"
+            )
+
+        # Create volume if not exists
+        volume_status = await runtime.volumes.exists(workspace_id)
+        if not volume_status.exists:
+            await runtime.volumes.create(workspace_id)
+
+        # Check if job is already running (workspace-level exclusive)
+        existing = await runtime.jobs.find_running_job(workspace_id)
+    # Lock released here - background task runs outside lock
+
+    # Spawn background task OUTSIDE lock
+    if not existing:
+        # Fire-and-Forget: Start job in background, don't wait
         spawn_background_task(
             runtime.jobs.run_restore(
                 workspace_id, request.archive_key, request.restore_op_id
@@ -280,10 +371,11 @@ async def restore(
             },
         )
 
+    # Always return in_progress - WC will detect completion via Observer
     return RestoreResponse(
         status=OperationStatusValue.in_progress,
         workspace_id=workspace_id,
-        restore_marker=result.restore_marker,
+        restore_marker=request.restore_op_id,
     )
 
 
@@ -295,7 +387,7 @@ async def restore(
 @router.get("/{workspace_id}/upstream", response_model=UpstreamResponse)
 async def get_upstream(
     workspace_id: str,
-    runtime: RuntimeProtocol = Depends(get_runtime),
+    runtime: DockerRuntime = Depends(get_runtime),
 ) -> UpstreamResponse:
     upstream = await runtime.instances.get_upstream(workspace_id)
     return UpstreamResponse(
@@ -313,12 +405,12 @@ async def get_upstream(
 @router.post("/gc", response_model=GCResponse)
 async def run_gc(
     request: GCRequest,
-    runtime: RuntimeProtocol = Depends(get_runtime),
+    runtime: DockerRuntime = Depends(get_runtime),
 ) -> GCResponse:
     """Run garbage collection on archives."""
     deleted_count, deleted_keys = await runtime.storage.run_gc(
         request.archive_keys,
-        [p.root for p in request.protected_workspaces],
-        request.retention_count or 3,
+        request.protected_workspaces,
+        request.retention_count,
     )
     return GCResponse(deleted_count=deleted_count, deleted_keys=deleted_keys)

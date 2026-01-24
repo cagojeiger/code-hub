@@ -1,19 +1,15 @@
 """API dependencies for dependency injection."""
 
-from typing import cast
-
 from codehub_agent.runtimes import DockerRuntime
-from codehub_agent.runtimes.protocols import RuntimeProtocol
 
-_runtime: RuntimeProtocol | None = None
+_runtime: DockerRuntime | None = None
 
 
 async def init_runtime() -> None:
     """Initialize runtime singleton. Must be called during app startup."""
     global _runtime
-    runtime = DockerRuntime()
-    await runtime.init()
-    _runtime = cast(RuntimeProtocol, runtime)
+    _runtime = DockerRuntime()
+    await _runtime.init()
 
 
 async def close_runtime() -> None:
@@ -24,7 +20,7 @@ async def close_runtime() -> None:
         _runtime = None
 
 
-def get_runtime() -> RuntimeProtocol:
+def get_runtime() -> DockerRuntime:
     """Get runtime singleton. Raises RuntimeError if not initialized."""
     if _runtime is None:
         raise RuntimeError("Runtime not initialized. Call init_runtime() first.")
