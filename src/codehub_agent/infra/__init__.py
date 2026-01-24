@@ -19,6 +19,7 @@ from codehub_agent.infra.docker import (
     VolumeAPI,
     VolumeConfig,
     VolumeListItem,
+    close_docker,
 )
 from codehub_agent.infra.s3 import S3Operations
 
@@ -41,6 +42,7 @@ __all__ = [
     "VolumeAPI",
     "VolumeConfig",
     "VolumeListItem",
+    "close_docker",
     # S3
     "S3Operations",
 ]
