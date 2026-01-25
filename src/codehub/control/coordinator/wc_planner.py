@@ -39,8 +39,8 @@ class PlanInput(BaseModel):
     archive_key: str | None
     op_started_at: datetime | None
     archive_op_id: str | None  # archiving 전용 (S3 경로 생성용)
+    restore_op_id: str | None  # restoring 전용 (S3 marker 생성용)
     deleted_at: datetime | None
-    home_ctx: dict | None
 
     model_config = {"frozen": True}
 
@@ -56,8 +56,8 @@ class PlanInput(BaseModel):
             archive_key=ws.archive_key,
             op_started_at=ws.op_started_at,
             archive_op_id=ws.archive_op_id,
+            restore_op_id=ws.restore_op_id,
             deleted_at=ws.deleted_at,
-            home_ctx=ws.home_ctx,
         )
 
 
@@ -69,8 +69,8 @@ class PlanAction(BaseModel):
     error_reason: ErrorReason | None = None
     archive_key: str | None = None
     archive_op_id: str | None = None  # ARCHIVING/CREATE_EMPTY 전용 (S3 경로)
+    restore_op_id: str | None = None  # RESTORING 전용 (S3 marker)
     complete: bool = False  # operation 완료 여부
-    restore_marker: str | None = None  # restore 완료 확인용 marker
 
 
 def plan(input: PlanInput, timeout_seconds: float = 300.0) -> PlanAction:
@@ -233,11 +233,18 @@ def _check_completion(operation: Operation, input: PlanInput) -> bool:
         case Operation.PROVISIONING:
             return cond.volume_ready
         case Operation.RESTORING:
-            # Dual Check: S3 restore_marker + Volume exists
-            # Agent writes .restore_marker to S3 with archive_key after restore
-            # Observer reads it and stores in conditions.restore
+            # Dual Check: S3 restore_marker (archive_key + restore_op_id) + Volume exists
+            # 1. WC generates restore_op_id, stores in ws.restore_op_id (DB column)
+            # 2. Agent writes .restore_marker to S3 with {restore_op_id, archive_key}
+            # 3. Observer reads it into conditions.restore
+            # 4. Here we verify BOTH archive_key and restore_op_id match
             restore = input.conditions.get("restore") or {}
-            if restore.get("archive_key") == input.archive_key:
+
+            # archive_key 일치 + restore_op_id 일치 확인
+            if (
+                restore.get("archive_key") == input.archive_key
+                and restore.get("restore_op_id") == input.restore_op_id
+            ):
                 return cond.volume_ready
             return False
         case Operation.STARTING:

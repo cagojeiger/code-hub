@@ -309,12 +309,16 @@ class WorkspaceController(CoordinatorBase):
 
                 case Operation.RESTORING:
                     if ws.archive_key:
-                        # Generate unique restore_op_id for Dual Check verification
-                        restore_op_id = str(uuid4())
-                        restore_marker = await self._runtime.restore(
+                        # Reuse existing restore_op_id if already in progress (idempotent retry)
+                        # Only generate new restore_op_id on first attempt
+                        # Uses ws.restore_op_id (dedicated column) for symmetry with archive_op_id
+                        restore_op_id = ws.restore_op_id or str(uuid4())
+                        await self._runtime.restore(
                             ws.id, ws.archive_key, restore_op_id
                         )
-                        action.restore_marker = restore_marker
+                        # Only update restore_op_id if this is a new restore operation
+                        if not ws.restore_op_id:
+                            action.restore_op_id = restore_op_id
 
                 case Operation.STARTING:
                     await self._runtime.start(ws.id, ws.image_ref)
@@ -367,14 +371,21 @@ class WorkspaceController(CoordinatorBase):
                 archive_op_id = action.archive_op_id or str(uuid4())
             else:
                 archive_op_id = ws.archive_op_id  # 다른 operation은 기존 값 유지
+            # restore_op_id는 RESTORING에서만 새로 생성
+            if action.operation == Operation.RESTORING:
+                restore_op_id = action.restore_op_id  # _execute에서 설정됨
+            else:
+                restore_op_id = ws.restore_op_id  # 다른 operation은 기존 값 유지
         elif action.operation == Operation.NONE:
             # operation 완료 또는 no-op
             op_started_at = None
             archive_op_id = ws.archive_op_id  # GC 보호용 유지
+            restore_op_id = ws.restore_op_id  # GC 보호용 유지
         else:
             # 진행 중
             op_started_at = ws.op_started_at
             archive_op_id = ws.archive_op_id
+            restore_op_id = ws.restore_op_id
 
         # error_count 계산
         if action.error_reason:
@@ -384,12 +395,6 @@ class WorkspaceController(CoordinatorBase):
         else:
             error_count = ws.error_count
 
-        # home_ctx 업데이트 (restore_marker 저장)
-        home_ctx: dict | None = None
-        if action.restore_marker:
-            home_ctx = dict(ws.home_ctx) if ws.home_ctx else {}
-            home_ctx["restore_marker"] = action.restore_marker
-
         success = await self._cas_update(
             workspace_id=ws.id,
             expected_operation=Operation(ws_op),
@@ -397,10 +402,10 @@ class WorkspaceController(CoordinatorBase):
             operation=action.operation,
             op_started_at=op_started_at,
             archive_op_id=archive_op_id,
+            restore_op_id=restore_op_id,
             archive_key=action.archive_key,
             error_count=error_count,
             error_reason=action.error_reason,
-            home_ctx=home_ctx,
             updated_at=now,
         )
         # Commit at connection level
@@ -457,10 +462,10 @@ class WorkspaceController(CoordinatorBase):
         operation: Operation,
         op_started_at: datetime | None,
         archive_op_id: str | None,
+        restore_op_id: str | None,
         archive_key: str | None,
         error_count: int,
         error_reason: ErrorReason | None,
-        home_ctx: dict | None = None,
         updated_at: datetime | None = None,
     ) -> bool:
         """CAS update for WC-owned columns.
@@ -472,6 +477,7 @@ class WorkspaceController(CoordinatorBase):
             "operation": operation.value,
             "op_started_at": op_started_at,
             "archive_op_id": archive_op_id,
+            "restore_op_id": restore_op_id,
             "error_count": error_count,
             "error_reason": error_reason.value if error_reason else None,
             "updated_at": updated_at or datetime.now(UTC),
@@ -485,10 +491,6 @@ class WorkspaceController(CoordinatorBase):
         # Only update archive_key if provided
         if archive_key is not None:
             values["archive_key"] = archive_key
-
-        # Only update home_ctx if provided (restore_marker 저장용)
-        if home_ctx is not None:
-            values["home_ctx"] = home_ctx
 
         stmt = (
             update(Workspace)
