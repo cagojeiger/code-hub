@@ -1,6 +1,6 @@
 # WC Planner
 
-> operation 결정 및 archive_op_id 관리
+> operation 결정 및 archive_op_id / restore_op_id 관리
 
 ---
 
@@ -10,7 +10,7 @@ WC Planner는 순수 함수로 operation을 결정합니다.
 
 | 입력 | 출력 |
 |------|------|
-| PlanInput (phase, operation, desired_state, conditions, ...) | PlanAction (operation, phase, archive_op_id, ...) |
+| PlanInput (phase, operation, desired_state, conditions, archive_op_id, restore_op_id, ...) | PlanAction (operation, phase, archive_op_id, restore_op_id, ...) |
 
 ---
 
@@ -80,7 +80,7 @@ flowchart TB
         EX_ARC_USE["→ S3 경로로 사용!"]
 
         EX_REST["RESTORING"]
-        EX_REST_USE["→ ws.archive_key 사용<br/>(archive_op_id 무시)"]
+        EX_REST_USE["→ ws.archive_key + ws.restore_op_id 사용<br/>(restore_op_id: ws 컬럼 or uuid4())"]
 
         EX_OTHER["PROVISIONING/STARTING<br/>STOPPING/DELETING"]
         EX_OTHER_USE["→ archive_op_id 사용 안 함"]
@@ -89,9 +89,11 @@ flowchart TB
     subgraph Persist["_persist() - DB 저장"]
         PE1{"ARCHIVING/CREATE_EMPTY?"}
         PE1_Y["archive_op_id = action.archive_op_id"]
+        PE1B{"RESTORING?"}
+        PE1B_Y["restore_op_id = action.restore_op_id"]
         PE2{"op=NONE?"}
-        PE2_Y["archive_op_id = ws.archive_op_id (GC 보호)"]
-        PE3["그 외: archive_op_id = ws.archive_op_id"]
+        PE2_Y["archive_op_id = ws.archive_op_id (GC 보호)<br/>restore_op_id = ws.restore_op_id (GC 보호)"]
+        PE3["그 외: archive_op_id = ws.archive_op_id<br/>restore_op_id = ws.restore_op_id"]
     end
 
     EX_ARC --> EX_ARC_OP --> EX_ARC_USE
@@ -99,19 +101,21 @@ flowchart TB
     EX_OTHER --> EX_OTHER_USE
 
     PE1 -->|Yes| PE1_Y
-    PE1 -->|No| PE2
+    PE1 -->|No| PE1B
+    PE1B -->|Yes| PE1B_Y
+    PE1B -->|No| PE2
     PE2 -->|Yes| PE2_Y
     PE2 -->|No| PE3
 ```
 
 ---
 
-## archive_op_id 실제 사용 여부
+## archive_op_id / restore_op_id 실제 사용 여부
 
 | Operation | plan() 생성 | _execute() 사용 | 용도 |
 |-----------|-------------|----------------|------|
 | PROVISIONING | - | - | - |
-| RESTORING | - | - (archive_key 사용) | - |
+| **RESTORING** | - | **ws.restore_op_id or uuid4()** | **Dual Check** |
 | STARTING | - | - | - |
 | STOPPING | - | - | - |
 | **ARCHIVING** | **uuid4()** | **S3 경로** | 멱등성 |
@@ -119,6 +123,8 @@ flowchart TB
 | DELETING | - | - | - |
 
 > **핵심**: `archive_op_id`는 ARCHIVING/CREATE_EMPTY_ARCHIVE에서만 생성/사용됨
+>
+> **RESTORING**: `restore_op_id`는 _execute()에서 생성/사용됨 (ARCHIVING의 archive_op_id와 대칭)
 
 ---
 
@@ -173,6 +179,20 @@ sequenceDiagram
 | **완료 시** | **기존 값** | wc.py | **GC 보호** |
 | 다음 ARCHIVING | `uuid4()` | wc_planner.py | 새 S3 경로 |
 | 다른 Operation | N/A | - | 사용 안 함 |
+
+---
+
+## restore_op_id 요약
+
+| 시점 | restore_op_id 값 | 코드 위치 | 이유 |
+|------|-----------------|----------|------|
+| RESTORING 첫 시도 | `ws.restore_op_id or uuid4()` | wc.py (_execute) | Dual Check용 |
+| 진행 중 (재시도) | 기존 값 (ws.restore_op_id) | wc.py (_execute) | 멱등성 |
+| **완료 시** | **기존 값** | wc.py (_persist) | **GC 보호** |
+| 다음 RESTORING | 새 `uuid4()` | wc.py (_execute) | 새 Dual Check |
+| 다른 Operation | N/A | - | 사용 안 함 |
+
+> **ARCHIVING과의 차이**: archive_op_id는 plan()에서 생성되지만, restore_op_id는 _execute()에서 생성됨
 
 ---
 

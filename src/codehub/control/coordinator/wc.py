@@ -382,10 +382,10 @@ class WorkspaceController(CoordinatorBase):
             archive_op_id = ws.archive_op_id  # GC 보호용 유지
             restore_op_id = ws.restore_op_id  # GC 보호용 유지
         else:
-            # 진행 중
+            # 진행 중 (fallback: _execute()가 생성한 값 사용)
             op_started_at = ws.op_started_at
-            archive_op_id = ws.archive_op_id
-            restore_op_id = ws.restore_op_id
+            archive_op_id = ws.archive_op_id or action.archive_op_id
+            restore_op_id = ws.restore_op_id or action.restore_op_id
 
         # error_count 계산
         if action.error_reason:

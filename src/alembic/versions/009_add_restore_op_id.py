@@ -15,7 +15,6 @@ Reference: docs/spec/05-data-plane.md
 """
 
 from alembic import op
-import sqlalchemy as sa
 
 
 revision = '009_add_restore_op_id'
@@ -25,11 +24,11 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Add new column
-    op.add_column(
-        'workspaces',
-        sa.Column('restore_op_id', sa.String(36), nullable=True)
-    )
+    # Add new column (idempotent: IF NOT EXISTS guards against partial migration reruns)
+    op.execute("""
+        ALTER TABLE workspaces
+        ADD COLUMN IF NOT EXISTS restore_op_id VARCHAR(36)
+    """)
 
     # Migrate existing data from home_ctx.restore_marker
     # This extracts restore_marker from JSONB and copies to new column

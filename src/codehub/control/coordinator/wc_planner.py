@@ -167,7 +167,7 @@ def is_this_archive_ready(conditions: dict, archive_op_id: str | None) -> bool:
     if not archive_op_id:
         return False
     archive = conditions.get("archive") or {}
-    actual_key = archive.get("archive_key", "")
+    actual_key = archive.get("archive_key") or ""
     return f"/{archive_op_id}/" in actual_key
 
 

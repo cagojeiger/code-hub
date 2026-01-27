@@ -32,6 +32,10 @@ class ResourceNaming:
         key = self.archive_s3_key(workspace_id, archive_op_id)
         return f"s3://{self._s3_bucket}/{key}"
 
+    def restore_marker_s3_url(self, workspace_id: str) -> str:
+        key = f"{self._prefix}{workspace_id}/.restore_marker"
+        return f"s3://{self._s3_bucket}/{key}"
+
     def workspace_id_from_container(self, container_name: str) -> str | None:
         if not container_name.startswith(self._prefix):
             return None

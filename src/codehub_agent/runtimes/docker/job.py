@@ -208,6 +208,8 @@ class JobRunner:
             env.append(f"RESTORE_OP_ID={restore_op_id}")
         if restore_archive_key:
             env.append(f"RESTORE_ARCHIVE_KEY={restore_archive_key}")
+        if restore_op_id and workspace_id:
+            env.append(f"RESTORE_DONE_URL={self._naming.restore_marker_s3_url(workspace_id)}")
 
         async with get_job_semaphore():
             try:
