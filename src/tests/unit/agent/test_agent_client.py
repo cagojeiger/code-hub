@@ -115,7 +115,7 @@ class TestAgentClient:
             "workspaces": [
                 {
                     "workspace_id": "ws1",
-                    "container": {"running": True, "healthy": True},
+                    "container": {"running": True, "ready": True},
                     "volume": {"exists": True},
                     "archive": None,
                 },
@@ -123,7 +123,13 @@ class TestAgentClient:
                     "workspace_id": "ws2",
                     "container": None,
                     "volume": {"exists": True},
-                    "archive": {"exists": True, "archive_key": "ws2/op1/home.tar.zst"},
+                    "archive": {
+                        "latest": {
+                            "archive_key": "ws2/op1/home.tar.zst",
+                            "archive_op_id": "op1",
+                            "archived_at": "2024-01-15T10:30:00Z",
+                        }
+                    },
                 },
             ]
         }
