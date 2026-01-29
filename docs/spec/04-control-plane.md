@@ -131,7 +131,7 @@ flowchart TB
     end
 
     subgraph Judge["2. Judge"]
-        CALC["calculate_phase(conditions)"]
+        CALC["judge(conditions, deleted_at)"]
         INV["check_invariants()"]
         HEALTH["policy.healthy 설정"]
     end

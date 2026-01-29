@@ -40,6 +40,7 @@
 | **operation** | ENUM | NO | 'NONE' | 진행 중인 작업 |
 | **op_started_at** | TIMESTAMP | YES | NULL | operation 시작 시점 |
 | **archive_op_id** | UUID | YES | NULL | 아카이브 작업 ID (S3 경로용, ARCHIVING/CREATE_EMPTY만 사용) |
+| **restore_op_id** | UUID | YES | NULL | 복원 작업 ID (RESTORING 완료 판정용, 이중 마커 체크) |
 | **desired_state** | ENUM | NO | 'RUNNING' | 목표 상태 |
 | **archive_key** | VARCHAR(512) | YES | NULL | Archive 경로 |
 | **observed_at** | TIMESTAMP | YES | NULL | 마지막 관측 시점 |
@@ -136,15 +137,15 @@
 | Workspace 생성 직후 | `{}` (빈 dict) | PENDING |
 | WC 첫 관측 후 | 모든 Condition 포함 | 실제 상태 반영 |
 
-**기본값 정책** (calculate_phase 내부):
+**기본값 정책** (judge 함수 내부):
 - `policy.healthy`: **"True"** (관측 전에는 건강하다고 가정)
 - `storage.volume_ready`: **"False"** (리소스 존재를 가정하지 않음)
 - `storage.archive_ready`: **"False"** (리소스 존재를 가정하지 않음)
 - `infra.container_ready`: **"False"** (리소스 존재를 가정하지 않음)
 
-> **안전성**: calculate_phase()가 빈 conditions에도 기본값을 적용하여 KeyError 없이 안전하게 계산
+> **안전성**: judge() 함수가 빈 conditions에도 기본값을 적용하여 안전하게 계산
 >
-> **구현**: [02-states.md#calculate_phase](./02-states.md#calculate_phase)
+> **구현**: [02-states.md#judge](./02-states.md#judge)
 
 ---
 
@@ -187,6 +188,7 @@
 | operation | 진행 중인 작업 |
 | op_started_at | operation 시작 시점 |
 | archive_op_id | 아카이브 작업 ID (ARCHIVING/CREATE_EMPTY만 사용) |
+| restore_op_id | 복원 작업 ID (RESTORING 멱등성 + 이중 마커 완료 체크) |
 | archive_key | Archive 경로 (ARCHIVING 완료 시) |
 | error_count | 재시도 횟수 |
 | error_reason | 에러 분류 코드 |
@@ -234,10 +236,12 @@ is_terminal = error_reason in TERMINAL_REASONS or error_count >= MAX_RETRY
 | 필드 | 타입 | 설명 |
 |------|------|------|
 | restore_marker | string | 복원 완료 마커 (= archive_key) |
+| restore_op_id | string | 복원 작업 ID (Storage Job이 기록) |
 
 **용도**:
-- RESTORING 완료 조건 판정에 사용
-- `restore_marker == archive_key` → 복원 완료
+- RESTORING 완료 조건 판정에 이중 마커 사용 (stale marker 방지)
+- 완료 조건: `restore_marker == archive_key` ∧ `home_ctx.restore_op_id == ws.restore_op_id`
+- `restore_op_id`는 DB 컬럼과 `home_ctx` 양쪽에 저장되어 일치 여부 확인
 
 ---
 
