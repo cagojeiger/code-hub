@@ -147,9 +147,9 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 | volume_exists(workspace_id) | Volume 존재 확인 | - | bool |
 
 **restore() 반환값**:
-- 성공 시: `restore_marker = archive_key` 반환
-- WC가 이 값을 `home_ctx.restore_marker`에 저장
-- 계약 #7 완료 조건: `Phase=STANDBY AND home_ctx.restore_marker=archive_key`
+- 성공 시: `restore_marker = restore_op_id` 반환
+- WC가 이 값을 `ws.restore_op_id`에 저장 (전용 컬럼)
+- 계약 #7 완료 조건: `Phase=STANDBY AND ws.restore_op_id 일치`
 
 ### 네이밍 규칙
 
@@ -171,7 +171,7 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 | Operation | Actuator | 완료 조건 |
 |-----------|----------|----------|
 | PROVISIONING | provision() | volume_ready == true |
-| RESTORING | provision() + restore() | volume_ready == true AND restore_marker == archive_key |
+| RESTORING | provision() + restore() | volume_ready == true AND restore_op_id 일치 |
 | ARCHIVING | archive() + delete_volume() | volume_ready == false AND archive_ready == true AND archive_key != NULL |
 | DELETING | delete() + delete_volume() | container_ready == false AND volume_ready == false |
 
@@ -188,6 +188,16 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 
 > archive_op_id는 archive 호출 전에 DB에 먼저 저장. 크래시 후 같은 archive_op_id로 재시도.
 > **Note**: ARCHIVING/CREATE_EMPTY_ARCHIVE operation에서만 생성/사용됨. 다른 operation은 archive_op_id를 사용하지 않음.
+
+### restore_op_id 정책
+
+| 시점 | 상태 | 동작 |
+|------|------|------|
+| 첫 시도 | NULL | 생성 후 DB 저장 |
+| 재시도 | NOT NULL | 기존 값 사용 |
+
+> restore_op_id는 restore 호출 전에 DB에 먼저 저장. 크래시 후 같은 restore_op_id로 재시도.
+> **Note**: RESTORING operation에서만 생성/사용됨.
 
 ### 크래시 복구 (ARCHIVING)
 

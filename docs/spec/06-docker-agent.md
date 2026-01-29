@@ -92,24 +92,33 @@ GET /workspaces
       "workspace_id": "ws-123",
       "container": {
         "running": true,
-        "healthy": true
+        "ready": true
       },
       "volume": {
         "exists": true
       },
       "archive": {
-        "exists": true,
-        "archive_key": "prefix/ws-123/op-456/home.tar.zst"
+        "latest": {
+          "archive_key": "prefix/ws-123/op-456/home.tar.zst",
+          "archive_op_id": "op-456",
+          "archived_at": "2024-01-15T10:30:00Z"
+        }
       },
       "restore": {
-        "restore_op_id": "restore-789",
-        "archive_key": "prefix/ws-123/op-456/home.tar.zst"
+        "last": {
+          "source_archive_key": "prefix/ws-123/op-456/home.tar.zst",
+          "restore_op_id": "restore-789",
+          "restored_at": "2024-01-15T10:35:00Z"
+        }
       },
       "error": {
-        "operation": "archive",
-        "error_code": 1,
-        "error_at": "2024-01-15T10:30:00Z",
-        "archive_op_id": "op-456"
+        "last": {
+          "operation": "ARCHIVING",
+          "code": "1",
+          "error_at": "2024-01-15T10:30:00Z",
+          "archive_op_id": "op-456",
+          "restore_op_id": null
+        }
       }
     }
   ]
@@ -122,21 +131,26 @@ GET /workspaces
 |------|------|------|
 | `container` | object \| null | Container 상태 (없으면 null) |
 | `container.running` | bool | 실행 중 여부 |
-| `container.healthy` | bool | 트래픽 수신 가능 여부 |
+| `container.ready` | bool | 트래픽 수신 가능 여부 (healthcheck 통과) |
 | `volume` | object \| null | Volume 상태 (없으면 null) |
 | `volume.exists` | bool | 존재 여부 |
-| `archive` | object \| null | 최신 Archive 정보 (없으면 null) |
-| `archive.exists` | bool | 존재 여부 |
-| `archive.archive_key` | string | S3 key (`.meta` 있는 최신 archive) |
-| `restore` | object \| null | 마지막 Restore 정보 (없으면 null) |
-| `restore.restore_op_id` | string | Restore 작업 ID |
-| `restore.archive_key` | string | 복원된 archive의 S3 key |
-| `error` | object \| null | 마지막 작업 실패 정보 (없으면 null) |
-| `error.operation` | string | 실패한 작업 종류 (`archive` \| `restore`) |
-| `error.error_code` | int | 종료 코드 |
-| `error.error_at` | string | 실패 시각 (ISO 8601) |
-| `error.archive_op_id` | string \| null | Archive 실패 시 operation ID |
-| `error.restore_op_id` | string \| null | Restore 실패 시 operation ID |
+| `archive` | object \| null | Archive 상태 (없으면 null) |
+| `archive.latest` | object \| null | 최신 완료 Archive 정보 (`.meta` 있는 archive) |
+| `archive.latest.archive_key` | string | S3 key (`{prefix}/{ws_id}/{op_id}/home.tar.zst`) |
+| `archive.latest.archive_op_id` | string | Archive 작업 ID |
+| `archive.latest.archived_at` | string | Archive 완료 시각 (ISO 8601) |
+| `restore` | object \| null | Restore 상태 (없으면 null) |
+| `restore.last` | object \| null | 마지막 완료 Restore 정보 (`.restore_marker` 기반) |
+| `restore.last.source_archive_key` | string | 복원된 archive의 S3 key |
+| `restore.last.restore_op_id` | string | Restore 작업 ID |
+| `restore.last.restored_at` | string | Restore 완료 시각 (ISO 8601) |
+| `error` | object \| null | 작업 실패 정보 (없으면 null) |
+| `error.last` | object \| null | 마지막 작업 실패 정보 |
+| `error.last.operation` | string | 실패한 작업 종류 (`ARCHIVING` \| `RESTORING`) |
+| `error.last.code` | string | 종료 코드 (문자열) |
+| `error.last.error_at` | string | 실패 시각 (ISO 8601) |
+| `error.last.archive_op_id` | string \| null | Archive 실패 시 operation ID |
+| `error.last.restore_op_id` | string \| null | Restore 실패 시 operation ID |
 
 ---
 
@@ -289,7 +303,7 @@ POST /workspaces/{workspace_id}/archive
 | Precondition | Container NOT running, Volume exists |
 | Action | Job 실행 (Volume → S3) (Fire-and-Forget) |
 | Idempotency | Background task로 처리, 항상 `in_progress` 반환 |
-| Completion | Observer에서 archive.exists=true (`.meta` 존재) 확인 |
+| Completion | Observer에서 archive.latest 존재 (`.meta` 존재) 확인 |
 
 **Response**
 
@@ -343,7 +357,7 @@ POST /workspaces/{workspace_id}/restore
 | Precondition | Container NOT running, Archive exists |
 | Action | Volume 생성 (없으면) → Job 실행 (S3 → Volume) (Fire-and-Forget) |
 | Idempotency | Workspace당 1개의 restore job만 허용, 항상 `in_progress` 반환 |
-| Completion | Observer에서 restore.restore_op_id 확인 AND volume.exists=true 확인 |
+| Completion | Observer에서 restore.last.restore_op_id 확인 AND volume.exists=true 확인 |
 
 **Response**
 
@@ -620,8 +634,8 @@ Agent API는 **즉시 응답**할 수 있습니다:
 | Start | `in_progress` | Observer: container.running=true |
 | Stop | `in_progress` | Observer: container=null |
 | Delete | `in_progress` | Observer: container=null AND volume=null |
-| Archive | `in_progress` | Observer: archive.exists=true (`.meta` 존재) |
-| Restore | `in_progress` | Observer: restore 필드 존재 AND volume.exists=true |
+| Archive | `in_progress` | Observer: archive.latest 존재 (`.meta` 존재) |
+| Restore | `in_progress` | Observer: restore.last 존재 AND volume.exists=true |
 
 ### 참고: Legacy Status Values
 

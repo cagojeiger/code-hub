@@ -116,7 +116,7 @@ class AgentClient(WorkspaceRuntime):
             if ws.get("container"):
                 container = ContainerStatus(
                     running=ws["container"].get("running", False),
-                    healthy=ws["container"].get("healthy", False),
+                    healthy=ws["container"].get("ready", False),
                 )
 
             volume = None
@@ -125,17 +125,20 @@ class AgentClient(WorkspaceRuntime):
 
             archive = None
             if ws.get("archive"):
+                latest = ws["archive"].get("latest")
                 archive = ArchiveStatus(
-                    exists=ws["archive"].get("exists", False),
-                    archive_key=ws["archive"].get("archive_key"),
+                    exists=latest is not None,
+                    archive_key=latest["archive_key"] if latest else None,
                 )
 
             restore = None
             if ws.get("restore"):
-                restore = RestoreStatus(
-                    restore_op_id=ws["restore"]["restore_op_id"],
-                    archive_key=ws["restore"]["archive_key"],
-                )
+                last = ws["restore"].get("last")
+                if last:
+                    restore = RestoreStatus(
+                        restore_op_id=last["restore_op_id"],
+                        archive_key=last["source_archive_key"],
+                    )
 
             workspaces.append(
                 WorkspaceState(

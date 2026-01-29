@@ -53,6 +53,7 @@ class RestoreMarkerInfo(BaseModel):
     workspace_id: str
     restore_op_id: str
     archive_key: str
+    restored_at: str | None = None
 
 
 class ErrorMarkerInfo(BaseModel):
@@ -333,6 +334,7 @@ class StorageManager:
                         workspace_id=workspace_id,
                         restore_op_id=data.get("restore_op_id", ""),
                         archive_key=data.get("archive_key", ""),
+                        restored_at=data.get("restored_at"),
                     ))
             except Exception as e:
                 logger.warning(
@@ -469,6 +471,7 @@ class StorageManager:
                             workspace_id=workspace_id,
                             restore_op_id=data.get("restore_op_id", ""),
                             archive_key=data.get("archive_key", ""),
+                            restored_at=data.get("restored_at"),
                         )
                     )
                 except Exception as e:

@@ -80,8 +80,10 @@ def make_workspace(
     archive_key: str | None = None,
     op_started_at: datetime | None = None,
     archive_op_id: str | None = None,
+    restore_op_id: str | None = None,
     deleted_at: datetime | None = None,
     error_count: int = 0,
+    home_ctx: dict | None = None,
 ) -> Workspace:
     """Create test workspace."""
     now = datetime.now(UTC)
@@ -98,12 +100,14 @@ def make_workspace(
         operation=operation.value,
         op_started_at=op_started_at,
         archive_op_id=archive_op_id,
+        restore_op_id=restore_op_id,
         desired_state=desired_state.value,
         archive_key=archive_key,
         error_count=error_count,
         created_at=now,
         updated_at=now,
         deleted_at=deleted_at,
+        home_ctx=home_ctx,
     )
 
 
@@ -197,6 +201,94 @@ class TestCheckCompletion:
         )
         plan_input = PlanInput.from_workspace(ws)
         assert _check_completion(Operation.STOPPING, plan_input) is True
+
+    def test_restoring_complete(self):
+        """RESTORING 완료: volume_ready ∧ archive_key 일치 ∧ restore_op_id 일치."""
+        archive_key = "ws-1/archive-1/home.tar.zst"
+        restore_op_id = "restore-op-123"
+        ws = make_workspace(
+            archive_key=archive_key,
+            restore_op_id=restore_op_id,  # WC가 저장한 restore_op_id (dedicated column)
+            conditions={
+                "volume": {"exists": True, "reason": "VolumeExists", "message": ""},
+                "restore": {
+                    "archive_key": archive_key,  # S3에서 Observer가 읽은 값
+                    "restore_op_id": restore_op_id,  # S3에서 Observer가 읽은 값
+                },
+            },
+        )
+        plan_input = PlanInput.from_workspace(ws)
+        assert _check_completion(Operation.RESTORING, plan_input) is True
+
+    def test_restoring_incomplete_without_volume(self):
+        """RESTORING 미완료: volume_ready=False."""
+        archive_key = "ws-1/archive-1/home.tar.zst"
+        restore_op_id = "restore-op-123"
+        ws = make_workspace(
+            archive_key=archive_key,
+            restore_op_id=restore_op_id,  # dedicated column
+            conditions={
+                "restore": {
+                    "archive_key": archive_key,
+                    "restore_op_id": restore_op_id,
+                },
+            },
+        )
+        plan_input = PlanInput.from_workspace(ws)
+        assert _check_completion(Operation.RESTORING, plan_input) is False
+
+    def test_restoring_incomplete_with_wrong_archive_key(self):
+        """RESTORING 미완료: archive_key 불일치."""
+        restore_op_id = "restore-op-123"
+        ws = make_workspace(
+            archive_key="ws-1/archive-1/home.tar.zst",  # 예상 archive_key
+            restore_op_id=restore_op_id,  # dedicated column
+            conditions={
+                "volume": {"exists": True, "reason": "VolumeExists", "message": ""},
+                "restore": {
+                    "archive_key": "ws-1/archive-OLD/home.tar.zst",  # 다른 archive_key
+                    "restore_op_id": restore_op_id,
+                },
+            },
+        )
+        plan_input = PlanInput.from_workspace(ws)
+        assert _check_completion(Operation.RESTORING, plan_input) is False
+
+    def test_restoring_incomplete_with_wrong_restore_op_id(self):
+        """RESTORING 미완료: restore_op_id 불일치 (Race Condition 방지)."""
+        archive_key = "ws-1/archive-1/home.tar.zst"
+        ws = make_workspace(
+            archive_key=archive_key,
+            restore_op_id="restore-op-NEW",  # WC가 저장한 새 restore_op_id (dedicated column)
+            conditions={
+                "volume": {"exists": True, "reason": "VolumeExists", "message": ""},
+                "restore": {
+                    "archive_key": archive_key,
+                    "restore_op_id": "restore-op-OLD",  # S3에 남아있는 이전 restore_op_id
+                },
+            },
+        )
+        plan_input = PlanInput.from_workspace(ws)
+        # archive_key는 일치하지만 restore_op_id가 불일치하므로 완료되지 않음
+        assert _check_completion(Operation.RESTORING, plan_input) is False
+
+    def test_restoring_incomplete_without_restore_op_id(self):
+        """RESTORING 미완료: restore_op_id가 없는 경우."""
+        archive_key = "ws-1/archive-1/home.tar.zst"
+        ws = make_workspace(
+            archive_key=archive_key,
+            restore_op_id=None,  # restore_op_id 없음
+            conditions={
+                "volume": {"exists": True, "reason": "VolumeExists", "message": ""},
+                "restore": {
+                    "archive_key": archive_key,
+                    "restore_op_id": "restore-op-123",
+                },
+            },
+        )
+        plan_input = PlanInput.from_workspace(ws)
+        # restore_op_id가 없으므로 비교 불가 → 완료되지 않음
+        assert _check_completion(Operation.RESTORING, plan_input) is False
 
     def test_archiving_complete(self):
         """ARCHIVING 완료: !volume_ready ∧ archive_ready ∧ archive_op_id in archive_key."""
@@ -522,6 +614,7 @@ class TestCasUpdate:
             operation=Operation.STARTING,
             op_started_at=datetime.now(UTC),
             archive_op_id=None,  # STARTING doesn't use archive_op_id
+            restore_op_id=None,  # STARTING doesn't use restore_op_id
             archive_key=None,
             error_count=0,
             error_reason=None,
@@ -547,6 +640,7 @@ class TestCasUpdate:
             operation=Operation.NONE,
             op_started_at=None,
             archive_op_id=None,
+            restore_op_id=None,
             archive_key=None,
             error_count=0,
             error_reason=None,
@@ -571,6 +665,7 @@ class TestCasUpdate:
             operation=Operation.NONE,
             op_started_at=None,
             archive_op_id=None,
+            restore_op_id=None,
             archive_key=None,
             error_count=0,
             error_reason=None,
@@ -712,3 +807,54 @@ class TestTickLogging:
         heartbeat_logs = [r for r in caplog.records if r.levelno == logging.INFO]
         assert len(heartbeat_logs) == 1
         assert "Heartbeat" in heartbeat_logs[0].message
+
+
+class TestPersist:
+    """_persist() 테스트."""
+
+    @pytest.fixture
+    def wc(
+        self,
+        mock_conn: AsyncMock,
+        mock_leader: AsyncMock,
+        mock_subscriber: AsyncMock,
+        mock_runtime: AsyncMock,
+    ) -> WorkspaceController:
+        return WorkspaceController(mock_conn, mock_leader, mock_subscriber, mock_runtime)
+
+    @pytest.mark.asyncio
+    async def test_restore_op_id_fallback_uses_action_value(
+        self,
+        wc: WorkspaceController,
+        mock_conn: AsyncMock,
+    ):
+        """진행 중인 RESTORING에서 ws.restore_op_id가 None이면 action.restore_op_id 사용."""
+        # Given: ws.restore_op_id is None (not yet persisted)
+        ws = make_workspace(
+            phase=Phase.ARCHIVED,
+            operation=Operation.RESTORING,  # In progress
+            restore_op_id=None,  # ← KEY: Not yet persisted
+            op_started_at=datetime.now(UTC),
+            archive_key="ws-1/archive-1/home.tar.zst",
+        )
+
+        # action has restore_op_id from _execute()
+        action = PlanAction(
+            operation=Operation.RESTORING,
+            phase=Phase.ARCHIVED,
+            restore_op_id="action-restore-op-123",  # ← Generated by _execute()
+        )
+
+        # Mock CAS success
+        mock_result = MagicMock()
+        mock_result.rowcount = 1
+        mock_conn.execute.return_value = mock_result
+
+        # When
+        await wc._persist(ws, action)
+
+        # Then: verify _cas_update was called with action.restore_op_id
+        mock_conn.execute.assert_called_once()
+        # The restore_op_id should be "action-restore-op-123" (fallback from action)
+        call_args = mock_conn.execute.call_args
+        assert call_args is not None
