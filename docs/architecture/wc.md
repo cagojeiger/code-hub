@@ -17,7 +17,6 @@ WC는 워크스페이스의 상태를 desired_state로 수렴시키는 컨트롤
 | **Controller** | phase, desired_state | operation 실행 |
 
 > **Observer Coordinator**: [wc-observer.md](./wc-observer.md) (리소스 관측 → DB 저장)
-> **Judge 상세**: [wc-judge.md](./wc-judge.md)
 
 ---
 
@@ -59,22 +58,86 @@ flowchart TB
 
 ## Judge (판정)
 
-> **상세**: [wc-judge.md](./wc-judge.md)
+Judge는 conditions를 읽어 phase를 계산하는 **순수 함수**입니다.
 
-### 역할
-
-| 입력 | 출력 |
-|------|------|
-| conditions, deleted_at, archive_key | phase, policy.healthy |
-
-### 핵심 로직
-
-| 단계 | 함수 | 역할 |
-|------|------|------|
-| 1 | check_invariants() | 불변식 위반 → policy.healthy 설정 |
-| 2 | calculate_phase() | conditions → phase 계산 |
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         Judge                                │
+├─────────────────────────────────────────────────────────────┤
+│  [외부 입력]                    [내부 계산]                   │
+│  ────────────                  ────────────                  │
+│  • container_ready (Observer)   • policy.healthy ◀── 계산    │
+│  • volume_ready (Observer)      • phase ◀── 계산             │
+│  • archive_ready (Observer)                                  │
+│  • deleted_at (API)                                          │
+└─────────────────────────────────────────────────────────────┘
+```
 
 > **순수 함수**: 외부 I/O 없음, 같은 입력 → 같은 출력
+
+### 판단 순서 (3단계)
+
+Judge는 다음 순서로 phase를 결정합니다. **순서가 우선순위**입니다.
+
+| 순서 | 이름 | 데이터 | 출처 | 역할 |
+|------|------|--------|------|------|
+| 1 | **사용자 의도** | deleted_at | API (DB) | 삭제 요청 (최우선) |
+| 2 | **시스템 판단** | policy.healthy | Judge 계산 (tick 내) | 불변식 준수 여부 |
+| 3 | **현실** | container_ready, volume_ready, archive_ready | Observer (DB) | 관측된 리소스 상태 |
+
+> **핵심**: 사용자 의도(삭제) > 시스템 안전성(불변식) > 현재 상태
+
+### 불변식 위반 조건 (check_invariants)
+
+| 조건 | reason | 설명 |
+|------|--------|------|
+| container_ready ∧ !volume_ready | ContainerWithoutVolume | 계약 #6 위반 |
+
+> **Spec 참조**: [03-schema.md#policy.healthy=false 조건](../spec/03-schema.md#policyhealthyfalse-조건)
+
+### Phase 결정 테이블
+
+| 순서 | 체크 | 조건 | 결과 Phase |
+|------|------|------|------------|
+| 1 | deleted_at | deleted_at ∧ resources | DELETING |
+| 1 | deleted_at | deleted_at ∧ !resources | DELETED |
+| 2 | healthy | !healthy | ERROR |
+| 3 | resources | container ∧ volume | RUNNING |
+| 3 | resources | volume | STANDBY |
+| 3 | resources | archive | ARCHIVED |
+| 4 | default | - | PENDING |
+
+> **resources**: `container_ready ∨ volume_ready ∨ archive_ready`
+
+### Phase 결정 흐름도
+
+```
+deleted_at? ──Yes──▶ resources? ──Yes──▶ DELETING
+    │                    │
+    │                   No
+    │                    ▼
+    │               DELETED
+    │
+   No
+    ▼
+healthy? ──No──▶ ERROR
+    │
+   Yes
+    ▼
+container ∧ volume? ──Yes──▶ RUNNING
+    │
+   No
+    ▼
+volume? ──Yes──▶ STANDBY
+    │
+   No
+    ▼
+archive? ──Yes──▶ ARCHIVED
+    │
+   No
+    ▼
+PENDING
+```
 
 ---
 
@@ -95,27 +158,49 @@ flowchart TB
 phase와 desired_state의 차이를 해소하기 위한 operation을 결정합니다.
 
 ```mermaid
-flowchart TD
-    START["Plan"]
-    OP{"operation != NONE?"}
-    INPROG["진행 중 처리"]
-    ERR{"phase == ERROR?"}
-    DEL{"desired == DELETED?"}
-    DELETING["DELETING 시작"]
-    WAIT["대기 (수동 복구)"]
-    MATCH{"phase == desired?"}
-    DONE["완료 (no-op)"]
-    CONVERGE["수렴 (operation 선택)"]
+flowchart TB
+    START["plan(input)"]
+    JUDGE["judge() 호출<br/>→ JudgeOutput"]
 
-    START --> OP
-    OP -->|Yes| INPROG
-    OP -->|No| ERR
-    ERR -->|Yes| DEL
-    DEL -->|Yes| DELETING
-    DEL -->|No| WAIT
-    ERR -->|No| MATCH
-    MATCH -->|Yes| DONE
-    MATCH -->|No| CONVERGE
+    subgraph Case1["Case 1: 진행 중"]
+        OP{"operation != NONE?"}
+        COMP{"완료 조건?"}
+        TIMEOUT{"timeout?"}
+        COMPLETE["operation=NONE<br/>complete=True"]
+        ERR_TIMEOUT["phase=ERROR<br/>reason=TIMEOUT"]
+        RETRY["operation 유지<br/>archive_op_id 유지"]
+    end
+
+    subgraph Case2["Case 2: ERROR"]
+        IS_ERR{"phase == ERROR?"}
+        WANT_DEL{"desired == DELETED?"}
+        DELETING["operation=DELETING"]
+        WAIT["operation=NONE<br/>phase=ERROR"]
+    end
+
+    subgraph Case3["Case 3: 수렴됨"]
+        CONV{"phase == target?"}
+        NOOP["operation=NONE"]
+    end
+
+    subgraph Case4["Case 4: operation 선택"]
+        SELECT["_select_operation()"]
+        NEW_OP["operation 시작<br/>ARCHIVING/CREATE_EMPTY만<br/>archive_op_id=uuid4()"]
+    end
+
+    START --> JUDGE --> OP
+    OP -->|Yes| COMP
+    COMP -->|Yes| COMPLETE
+    COMP -->|No| TIMEOUT
+    TIMEOUT -->|Yes| ERR_TIMEOUT
+    TIMEOUT -->|No| RETRY
+    OP -->|No| IS_ERR
+    IS_ERR -->|Yes| WANT_DEL
+    WANT_DEL -->|Yes| DELETING
+    WANT_DEL -->|No| WAIT
+    IS_ERR -->|No| CONV
+    CONV -->|Yes| NOOP
+    CONV -->|No| SELECT --> NEW_OP
 ```
 
 #### 진행 중 처리
@@ -166,6 +251,27 @@ Plan에서 결정된 operation에 따라 Actuator를 호출합니다.
 
 > **다단계 Operation**: ARCHIVING, DELETING은 2단계. 각 단계 멱등, 순서 보장 (계약 #8)
 
+### archive_op_id 관리
+
+archive_op_id는 ARCHIVING/CREATE_EMPTY_ARCHIVE에서만 사용됩니다.
+
+| Operation | plan() 생성 | _execute() 사용 | 용도 |
+|-----------|-------------|----------------|------|
+| PROVISIONING | - | - | - |
+| RESTORING | - | - (archive_key 사용) | - |
+| STARTING | - | - | - |
+| STOPPING | - | - | - |
+| **ARCHIVING** | **uuid4()** | **S3 경로** | 멱등성 |
+| **CREATE_EMPTY** | **uuid4()** | **S3 경로** | 멱등성 |
+| DELETING | - | - | - |
+
+| 시점 | archive_op_id 값 | 이유 |
+|------|-----------------|------|
+| ARCHIVING/CREATE_EMPTY 시작 | `uuid4()` | 새 S3 경로 |
+| 진행 중 (재시도) | 기존 값 | 멱등성 |
+| **완료 시** | **기존 값** | **GC 보호** |
+| 다음 ARCHIVING | `uuid4()` | 새 S3 경로 |
+
 ### Persist (저장)
 
 모든 변경사항을 **단일 트랜잭션**으로 DB에 저장합니다.
@@ -208,6 +314,15 @@ RETURNING id;
 ---
 
 ## ERROR 처리
+
+### ERROR 발생 경로
+
+ERROR는 **두 경로**에서 발생합니다.
+
+| 경로 | 주체 | 트리거 | 설정 필드 |
+|------|------|--------|----------|
+| 경로 1 | **Judge** | 불변식 위반 | policy.healthy.reason |
+| 경로 2 | **Control** | 작업 실패 (Timeout, ActionFailed 등) | error_reason 컬럼 |
 
 ### ERROR 전환
 
@@ -292,10 +407,36 @@ WC가 에러 감지 시 단일 트랜잭션으로 원자적 전환:
 
 ---
 
+## 테스트 케이스
+
+### 기본 상태 계산
+
+| ID | conditions | deleted_at | 기대 phase |
+|----|------------|------------|-----------|
+| JDG-001 | {c:F, v:F, a:F} | N | PENDING |
+| JDG-002 | {c:F, v:F, a:T} | N | ARCHIVED |
+| JDG-003 | {c:F, v:T, a:F} | N | STANDBY |
+| JDG-004 | {c:T, v:T, a:F} | N | RUNNING |
+
+### 불변식 위반
+
+| ID | conditions | 기대 결과 |
+|----|------------|----------|
+| JDG-005 | {c:T, v:F, a:F} | ERROR (ContainerWithoutVolume) |
+
+### 삭제 처리
+
+| ID | conditions | deleted_at | 기대 phase |
+|----|------------|------------|-----------|
+| JDG-006 | {c:T, v:T} | Y | DELETING |
+| JDG-007 | {c:F, v:F} | Y | DELETED |
+
+---
+
 ## 참조
 
 - [wc-observer.md](./wc-observer.md) - Observer Coordinator 설계
-- [wc-judge.md](./wc-judge.md) - Judge 로직 상세
 - [00-contracts.md](../spec/00-contracts.md) - 핵심 계약
 - [02-states.md](../spec/02-states.md) - 상태 정의
 - [04-control-plane.md](../spec/04-control-plane.md) - WC 스펙
+- [lifecycle.md](./lifecycle.md) - TTL/GC (리소스 생명주기)
