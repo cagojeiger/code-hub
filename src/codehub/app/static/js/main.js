@@ -11,6 +11,7 @@ import { renderDetailPanel, closeDetailPanel, switchMemoTab, saveMemo, enableInl
 import {
   openCreateModal, closeCreateModal, handleCreateSubmit,
   openDeleteModal, closeDeleteModal, handleDeleteConfirmInput, handleConfirmDelete,
+  openSaveTemplateModal, closeSaveTemplateModal, handleSaveTemplateSubmit,
   openShortcutsModal, closeShortcutsModal, closeAllModals
 } from './modals.js';
 import { createKeyboardHandler, openWorkspace, handleStart, handlePause, handleArchive, selectWorkspace } from './keyboard.js';
@@ -191,6 +192,9 @@ function setupEventDelegation() {
         case 'archive':
           handleArchive(id);
           break;
+        case 'save-as-template':
+          openSaveTemplateModal(id);
+          break;
         case 'delete':
           openDeleteModal(id, name);
           break;
@@ -229,7 +233,7 @@ function setupEventDelegation() {
   });
 
   // Close modals on backdrop click
-  ['create-modal', 'delete-modal', 'shortcuts-modal'].forEach(modalId => {
+  ['create-modal', 'delete-modal', 'save-template-modal', 'shortcuts-modal'].forEach(modalId => {
     document.getElementById(modalId).addEventListener('click', (e) => {
       if (e.target.id === modalId) {
         closeAllModals();
@@ -294,6 +298,11 @@ async function init() {
   document.getElementById('cancel-delete-btn').addEventListener('click', closeDeleteModal);
   document.getElementById('delete-confirm-input').addEventListener('input', handleDeleteConfirmInput);
   document.getElementById('confirm-delete-btn').addEventListener('click', () => handleConfirmDelete(loadWorkspaces));
+
+  // Save template modal
+  document.getElementById('close-save-template-modal-btn').addEventListener('click', closeSaveTemplateModal);
+  document.getElementById('cancel-save-template-btn').addEventListener('click', closeSaveTemplateModal);
+  document.getElementById('save-template-form').addEventListener('submit', (e) => handleSaveTemplateSubmit(e, loadWorkspaces));
 
   // Shortcuts modal
   document.getElementById('close-shortcuts-modal-btn').addEventListener('click', closeShortcutsModal);

@@ -4,7 +4,7 @@
  */
 
 import { state } from './state.js';
-import { createWorkspace, deleteWorkspace } from './api.js';
+import { createWorkspace, deleteWorkspace, saveAsTemplate } from './api.js';
 import { showToast } from './utils.js';
 
 // =============================================================================
@@ -138,12 +138,79 @@ export function closeShortcutsModal() {
   hideModal('shortcuts-modal');
 }
 
+// =============================================================================
+// Save Template Modal
+// =============================================================================
+
+/**
+ * Open the save template modal
+ */
+export function openSaveTemplateModal(workspaceId) {
+  document.getElementById('template-workspace-id').value = workspaceId;
+  showModal('save-template-modal');
+  document.getElementById('template-name').focus();
+}
+
+/**
+ * Close the save template modal
+ */
+export function closeSaveTemplateModal() {
+  hideModal('save-template-modal');
+  document.getElementById('save-template-form').reset();
+}
+
+/**
+ * Handle save template form submission
+ */
+export async function handleSaveTemplateSubmit(e, loadWorkspacesCallback) {
+  e.preventDefault();
+
+  const workspaceId = document.getElementById('template-workspace-id').value;
+  const name = document.getElementById('template-name').value.trim();
+  const description = document.getElementById('template-description').value.trim();
+  const tagsInput = document.getElementById('template-tags').value.trim();
+  const tags = tagsInput ? tagsInput.split(',').map(t => t.trim()).filter(t => t) : [];
+
+  try {
+    await saveAsTemplate(workspaceId, name, description, tags);
+    showToast('Template saved successfully', 'success');
+    closeSaveTemplateModal();
+  } catch (error) {
+    if (error.message !== 'Session expired') {
+      showToast(error.message, 'error');
+    }
+  }
+}
+
+// =============================================================================
+// Shortcuts Modal
+// =============================================================================
+
+/**
+ * Open the keyboard shortcuts modal
+ */
+export function openShortcutsModal() {
+  showModal('shortcuts-modal');
+}
+
+/**
+ * Close the keyboard shortcuts modal
+ */
+export function closeShortcutsModal() {
+  hideModal('shortcuts-modal');
+}
+
+// =============================================================================
+// Generic Modal Functions
+// =============================================================================
+
 /**
  * Close all open modals
  */
 export function closeAllModals() {
   closeCreateModal();
   closeDeleteModal();
+  closeSaveTemplateModal();
   closeShortcutsModal();
 }
 
@@ -153,5 +220,6 @@ export function closeAllModals() {
 export function isModalOpen() {
   return !document.getElementById('create-modal').classList.contains('hidden') ||
          !document.getElementById('delete-modal').classList.contains('hidden') ||
+         !document.getElementById('save-template-modal').classList.contains('hidden') ||
          !document.getElementById('shortcuts-modal').classList.contains('hidden');
 }
