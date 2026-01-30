@@ -86,6 +86,14 @@ export function renderDetailPanel(workspace) {
       </button>`;
   }
 
+  if (config.canSaveAsTemplate) {
+    actionsHtml += `
+      <button data-action="save-as-template" data-id="${workspace.id}"
+              class="px-4 py-2 bg-vscode-accent hover:bg-blue-600 text-white rounded transition-colors">
+        Save as Template
+      </button>`;
+  }
+
   if (config.canDelete) {
     actionsHtml += `
       <button data-action="delete" data-id="${workspace.id}" data-name="${escapeHtml(workspace.name)}"

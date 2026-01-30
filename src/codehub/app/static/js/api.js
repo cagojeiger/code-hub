@@ -142,3 +142,24 @@ export async function getWorkspace(id) {
   }
   return response.json();
 }
+
+/**
+ * Save workspace as template
+ */
+export async function saveAsTemplate(workspaceId, name, description, tags) {
+  const response = await fetchWithAuth(`${API}/templates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      name,
+      description: description || null,
+      tags: tags || [],
+    }),
+  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to save template');
+  }
+  return response.json();
+}
