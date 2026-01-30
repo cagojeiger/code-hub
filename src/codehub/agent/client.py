@@ -116,7 +116,7 @@ class AgentClient(WorkspaceRuntime):
             if ws.get("container"):
                 container = ContainerStatus(
                     running=ws["container"].get("running", False),
-                    healthy=ws["container"].get("ready", False),
+                    healthy=ws["container"].get("healthy", False),
                 )
 
             volume = None
