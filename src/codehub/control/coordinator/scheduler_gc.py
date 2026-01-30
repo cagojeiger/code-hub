@@ -122,7 +122,7 @@ class GCRunner:
 
         Returns:
             (archive_keys, protected_workspaces) or None on error
-            - archive_keys: archive_key column values (RESTORING target protection)
+            - archive_keys: archive_key column values (RESTORING target + template protection)
             - protected_workspaces: (ws_id, archive_op_id) tuples (ARCHIVING crash recovery)
         """
         try:
@@ -134,9 +134,21 @@ class GCRunner:
                     WHERE archive_key IS NOT NULL AND deleted_at IS NULL
                 """)
             )
-            archive_keys = [row[0] for row in result1.fetchall()]
+            workspace_archive_keys = [row[0] for row in result1.fetchall()]
 
-            # 2. (ws_id, archive_op_id) 조회 (ARCHIVING crash 대비)
+            # 2. template archive_key 조회 (template 보호)
+            result_templates = await self._conn.execute(
+                text("""
+                    SELECT DISTINCT archive_key
+                    FROM templates
+                    WHERE archive_key IS NOT NULL AND deleted_at IS NULL
+                """)
+            )
+            template_archive_keys = [row[0] for row in result_templates.fetchall()]
+
+            archive_keys = list(set(workspace_archive_keys + template_archive_keys))
+
+            # 3. (ws_id, archive_op_id) 조회 (ARCHIVING crash 대비)
             result2 = await self._conn.execute(
                 text("""
                     SELECT DISTINCT id::text, archive_op_id
@@ -147,8 +159,10 @@ class GCRunner:
             protected_workspaces = [(row[0], row[1]) for row in result2.fetchall()]
 
             logger.debug(
-                "Found protected archives: %d keys, %d workspaces",
+                "Found protected archives: %d keys (%d workspace, %d template), %d workspaces",
                 len(archive_keys),
+                len(workspace_archive_keys),
+                len(template_archive_keys),
                 len(protected_workspaces),
             )
             return archive_keys, protected_workspaces

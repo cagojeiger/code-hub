@@ -15,7 +15,12 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from codehub import __version__
-from codehub.app.api.v1 import auth_router, events_router, workspaces_router
+from codehub.app.api.v1 import (
+    auth_router,
+    events_router,
+    templates_router,
+    workspaces_router,
+)
 from codehub.app.config import get_settings
 from codehub.app.logging import get_trace_id, setup_logging
 from codehub.app.middleware import LoggingMiddleware
@@ -161,6 +166,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(events_router, prefix="/api/v1")
 app.include_router(workspaces_router, prefix="/api/v1")
+app.include_router(templates_router, prefix="/api/v1")
 app.include_router(proxy_router)
 
 

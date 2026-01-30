@@ -27,6 +27,7 @@ class CreateWorkspaceRequest(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=500)
     image_ref: str = Field(default=_default_image, max_length=512)
+    template_id: str | None = Field(default=None)
 
 
 class UpdateWorkspaceRequest(BaseModel):
@@ -95,6 +96,7 @@ async def create_workspace(
         name=request.name,
         description=request.description,
         image_ref=request.image_ref,
+        template_id=request.template_id,
     )
     workspace = await workspace_service.request_start(db, workspace.id, user_id)
 

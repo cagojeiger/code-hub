@@ -5,12 +5,14 @@ All models follow the schema defined in spec/03-schema.md.
 """
 
 from codehub.core.models.auth import Session, User, generate_ulid, utc_now
+from codehub.core.models.template import Template
 from codehub.core.models.workspace import Workspace
 
 __all__ = [
     "User",
     "Session",
     "Workspace",
+    "Template",
     "generate_ulid",
     "utc_now",
 ]

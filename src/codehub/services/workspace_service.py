@@ -13,7 +13,7 @@ from codehub.core.errors import (
     RunningLimitExceededError,
     WorkspaceNotFoundError,
 )
-from codehub.core.models import Workspace
+from codehub.core.models import Template, Workspace
 
 _settings = get_settings()
 
@@ -24,6 +24,7 @@ async def create_workspace(
     name: str,
     description: str | None = None,
     image_ref: str | None = None,
+    template_id: str | None = None,
 ) -> Workspace:
     """Create a new workspace.
 
@@ -33,32 +34,61 @@ async def create_workspace(
         name: Workspace name
         description: Optional description
         image_ref: Container image reference
+        template_id: Optional template ID to restore from
 
     Returns:
         Created workspace
     """
     workspace_id = str(uuid4())
     now = datetime.now(UTC)
-
-    # Use default image if not provided
-    final_image_ref = image_ref or _settings.runtime.default_image
     resource_prefix = _settings.runtime.resource_prefix
+
+    if template_id:
+        stmt = select(Template).where(
+            Template.id == template_id,
+            Template.deleted_at.is_(None),
+        )
+        result = await db.execute(stmt)
+        template = result.scalar_one_or_none()
+
+        if template is None:
+            raise WorkspaceNotFoundError()
+
+        if template.owner_user_id != user_id:
+            raise ForbiddenError()
+
+        final_image_ref = template.image_ref
+        storage_backend = template.storage_backend
+        archive_key = template.archive_key
+        restore_op_id = str(uuid4())
+        initial_phase = Phase.PENDING
+        initial_desired_state = DesiredState.RUNNING
+    else:
+        final_image_ref = image_ref or _settings.runtime.default_image
+        storage_backend = "minio"
+        archive_key = None
+        restore_op_id = None
+        initial_phase = Phase.PENDING
+        initial_desired_state = DesiredState.RUNNING
 
     workspace = Workspace(
         id=workspace_id,
         owner_user_id=user_id,
+        template_id=template_id,
         name=name,
         description=description,
         image_ref=final_image_ref,
         instance_backend="local-docker",
-        storage_backend="minio",
+        storage_backend=storage_backend,
         home_store_key=f"{resource_prefix}{workspace_id}-home",
-        phase=Phase.PENDING.value,
+        archive_key=archive_key,
+        restore_op_id=restore_op_id,
+        phase=initial_phase.value,
         operation=Operation.NONE.value,
-        desired_state=DesiredState.RUNNING.value,
+        desired_state=initial_desired_state.value,
         created_at=now,
         updated_at=now,
-        last_access_at=now,  # TTL 규칙 적용 위해 생성 시점 설정
+        last_access_at=now,
     )
 
     db.add(workspace)

@@ -22,6 +22,7 @@ class Workspace(SQLModel, table=True):
 
     id: str = Field(primary_key=True)
     owner_user_id: str = Field(foreign_key="users.id", index=True)
+    template_id: str | None = Field(default=None, foreign_key="templates.id")
 
     name: str = Field(max_length=255)
     description: str | None = Field(default=None, max_length=500)
