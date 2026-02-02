@@ -115,7 +115,7 @@ class TestAgentClient:
             "workspaces": [
                 {
                     "workspace_id": "ws1",
-                    "container": {"running": True, "ready": True},
+                    "container": {"running": True, "healthy": True},
                     "volume": {"exists": True},
                     "archive": None,
                 },
