@@ -26,9 +26,19 @@ class ResourceNaming:
         return f"{self._prefix}{workspace_id}-home"
 
     def archive_s3_key(self, workspace_id: str, archive_op_id: str) -> str:
+        """Generate S3 key for workspace archive.
+        
+        Args:
+            archive_op_id: Idempotency token (UUID) for S3 path uniqueness, not an operation tracking ID
+        """
         return f"{self._prefix}{workspace_id}/{archive_op_id}/{self._archive_suffix}"
 
     def archive_s3_url(self, workspace_id: str, archive_op_id: str) -> str:
+        """Generate S3 URL for workspace archive.
+        
+        Args:
+            archive_op_id: Idempotency token (UUID) for S3 path uniqueness, not an operation tracking ID
+        """
         key = self.archive_s3_key(workspace_id, archive_op_id)
         return f"s3://{self._s3_bucket}/{key}"
 

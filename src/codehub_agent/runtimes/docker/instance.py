@@ -45,6 +45,7 @@ class ContainerInfo(BaseModel):
 
     workspace_id: str
     running: bool
+    healthy: bool
     reason: str
     message: str
 
@@ -83,11 +84,13 @@ class InstanceManager:
             workspace_id = name[len(prefix) :]
             state = container.State
             running = state == "running"
+            healthy = running and "(healthy)" in container.Status
 
             results.append(
                 ContainerInfo(
                     workspace_id=workspace_id,
                     running=running,
+                    healthy=healthy,
                     reason="Running" if running else state.capitalize(),
                     message=container.Status,
                 )

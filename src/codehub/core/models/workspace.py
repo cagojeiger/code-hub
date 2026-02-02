@@ -42,8 +42,8 @@ class Workspace(SQLModel, table=True):
     op_started_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True))
     )
-    archive_op_id: str | None = None  # UUID for archiving idempotency (S3 path)
-    restore_op_id: str | None = None  # UUID for restoring idempotency (S3 marker)
+    archive_op_id: str | None = None  # Idempotency token (UUID) for S3 path uniqueness: {ws_id}/{archive_op_id}/home.tar.zst
+    restore_op_id: str | None = None  # Idempotency token (UUID) for restore marker verification: prevents race conditions
     desired_state: DesiredState = Field(default=DesiredState.RUNNING, sa_type=String)
     archive_key: str | None = Field(default=None, max_length=512)
     observed_at: datetime | None = Field(

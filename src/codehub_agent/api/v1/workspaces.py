@@ -89,7 +89,7 @@ async def observe(
             container=(
                 ContainerStatus(
                     running=container_info.running,
-                    ready=container_info.running,
+                    healthy=container_info.healthy,
                 )
                 if container_info
                 else None

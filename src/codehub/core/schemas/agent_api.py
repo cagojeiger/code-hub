@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, RootModel
 
 class ContainerStatus(BaseModel):
     running: bool
-    ready: bool
+    healthy: bool
 
 
 class VolumeStatus(BaseModel):
