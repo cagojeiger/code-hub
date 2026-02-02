@@ -342,6 +342,28 @@
             class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent resize-none"
             placeholder="Optional notes..."></textarea>
         </div>
+        <div>
+          <label class="block text-sm mb-2">Clone from archived</label>
+          <div id="source-workspace-picker" class="relative">
+            <input type="hidden" id="source-workspace" name="source_workspace_id" value="">
+            <button type="button" id="source-workspace-btn"
+              class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white text-left flex items-center justify-between focus:outline-none focus:border-vscode-accent">
+              <span id="source-workspace-label">Start fresh (empty workspace)</span>
+              <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+              </svg>
+            </button>
+            <div id="source-workspace-dropdown" class="hidden absolute z-50 w-full mt-1 bg-vscode-sidebar border border-vscode-border rounded shadow-lg max-h-64 overflow-hidden">
+              <div class="p-2 border-b border-vscode-border">
+                <input type="text" id="source-workspace-search" placeholder="Search archived workspaces..."
+                  class="w-full bg-vscode-bg border border-vscode-border rounded px-2 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-vscode-accent">
+              </div>
+              <div id="source-workspace-options" class="overflow-y-auto max-h-48">
+              </div>
+            </div>
+          </div>
+          <p class="text-xs text-gray-500 mt-1">Restore data from an archived workspace</p>
+        </div>
         <div class="flex justify-end gap-3 pt-4">
           <button type="button" id="cancel-create-btn"
             class="px-4 py-2 border border-vscode-border rounded hover:bg-vscode-hover transition-colors">

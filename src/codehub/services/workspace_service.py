@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from codehub.app.config import get_settings
 from codehub.core.domain import DesiredState, Operation, Phase
 from codehub.core.errors import (
+    BadRequestError,
     ForbiddenError,
     RunningLimitExceededError,
     WorkspaceNotFoundError,
@@ -24,25 +25,21 @@ async def create_workspace(
     name: str,
     description: str | None = None,
     image_ref: str | None = None,
+    source_workspace_id: str | None = None,
 ) -> Workspace:
-    """Create a new workspace.
-
-    Args:
-        db: Database session
-        user_id: Owner user ID
-        name: Workspace name
-        description: Optional description
-        image_ref: Container image reference
-
-    Returns:
-        Created workspace
-    """
     workspace_id = str(uuid4())
     now = datetime.now(UTC)
 
-    # Use default image if not provided
     final_image_ref = image_ref or _settings.runtime.default_image
     resource_prefix = _settings.runtime.resource_prefix
+
+    archive_key = None
+    initial_phase = Phase.PENDING.value
+
+    if source_workspace_id:
+        source = await _get_source_workspace(db, source_workspace_id, user_id)
+        archive_key = source.archive_key
+        initial_phase = Phase.ARCHIVED.value
 
     workspace = Workspace(
         id=workspace_id,
@@ -53,12 +50,13 @@ async def create_workspace(
         instance_backend="local-docker",
         storage_backend="minio",
         home_store_key=f"{resource_prefix}{workspace_id}-home",
-        phase=Phase.PENDING.value,
+        phase=initial_phase,
         operation=Operation.NONE.value,
         desired_state=DesiredState.RUNNING.value,
+        archive_key=archive_key,
         created_at=now,
         updated_at=now,
-        last_access_at=now,  # TTL 규칙 적용 위해 생성 시점 설정
+        last_access_at=now,
     )
 
     db.add(workspace)
@@ -66,6 +64,33 @@ async def create_workspace(
     await db.refresh(workspace)
 
     return workspace
+
+
+async def _get_source_workspace(
+    db: AsyncSession,
+    source_workspace_id: str,
+    user_id: str,
+) -> Workspace:
+    stmt = select(Workspace).where(
+        Workspace.id == source_workspace_id,
+        Workspace.deleted_at.is_(None),
+    )
+    result = await db.execute(stmt)
+    source = result.scalar_one_or_none()
+
+    if source is None:
+        raise WorkspaceNotFoundError("Source workspace not found")
+
+    if source.owner_user_id != user_id:
+        raise ForbiddenError("Cannot use another user's workspace as source")
+
+    if source.phase != Phase.ARCHIVED.value:
+        raise BadRequestError("Source workspace must be archived")
+
+    if not source.archive_key:
+        raise BadRequestError("Source workspace has no archive")
+
+    return source
 
 
 async def get_workspace(
