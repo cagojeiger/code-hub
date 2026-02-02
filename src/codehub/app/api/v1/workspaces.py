@@ -22,11 +22,10 @@ _default_image = _settings.runtime.default_image
 
 
 class CreateWorkspaceRequest(BaseModel):
-    """Create workspace request."""
-
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=500)
     image_ref: str = Field(default=_default_image, max_length=512)
+    source_workspace_id: str | None = Field(default=None, max_length=36)
 
 
 class UpdateWorkspaceRequest(BaseModel):
@@ -83,10 +82,6 @@ async def create_workspace(
     db: DbSession,
     session: Annotated[str | None, Cookie(alias="session")] = None,
 ) -> WorkspaceResponse:
-    """Create a new workspace.
-
-    Creates workspace and requests start. Returns 429 if running limit exceeded.
-    """
     user_id = await get_user_id_from_session(db, session)
 
     workspace = await workspace_service.create_workspace(
@@ -95,6 +90,7 @@ async def create_workspace(
         name=request.name,
         description=request.description,
         image_ref=request.image_ref,
+        source_workspace_id=request.source_workspace_id,
     )
     workspace = await workspace_service.request_start(db, workspace.id, user_id)
 

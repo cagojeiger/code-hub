@@ -4,7 +4,7 @@
  */
 
 import { state } from './state.js';
-import { createWorkspace, deleteWorkspace } from './api.js';
+import { createWorkspace, deleteWorkspace, fetchWorkspaces } from './api.js';
 import { showToast } from './utils.js';
 
 // =============================================================================
@@ -29,12 +29,31 @@ function hideModal(modalId) {
 // Create Modal
 // =============================================================================
 
-/**
- * Open the create workspace modal
- */
-export function openCreateModal() {
+export async function openCreateModal() {
   showModal('create-modal');
   document.getElementById('workspace-name').focus();
+  await populateSourceWorkspaceDropdown();
+}
+
+async function populateSourceWorkspaceDropdown() {
+  const select = document.getElementById('source-workspace');
+  select.innerHTML = '<option value="">Start fresh (empty workspace)</option>';
+
+  try {
+    const data = await fetchWorkspaces(0);
+    const archivedWorkspaces = data.items.filter(
+      ws => ws.phase === 'ARCHIVED' && ws.archive_key
+    );
+
+    for (const ws of archivedWorkspaces) {
+      const option = document.createElement('option');
+      option.value = ws.id;
+      option.textContent = ws.name;
+      select.appendChild(option);
+    }
+  } catch (error) {
+    console.error('Failed to load archived workspaces:', error);
+  }
 }
 
 /**
@@ -45,22 +64,21 @@ export function closeCreateModal() {
   document.getElementById('create-form').reset();
 }
 
-/**
- * Handle create form submission
- */
 export async function handleCreateSubmit(e, loadWorkspacesCallback) {
   e.preventDefault();
 
   const name = document.getElementById('workspace-name').value.trim();
   const description = document.getElementById('workspace-description').value.trim();
   const memo = document.getElementById('workspace-memo').value.trim();
+  const sourceWorkspaceId = document.getElementById('source-workspace').value || null;
 
   try {
-    const workspace = await createWorkspace(name, description, memo);
-    showToast('Workspace created', 'success');
+    const workspace = await createWorkspace(name, description, memo, sourceWorkspaceId);
+    const message = sourceWorkspaceId ? 'Workspace created (restoring...)' : 'Workspace created';
+    showToast(message, 'success');
     closeCreateModal();
     state.selectedWorkspaceId = workspace.id;
-    await loadWorkspacesCallback(0);  // M2: offset-based
+    await loadWorkspacesCallback(0);
   } catch (error) {
     if (error.message !== 'Session expired') {
       showToast(error.message, 'error');

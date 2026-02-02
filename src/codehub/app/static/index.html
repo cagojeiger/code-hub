@@ -342,6 +342,14 @@
             class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent resize-none"
             placeholder="Optional notes..."></textarea>
         </div>
+        <div>
+          <label for="source-workspace" class="block text-sm mb-2">Clone from archived</label>
+          <select id="source-workspace" name="source_workspace_id"
+            class="w-full bg-vscode-bg border border-vscode-border rounded px-3 py-2 text-white focus:outline-none focus:border-vscode-accent cursor-pointer">
+            <option value="">Start fresh (empty workspace)</option>
+          </select>
+          <p class="text-xs text-gray-500 mt-1">Restore data from an archived workspace</p>
+        </div>
         <div class="flex justify-end gap-3 pt-4">
           <button type="button" id="cancel-create-btn"
             class="px-4 py-2 border border-vscode-border rounded hover:bg-vscode-hover transition-colors">
