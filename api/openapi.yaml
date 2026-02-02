@@ -189,11 +189,11 @@ components:
       properties:
         running:
           type: boolean
-        ready:
+        healthy:
           type: boolean
       required:
         - running
-        - ready
+        - healthy
 
     VolumeStatus:
       type: object

@@ -92,7 +92,7 @@ GET /workspaces
       "workspace_id": "ws-123",
       "container": {
         "running": true,
-        "ready": true
+        "healthy": true
       },
       "volume": {
         "exists": true
@@ -131,7 +131,7 @@ GET /workspaces
 |------|------|------|
 | `container` | object \| null | Container 상태 (없으면 null) |
 | `container.running` | bool | 실행 중 여부 |
-| `container.ready` | bool | 트래픽 수신 가능 여부 (healthcheck 통과) |
+| `container.healthy` | bool | 트래픽 수신 가능 여부 (healthcheck 통과) |
 | `volume` | object \| null | Volume 상태 (없으면 null) |
 | `volume.exists` | bool | 존재 여부 |
 | `archive` | object \| null | Archive 상태 (없으면 null) |
