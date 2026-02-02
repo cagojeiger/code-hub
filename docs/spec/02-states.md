@@ -39,73 +39,70 @@ Phase는 Conditions에서 계산되는 **파생 값**입니다.
 | PENDING | healthy ∧ !volume ∧ !archive | 초기 |
 
 > **resources**: `volume_ready ∨ container_ready ∨ archive_ready`
-> **Phase 계산**: WC가 reconcile 시 conditions를 읽어 phase 계산/저장 (인덱스용 캐시)
+> **Phase 계산**: WC가 reconcile 시 conditions를 읽어 `judge()` 함수로 phase 계산/저장 (인덱스용 캐시)
 
-### calculate_phase()
+### judge()
 
 > **호출 주체**: WorkspaceController (WC)
 > **역할**: conditions를 읽어 phase 계산 (순수 함수)
+> **실제 구현**: `src/codehub/control/coordinator/wc_judge.py`
 
 ```python
-def calculate_phase(
-    conditions: dict,
-    deleted_at: datetime | None,
-) -> Phase:
+def judge(
+    input: JudgeInput,
+) -> JudgeOutput:
     """Phase 계산 로직 (유일한 정의)
 
     Args:
-        conditions: Condition 상태 딕셔너리 (빈 dict 허용)
-        deleted_at: Soft delete 시각
+        input.cond: ConditionInput (boolean 필드로 구성)
+        input.deleted_at: Soft delete 시각
+
+    Returns:
+        JudgeOutput: 계산된 phase와 healthy 상태
 
     Note:
-        conditions가 빈 딕셔너리일 수 있으므로 기본값 병합 후 계산.
+        실제 구현은 boolean ConditionInput을 사용하며,
+        이 문서의 의사코드는 이해를 돕기 위한 것입니다.
     """
-    # 기본값 정의 (관측 전 상태)
-    # K8s 패턴: boolean 대신 문자열 "True"/"False" 사용
-    defaults = {
-        "storage.volume_ready": {"status": "False", "reason": "NotObserved"},
-        "storage.archive_ready": {"status": "False", "reason": "NotObserved"},
-        "infra.container_ready": {"status": "False", "reason": "NotObserved"},
-        "policy.healthy": {"status": "True", "reason": "NotObserved"},  # 관측 전엔 healthy
-    }
-
-    # 기본값과 실제값 병합
-    def merge(key):
-        return {**defaults.get(key, {}), **conditions.get(key, {})}
-
-    cond = {k: merge(k) for k in defaults}
-
+    # 실제 구현은 ConditionInput (boolean 필드)을 사용
+    # 의사코드: 로직 이해를 위한 간소화된 표현
+    
+    cond = input.cond  # ConditionInput with boolean fields
+    
     # 삭제 처리
-    if deleted_at:
+    if input.deleted_at:
         has_resources = (
-            cond["storage.volume_ready"]["status"] == "True" or
-            cond["infra.container_ready"]["status"] == "True" or
-            cond["storage.archive_ready"]["status"] == "True"
+            cond.volume_ready or
+            cond.container_ready or
+            cond.archive_ready
         )
-        return Phase.DELETING if has_resources else Phase.DELETED
+        return JudgeOutput(
+            phase=Phase.DELETING if has_resources else Phase.DELETED,
+            healthy=cond.healthy
+        )
 
-    # 정책 위반 체크 (명시적 문자열 비교)
-    if cond["policy.healthy"]["status"] != "True":
-        return Phase.ERROR
+    # 정책 위반 체크
+    if not cond.healthy:
+        return JudgeOutput(phase=Phase.ERROR, healthy=False)
 
-    # 정상 상태 판정 (명시적 문자열 비교)
-    if cond["infra.container_ready"]["status"] == "True" and cond["storage.volume_ready"]["status"] == "True":
-        return Phase.RUNNING
-    if cond["storage.volume_ready"]["status"] == "True":
-        return Phase.STANDBY
-    if cond["storage.archive_ready"]["status"] == "True":
-        return Phase.ARCHIVED
+    # 정상 상태 판정
+    if cond.container_ready and cond.volume_ready:
+        return JudgeOutput(phase=Phase.RUNNING, healthy=True)
+    if cond.volume_ready:
+        return JudgeOutput(phase=Phase.STANDBY, healthy=True)
+    if cond.archive_ready:
+        return JudgeOutput(phase=Phase.ARCHIVED, healthy=True)
 
-    return Phase.PENDING
+    return JudgeOutput(phase=Phase.PENDING, healthy=True)
 ```
 
-**기본값 정책**:
-- `policy.healthy`: **"True"** (관측 전에는 건강하다고 가정)
-- 나머지: **"False"** (리소스 존재를 가정하지 않음)
+**기본값 정책** (ConditionInput 구조체):
+- `healthy`: **True** (관측 전에는 건강하다고 가정)
+- `volume_ready`: **False** (리소스 존재를 가정하지 않음)
+- `archive_ready`: **False** (리소스 존재를 가정하지 않음)
+- `container_ready`: **False** (리소스 존재를 가정하지 않음)
 
-> **타입 안전성**: K8s 패턴에 따라 boolean 대신 문자열 사용. `status == "True"` 명시적 비교로 truthy 오류 방지
-
-> **안전성**: 빈 conditions에도 기본값을 적용하여 KeyError 없이 안전하게 계산
+> **타입 안전성**: Pydantic 모델 기반 boolean 필드로 타입 체크 보장
 >
 > **S3 장애 처리**: Observer가 all-or-nothing 방식으로 동작하여 S3 장애 시 tick 스킵 → 이전 상태 유지
 
@@ -163,6 +160,10 @@ Ordered State Machine에서 사용하는 레벨 정의입니다.
 | STANDBY | 10 |
 | RUNNING | 20 |
 
+> **Note**: Level 값은 문서상 개념적 순서를 나타냅니다.
+> 실제 구현에서는 숫자 상수가 아닌 string enum만 사용하며,
+> Ordered State Machine 계약은 로직으로 강제됩니다.
+
 ### 예외 (Ordered 미적용)
 
 | Phase | 이유 |
@@ -194,6 +195,18 @@ RUNNING(20) → STANDBY(10) → ARCHIVED(5)
 - 한 단계씩 순차 전이
 
 > **단조 경로**: 상승/하강 방향 혼합 없음
+>
+> **다중 Tick 전이**: "한 단계씩"은 Phase가 인접 레벨로만 전이함을 의미합니다.
+> 하나의 Operation이 즉시 최종 Phase까지 도달하는 것은 아니며,
+> **여러 reconcile tick에 걸쳐 단계적으로 진행**됩니다.
+>
+> 예: RUNNING → ARCHIVED 전환
+> - Tick 1: Operation.STOPPING 선택 (RUNNING → STANDBY 전환 시작)
+> - Tick 2: Phase=STANDBY 도달, Operation.ARCHIVING 선택
+> - Tick 3: Phase=ARCHIVED 도달
+>
+> 이는 각 단계가 실제 리소스 상태 확인을 거치며,
+> 장애나 지연 시에도 안전하게 복구할 수 있도록 보장합니다.
 
 ---
 
@@ -296,10 +309,13 @@ stateDiagram-v2
 | RUNNING | NONE | 실행 중 |
 | RUNNING | STOPPING | 정지 중 |
 | ERROR | NONE | 에러 상태 |
+| ERROR | DELETING | 에러 상태에서 삭제 중 (예외) |
 | DELETING | DELETING | 삭제 진행 중 |
 | DELETING | NONE | GC Runner 대기 중 |
 
 > **불변식 (C4)**: `Phase=ERROR → operation=NONE`
+> **예외**: `desired_state=DELETED` 시 `Phase=ERROR`에서도 `operation=DELETING` 허용
+> (사용자가 명시적으로 삭제 요청한 경우 에러 상태라도 삭제 진행 가능)
 
 ---
 
@@ -401,5 +417,5 @@ sequenceDiagram
 - [03-schema.md](./03-schema.md) - DB 스키마 (Conditions SSOT)
 - [04-control-plane.md#workspacecontroller](./04-control-plane.md#workspacecontroller) - WorkspaceController 구현
 - [ADR-008](../adr/008-ordered-state-machine.md) - Ordered SM
-- [ADR-009](../adr/009-status-operation-separation.md) - operation/op_id CAS
+- [ADR-009](../adr/009-status-operation-separation.md) - operation/archive_op_id CAS
 - [ADR-011](../adr/011-declarative-conditions.md) - Conditions 패턴

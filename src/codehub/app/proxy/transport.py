@@ -24,7 +24,7 @@ from codehub.app.metrics.collector import (
     WS_MESSAGE_LATENCY,
 )
 from codehub.core.errors import UpstreamUnavailableError
-from codehub.core.interfaces import UpstreamInfo
+from codehub.core.interfaces.runtime import UpstreamInfo
 from codehub.core.logging_schema import LogEvent
 
 from .activity import get_activity_buffer

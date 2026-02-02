@@ -21,7 +21,7 @@ from codehub.control.coordinator.base import (
 )
 from codehub.control.coordinator.scheduler_gc import GCRunner
 from codehub.control.coordinator.scheduler_ttl import TTLRunner
-from codehub.core.interfaces import InstanceController, StorageProvider
+from codehub.core.interfaces.runtime import WorkspaceRuntime
 from codehub.infra.redis_kv import ActivityStore
 from codehub.infra.redis_pubsub import ChannelPublisher
 
@@ -51,14 +51,13 @@ class Scheduler(CoordinatorBase):
         subscriber: ChannelSubscriber,
         activity_store: ActivityStore,
         publisher: ChannelPublisher,
-        storage: StorageProvider,
-        ic: InstanceController,
+        runtime: WorkspaceRuntime,
     ) -> None:
         super().__init__(conn, leader, subscriber)
 
         # Compose runners
         self._ttl = TTLRunner(conn, activity_store, publisher)
-        self._gc = GCRunner(conn, storage, ic)
+        self._gc = GCRunner(conn, runtime)
 
         # Interval tracking
         self._ttl_interval = _settings.coordinator.ttl_interval

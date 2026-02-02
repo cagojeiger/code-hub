@@ -1,0 +1,26 @@
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Install curl for healthcheck
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+# Copy dependency files
+COPY pyproject.toml ./
+RUN uv sync --frozen --no-install-project || uv sync --no-install-project
+
+# Copy source code (both codehub and codehub_agent)
+COPY codehub ./codehub
+COPY codehub_agent ./codehub_agent
+
+# Install project
+RUN uv sync --frozen || uv sync
+
+# Expose port
+EXPOSE 8081
+
+# Run Agent
+CMD uv run uvicorn codehub_agent.main:app --host 0.0.0.0 --port 8081 --no-access-log

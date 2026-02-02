@@ -44,6 +44,41 @@ services:
   # Core Application
   # ---------------------------------------------------------------------------
 
+  # Agent - Runtime agent for Docker operations
+  agent:
+    build:
+      context: src
+      dockerfile: Dockerfile.agent
+    container_name: codehub-agent
+    ports:
+      - "0.0.0.0:18081:8081"
+    environment:
+      AGENT_CLUSTER_ID: default
+      AGENT_RESOURCE_PREFIX: codehub-ws-
+      AGENT_DOCKER_HOST: tcp://docker-proxy:2375
+      AGENT_DOCKER_NETWORK: codehub-net
+      AGENT_S3_ENDPOINT: http://minio:9000
+      AGENT_S3_INTERNAL_ENDPOINT: http://minio:9000
+      AGENT_S3_BUCKET: codehub-archives
+      AGENT_S3_ACCESS_KEY: codehub
+      AGENT_S3_SECRET_KEY: codehub123
+      AGENT_HOST: "0.0.0.0"
+      AGENT_PORT: "8081"
+    depends_on:
+      minio:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_started
+    mem_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8081/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    <<: [*dns, *logging, *network, *restart]
+
   # Control Plane - API, Reconciler, Coordinator
   control-plane:
     build:
@@ -55,6 +90,7 @@ services:
     environment:
       <<: *common-env
       WORKERS: "3"
+      AGENT_ENDPOINT: http://agent:8081
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,6 +102,8 @@ services:
         condition: service_started
       migrate:
         condition: service_completed_successfully
+      agent:
+        condition: service_healthy
     mem_limit: 512m
     cpus: 1.0
     healthcheck:
@@ -145,7 +183,7 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: [ "CMD", "mc", "ready", "local" ]
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 5s
       timeout: 5s
       retries: 5

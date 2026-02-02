@@ -45,7 +45,7 @@
 
 | 컴포넌트 | 소유 컬럼 |
 |---------|----------|
-| WorkspaceController | conditions, observed_at, phase, phase_changed_at, operation, op_started_at, op_id, archive_key, error_count, error_reason, home_ctx |
+| WorkspaceController | conditions, observed_at, phase, phase_changed_at, operation, op_started_at, archive_op_id, archive_key, error_count, error_reason, home_ctx |
 | API | desired_state, deleted_at, last_access_at |
 
 > **단일 컨트롤러**: WC가 관측 + 제어 컬럼 모두 소유 (원자성 보장)
@@ -79,7 +79,7 @@
 
 | 항목 | 값 |
 |------|---|
-| 정의 | Phase = calculate_phase(conditions), 인접 레벨만 전이 |
+| 정의 | Phase = judge(conditions), 인접 레벨만 전이 |
 | 효과 | step_up/step_down 경로 예측 가능 |
 | 적용 대상 | Active Phase (PENDING, ARCHIVED, STANDBY, RUNNING) |
 
@@ -142,9 +142,21 @@
 
 | 항목 | 값 |
 |------|---|
-| 정의 | 같은 (workspace_id, op_id)에 대해 멱등 |
+| 정의 | 같은 (workspace_id, archive_op_id)에 대해 멱등 |
 | 구현 | HEAD 체크로 기존 archive 확인 후 skip |
-| 경로 | `{workspace_id}/{op_id}/home.tar.zst` |
+| 경로 | `{workspace_id}/{archive_op_id}/home.tar.zst` |
+
+**완료 조건**:
+
+Archive는 **단일 마커 체크**로 완료 판정:
+
+```
+!volume_ready ∧ archive_ready ∧ archive_key != NULL
+```
+
+- `archive_ready`: S3 경로에서 HEAD 요청 성공 확인
+- `archive_key`: DB에 저장된 경로 (= `{workspace_id}/{archive_op_id}`)
+- Archive 작업 시 `archive_op_id`를 S3 경로에 포함하여 멱등성 보장
 
 ### Restore (Crash-Only)
 
@@ -152,14 +164,42 @@
 |------|---|
 | 정의 | 같은 archive → 같은 결과, 크래시 후 재시도 안전 |
 | 설계 | Stateless, 부분 결과 덮어쓰기 |
-| 완료 마커 | `home_ctx.restore_marker = archive_key` |
+| 완료 마커 | `home_ctx.restore_marker = archive_key` ∧ `restore_op_id` (dual marker) |
 
 **완료 조건**:
 
-| Operation | 조건 |
-|-----------|------|
-| ARCHIVING | `!volume_ready` ∧ `archive_ready` ∧ `archive_key != NULL` |
-| RESTORING | `volume_ready` ∧ `restore_marker = archive_key` |
+Restore는 **이중 마커 체크**로 완료 판정 (stale marker 방지):
+
+```
+volume_ready ∧ 
+conditions.restore.archive_key == ws.archive_key ∧ 
+conditions.restore.restore_op_id == ws.restore_op_id
+```
+
+**Dual Marker 필요성**:
+
+Archive와 달리 Restore는 **두 개의 ID를 모두 확인**해야 합니다:
+
+1. `archive_key`: 어떤 archive를 복원했는지
+2. `restore_op_id`: 어떤 복원 작업이 완료했는지
+
+**문제 시나리오** (단일 마커만 사용 시):
+
+```
+1. Restore Job A 시작 (restore_op_id=A, archive_key=X)
+2. 시스템 크래시/재시작
+3. Restore Job B 시작 (restore_op_id=B, archive_key=X) - 같은 archive
+4. Job A가 늦게 완료, marker 기록 (archive_key=X, restore_op_id=A)
+5. ❌ 단일 체크: Job B가 잘못 완료 판정 (archive_key만 일치)
+6. ✅ 이중 체크: Job B는 대기 (restore_op_id 불일치)
+```
+
+**대칭성(Symmetry) 정의**:
+
+Archive와 Restore 모두 **op-id 기반 멱등성 + 관측 마커 기반 완료 판정**을 사용한다는 점에서 대칭적입니다:
+
+- Archive: `archive_op_id` 경로 포함 + `archive_ready` 마커 관측
+- Restore: `restore_op_id` DB 저장 + 이중 마커 (`archive_key` + `restore_op_id`) 관측
 
 > **상세**: [05-data-plane.md#storageprovider](./05-data-plane.md#storageprovider)
 
@@ -169,10 +209,23 @@
 
 ### Storage 순서
 
-| 순서 | 동작 |
-|------|------|
-| 1 | archive_key DB 저장 |
-| 2 | Volume 삭제 |
+Archive 생성과 Volume 삭제는 **다중 tick에 걸친 2단계 순서**를 보장합니다:
+
+| 순서 | Tick | 동작 | 완료 조건 |
+|------|------|------|----------|
+| 1 | N | Archive 생성 시작 + `archive_key` DB 저장 | Job 실행 완료 (비동기) |
+| 2 | N+1 | `is_this_archive_ready()` 확인 | S3 HEAD 요청 성공 |
+| 3 | N+2 | Volume 삭제 | Archive 존재 확인 후에만 실행 |
+
+**다중 Tick 동작 이유**:
+
+- Tick N: Archive 업로드 Job 시작 (비동기)
+- Tick N+1: Observer가 S3에서 archive 존재 확인 (`archive_ready=True`)
+- Tick N+2: WC가 `archive_ready` 조건 확인 후 Volume 삭제
+
+**안전성**:
+
+Volume 삭제는 **반드시 `archive_ready` 조건이 True일 때만** 실행됩니다. Archive 업로드가 실패하거나 S3 접근이 불가능하면 Volume 삭제가 차단되어 데이터 유실을 방지합니다.
 
 > **역순 금지**: Volume 먼저 삭제 시 데이터 유실 위험
 
@@ -199,11 +252,11 @@
 
 ### 보호 규칙
 
-| 우선순위 | 조건 | archive_key 경로 | op_id 경로 |
+| 우선순위 | 조건 | archive_key 경로 | archive_op_id 경로 |
 |---------|------|-----------------|-----------|
 | 1 | deleted_at != NULL | **보호 해제** | **보호 해제** |
 | 2 | healthy = false | 보호 | 보호 |
-| 3 | op_id 존재 | - | 보호 |
+| 3 | archive_op_id 존재 | - | 보호 |
 
 > **사용자 의도 우선**: deleted_at 설정 = 사용자가 삭제 원함 → 모든 보호 해제
 
@@ -243,9 +296,9 @@ is_terminal = error_reason in TERMINAL_REASONS or error_count >= MAX_RETRY
 | 4 | Non-preemptive | ERROR 전환은 원자적 (phase+operation+error_reason) |
 | 5 | Ordered SM | 인접 레벨만 전이 (step_up/step_down) |
 | 6 | Container↔Volume | Container 있으면 Volume 필수 |
-| 7 | Archive/Restore | op_id로 멱등, Crash-Only |
+| 7 | Archive/Restore | Archive: 단일 마커, Restore: 이중 마커 (op-id 기반 멱등) |
 | 8 | Ordering | archive_key 저장 → Volume 삭제 |
-| 9 | GC Protection | deleted_at 시 op_id 보호 해제 |
+| 9 | GC Protection | deleted_at 시 archive_op_id 보호 해제 |
 | 10 | Retry Policy | 단말 에러 또는 MAX_RETRY까지 재시도 |
 
 ---

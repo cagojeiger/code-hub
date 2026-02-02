@@ -24,16 +24,11 @@ Observer Coordinator는 **별도 Coordinator**로, 리소스(Container, Volume, 
 ```mermaid
 flowchart TB
     subgraph OBS["Observer Coordinator (별도)"]
-        IC["IC.list_all()"]
-        SPV["SP.list_volumes()"]
-        SPA["SP.list_archives()"]
+        OBSERVE["WorkspaceRuntime.observe()"]
         COND["conditions 구성"]
         SAVE["DB 저장<br/>(conditions, observed_at)"]
 
-        IC --> COND
-        SPV --> COND
-        SPA --> COND
-        COND --> SAVE
+        OBSERVE --> COND --> SAVE
     end
 
     subgraph WC["WC (별도)"]
@@ -57,7 +52,7 @@ flowchart TB
 | Coordinator | 소유 컬럼 |
 |-------------|----------|
 | **Observer** | conditions, observed_at |
-| **WC** | phase, operation, op_started_at, op_id, archive_key, error_count, error_reason, home_ctx |
+| **WC** | phase, operation, op_started_at, archive_op_id, archive_key, error_count, error_reason, home_ctx |
 
 ---
 
@@ -92,18 +87,13 @@ flowchart TB
 
 ## 인터페이스
 
-### InstanceController
+### WorkspaceRuntime
 
-| 메서드 | 비고 |
-|--------|------|
-| `list_all(prefix)` | 벌크 컨테이너 조회 |
+| 메서드 | 반환 | 비고 |
+|--------|------|------|
+| `observe()` | `list[WorkspaceState]` | 벌크 리소스 관측 (Container + Volume + Archive 통합) |
 
-### StorageProvider
-
-| 메서드 | 비고 |
-|--------|------|
-| `list_volumes(prefix)` | 벌크 볼륨 조회 |
-| `list_archives(prefix)` | 벌크 아카이브 조회 |
+> **통합 API**: Agent가 Container, Volume, Archive 상태를 단일 API로 반환
 
 ---
 

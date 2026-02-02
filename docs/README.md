@@ -24,7 +24,7 @@ docs/
 | 4 | Non-preemptive | ERROR 전환은 원자적 |
 | 5 | Ordered SM | 인접 레벨만 전이 |
 | 6 | Container↔Volume | Container 있으면 Volume 필수 |
-| 7 | Archive/Restore | op_id로 멱등, Crash-Only |
+| 7 | Archive/Restore | archive_op_id로 멱등, Crash-Only |
 | 8 | Ordering | archive_key 저장 → Volume 삭제 |
 | 9 | GC Protection | deleted_at 시 보호 해제 |
 | 10 | Retry Policy | 단말 에러 또는 MAX_RETRY까지 재시도 |
@@ -68,9 +68,8 @@ PENDING(0) → ARCHIVED(5) → STANDBY(10) → RUNNING(20)
 |------|------|
 | coordinator-runtime.md | Tick Loop, Leader Election |
 | event-listener.md | CDC + SSE (PUB/SUB) |
-| ttl-manager.md | Activity ZSET, TTL 체크 |
-| wc.md | Judge + Hybrid Execution |
-| wc-judge.md | Phase 계산 로직 |
+| lifecycle.md | TTL Runner + GC Runner |
+| wc.md | Judge + Control + Plan (통합) |
 | wc-observer.md | Bulk Observer 패턴 |
 
 ### adr/ - 결정 (Why)

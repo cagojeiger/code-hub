@@ -130,7 +130,7 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 ### 핵심 원칙
 
 1. **Non-preemptive Operation**: workspace당 동시에 1개만 (계약 #4)
-2. **Idempotent Archive**: op_id로 멱등성 확보 (계약 #7)
+2. **Idempotent Archive**: archive_op_id로 멱등성 확보 (계약 #7)
 3. **Crash-Only Restore**: 재실행해도 같은 결과 (계약 #7)
 4. **Separation of Concerns**: StorageProvider = 데이터 이동, Reconciler = DB 커밋
 5. **순서 보장**: archive_key 저장 → Volume 삭제 (계약 #8)
@@ -142,27 +142,28 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 |--------|------|--------|--------|
 | provision(workspace_id) | Volume 생성 | 이미 있으면 무시 | - |
 | restore(workspace_id, archive_key) | Archive → Volume | Crash-Only | restore_marker |
-| archive(workspace_id, op_id) | Volume → Archive | HEAD 체크 | archive_key |
+| archive(workspace_id, archive_op_id) | Volume → Archive | HEAD 체크 | archive_key |
 | delete_volume(workspace_id) | Volume 삭제 | 없으면 무시 | - |
 | volume_exists(workspace_id) | Volume 존재 확인 | - | bool |
 
 **restore() 반환값**:
-- 성공 시: `restore_marker = archive_key` 반환
-- WC가 이 값을 `home_ctx.restore_marker`에 저장
-- 계약 #7 완료 조건: `Phase=STANDBY AND home_ctx.restore_marker=archive_key`
+- 성공 시: `restore_marker = restore_op_id` 반환
+- WC가 이 값을 `ws.restore_op_id`에 저장 (전용 컬럼)
+- 계약 #7 완료 조건: `Phase=STANDBY AND ws.restore_op_id 일치`
 
 ### 네이밍 규칙
 
 > **Container/Volume**: [00-contracts.md#6](./00-contracts.md#6-containervolume-invariant) 참조
-> **archive_key**: `{workspace_id}/{op_id}/home.tar.zst` (계약 #7)
+> **archive_key**: `{workspace_id}/{archive_op_id}/home.tar.zst` (계약 #7)
 
 ### Operation별 Storage 동작
 
-| Operation | 동작 | op_id 필요 |
+| Operation | 동작 | archive_op_id 필요 |
 |-----------|------|-----------|
 | PROVISIONING | 빈 Volume 생성 | - |
 | RESTORING | archive → Volume | - |
 | ARCHIVING | Volume → archive + Volume 삭제 | ✅ |
+| CREATE_EMPTY_ARCHIVE | 빈 Archive 생성 | ✅ |
 | DELETING | Volume 삭제 (Archive는 GC) | - |
 
 ### 완료 조건 (conditions 기반)
@@ -170,7 +171,7 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 | Operation | Actuator | 완료 조건 |
 |-----------|----------|----------|
 | PROVISIONING | provision() | volume_ready == true |
-| RESTORING | provision() + restore() | volume_ready == true AND restore_marker == archive_key |
+| RESTORING | provision() + restore() | volume_ready == true AND restore_op_id 일치 |
 | ARCHIVING | archive() + delete_volume() | volume_ready == false AND archive_ready == true AND archive_key != NULL |
 | DELETING | delete() + delete_volume() | container_ready == false AND volume_ready == false |
 
@@ -178,20 +179,31 @@ Data Plane은 실제 리소스(Container, Volume, Archive)를 관리합니다.
 >
 > **WC가 모든 판정**: WC가 관측 → conditions 갱신 → 완료 여부 + phase 계산 (단일 트랜잭션)
 
-### op_id 정책
+### archive_op_id 정책
 
 | 시점 | 상태 | 동작 |
 |------|------|------|
 | 첫 시도 | NULL | 생성 후 DB 저장 |
 | 재시도 | NOT NULL | 기존 값 사용 |
 
-> op_id는 archive 호출 전에 DB에 먼저 저장. 크래시 후 같은 op_id로 재시도.
+> archive_op_id는 archive 호출 전에 DB에 먼저 저장. 크래시 후 같은 archive_op_id로 재시도.
+> **Note**: ARCHIVING/CREATE_EMPTY_ARCHIVE operation에서만 생성/사용됨. 다른 operation은 archive_op_id를 사용하지 않음.
+
+### restore_op_id 정책
+
+| 시점 | 상태 | 동작 |
+|------|------|------|
+| 첫 시도 | NULL | 생성 후 DB 저장 |
+| 재시도 | NOT NULL | 기존 값 사용 |
+
+> restore_op_id는 restore 호출 전에 DB에 먼저 저장. 크래시 후 같은 restore_op_id로 재시도.
+> **Note**: RESTORING operation에서만 생성/사용됨.
 
 ### 크래시 복구 (ARCHIVING)
 
 | 크래시 시점 | DB 상태 | 재시도 동작 |
 |------------|---------|------------|
-| 업로드 중 | op_id != NULL, archive_key = NULL | 같은 op_id로 재시도 (HEAD 체크) |
+| 업로드 중 | archive_op_id != NULL, archive_key = NULL | 같은 archive_op_id로 재시도 (HEAD 체크) |
 | archive_key 저장 후 | archive_key 일치 | 업로드 skip → delete_volume만 |
 | Volume 삭제 후 | archive_key 일치, !volume_exists | 최종 커밋만 |
 
@@ -311,10 +323,10 @@ sha256:{hex_string}
 재아카이브, 크래시, 재시도 시 이전 archive가 orphan이 됩니다.
 
 ```
-1차 Archive (op_id = aaa):
+1차 Archive (archive_op_id = aaa):
   → ws123/aaa/home.tar.zst  ← DB에 저장됨
 
-2차 Archive (op_id = bbb):
+2차 Archive (archive_op_id = bbb):
   → ws123/bbb/home.tar.zst  ← DB 업데이트
   → ws123/aaa/...          ← orphan (GC 대상)
 ```
@@ -325,15 +337,15 @@ sha256:{hex_string}
 
 Archive가 **보호 대상이 아니면** orphan입니다. 보호 판정은 **우선순위 순서**로 적용:
 
-| 우선순위 | 조건 | archive_key 경로 | op_id 경로 |
+| 우선순위 | 조건 | archive_key 경로 | archive_op_id 경로 |
 |---------|------|-----------------|-----------|
 | 1 | deleted_at != NULL | **보호 해제** | **보호 해제** |
 | 2 | healthy = false | 보호 | 보호 |
-| 3 | op_id 존재 | - | 보호 |
+| 3 | archive_op_id 존재 | - | 보호 |
 
 > **사용자 의도 우선**: deleted_at 설정 = 사용자가 삭제 원함 → 모든 보호 해제
 >
-> **op_id 보호 이유**: ARCHIVING 중 Phase=ERROR 전환되면 op_id만 있고 archive_key 없는 상태. op_id로 보호하여 복구 시 재사용 가능. (단, deleted_at 시 해제)
+> **archive_op_id 보호 이유**: ARCHIVING 중 Phase=ERROR 전환되면 archive_op_id만 있고 archive_key 없는 상태. archive_op_id로 보호하여 복구 시 재사용 가능. (단, deleted_at 시 해제)
 
 ### 안전 지연
 
