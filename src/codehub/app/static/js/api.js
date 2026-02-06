@@ -62,17 +62,19 @@ export async function fetchWorkspaces(offset = 0) {
   return response.json();
 }
 
-/**
- * Create a new workspace
- */
-export async function createWorkspace(name, description, memo) {
+export async function createWorkspace(name, description, memo, sourceWorkspaceId = null) {
+  const body = {
+    name,
+    description: description || null,
+  };
+  if (sourceWorkspaceId) {
+    body.source_workspace_id = sourceWorkspaceId;
+  }
+
   const response = await fetchWithAuth(`${API}/workspaces`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      name,
-      description: description || null,
-    }),
+    body: JSON.stringify(body),
   });
   if (!response.ok) {
     const error = await response.json();

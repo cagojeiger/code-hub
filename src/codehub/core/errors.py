@@ -28,6 +28,7 @@ from pydantic import BaseModel
 class ErrorCode(str, Enum):
     """Error codes."""
 
+    BAD_REQUEST = "BAD_REQUEST"
     UNAUTHORIZED = "UNAUTHORIZED"
     FORBIDDEN = "FORBIDDEN"
     WORKSPACE_NOT_FOUND = "WORKSPACE_NOT_FOUND"
@@ -72,6 +73,13 @@ class CodeHubError(Exception):
         return ErrorResponse(
             error=ErrorDetail(code=self.code.value, message=self.message)
         )
+
+
+class BadRequestError(CodeHubError):
+    """400 Bad Request - Invalid request."""
+
+    def __init__(self, message: str = "Bad request") -> None:
+        super().__init__(ErrorCode.BAD_REQUEST, message, 400)
 
 
 class UnauthorizedError(CodeHubError):

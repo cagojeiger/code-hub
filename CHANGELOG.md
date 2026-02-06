@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-02-02
+
+### Added
+
+#### Clone from Archived Workspace
+- Archived workspace에서 새 workspace 생성 기능
+- `source_workspace_id` 파라미터로 archive 참조 복사
+- 기존 restore 플로우 재사용 (데이터 복사 없음, 참조만)
+
+#### UI Improvements
+- 검색 가능한 archived workspace 선택 드롭다운
+- 워크스페이스 이름 + 설명 동시 표시
+- 실시간 필터링 지원
+
+### Changed
+- `BadRequestError` 추가 (400 응답)
+
+---
+
 ## [0.2.0] - 2026-01-12
 
 ### Added
