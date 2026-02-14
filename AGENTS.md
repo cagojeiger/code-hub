@@ -78,7 +78,22 @@ Problem occurs
 
 ---
 
-## 5. References
+## 5. Release Checklist
+
+버전 릴리스 시 아래 순서를 따른다.
+
+1. `src/codehub/__init__.py`에서 `__version__` 업데이트
+2. `CHANGELOG.md`에 해당 버전 항목 추가
+3. version bump 커밋 (`chore: bump version to X.Y.Z`)
+4. main 머지 후 tag 생성 (`git tag vX.Y.Z && git push origin vX.Y.Z`)
+5. **GitHub Release 생성** (`gh release create vX.Y.Z`)
+   - 릴리스 노트: 이전 tag 이후 커밋에서 feat/fix 분류
+   - Compatibility 테이블 포함
+   - Full Changelog 링크 포함
+
+---
+
+## 6. References
 
 - **Process details**: [docs/workflow.md](docs/workflow.md)
 - **Terminology**: [docs/glossary.md](docs/glossary.md)
