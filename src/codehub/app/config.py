@@ -56,20 +56,6 @@ class RedisChannelConfig(BaseSettings):
     wake_prefix: str = Field(default="codehub:wake")
 
 
-class StorageConfig(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="S3_")
-
-    endpoint_url: str = Field(default="http://minio:9000", validation_alias="S3_ENDPOINT")
-    # Internal endpoint for containers (e.g., storage-job) running on Docker network.
-    # Defaults to endpoint_url. Set S3_ENDPOINT_INTERNAL for local tests.
-    internal_endpoint_url: str = Field(
-        default="http://minio:9000", validation_alias="S3_ENDPOINT_INTERNAL"
-    )
-    access_key: str = Field(default="codehub", validation_alias="S3_ACCESS_KEY")
-    secret_key: str = Field(default="codehub123", validation_alias="S3_SECRET_KEY")
-    bucket_name: str = Field(default="codehub-archives", validation_alias="S3_BUCKET")
-
-
 class RuntimeConfig(BaseSettings):
     """Runtime-agnostic common configuration.
 
@@ -82,28 +68,6 @@ class RuntimeConfig(BaseSettings):
     container_port: int = Field(default=8080)
     default_image: str = Field(default="cagojeiger/code-server:4.108.1")
     storage_job_image: str = Field(default="codehub/storage-job:latest")
-
-
-class DockerConfig(BaseSettings):
-    """Docker-specific configuration for workspace containers."""
-
-    model_config = SettingsConfigDict(env_prefix="DOCKER_")
-
-    network_name: str = Field(default="codehub-net")
-    coder_uid: int = Field(default=1000)
-    coder_gid: int = Field(default=1000)
-
-    # DNS settings for VPN/network stability
-    # Docker Desktop 4.48.0+ has DNS routing issues with VPN
-    # See: https://github.com/docker/for-mac/issues/4751
-    dns_servers: list[str] = Field(default=["8.8.8.8", "1.1.1.1"])
-    dns_options: list[str] = Field(default=["use-vc"])  # Force TCP for DNS
-
-    # Timeout settings
-    api_timeout: float = Field(default=30.0)  # seconds (Docker API calls)
-    image_pull_timeout: float = Field(default=600.0)  # seconds (10 minutes)
-    container_wait_timeout: int = Field(default=600)  # seconds (10 minutes)
-    job_timeout: int = Field(default=600)  # seconds (storage job)
 
 
 class TtlConfig(BaseSettings):
@@ -296,9 +260,7 @@ class Settings(BaseSettings):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     redis_channel: RedisChannelConfig = Field(default_factory=RedisChannelConfig)
-    storage: StorageConfig = Field(default_factory=StorageConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
-    docker: DockerConfig = Field(default_factory=DockerConfig)
     ttl: TtlConfig = Field(default_factory=TtlConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     cookie: CookieConfig = Field(default_factory=CookieConfig)
