@@ -16,36 +16,21 @@ jobs:
       - name: Send Slack Message
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          WORKFLOW_URL: ${{ github.event.workflow_run.html_url }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          ACTOR: ${{ github.event.workflow_run.actor.login }}
         run: |
-          WORKFLOW_NAME="${{ github.event.workflow_run.name }}"
-          WORKFLOW_URL="${{ github.event.workflow_run.html_url }}"
-          BRANCH="${{ github.event.workflow_run.head_branch }}"
-          ACTOR="${{ github.event.workflow_run.actor.login }}"
-
-          curl -X POST -H 'Content-type: application/json' \
-          --data "{
-            \"text\": \"code-hub CI failed\",
-            \"blocks\": [
-              {
-                \"type\": \"section\",
-                \"text\": {
-                  \"type\": \"mrkdwn\",
-                  \"text\": \"*Workflow:* ${WORKFLOW_NAME}\n*Branch:* ${BRANCH}\n*Actor:* ${ACTOR}\"
-                }
-              },
-              {
-                \"type\": \"actions\",
-                \"elements\": [
-                  {
-                    \"type\": \"button\",
-                    \"text\": {
-                      \"type\": \"plain_text\",
-                      \"text\": \"View Details\"
-                    },
-                    \"url\": \"${WORKFLOW_URL}\"
-                  }
-                ]
-              }
-            ]
-          }" \
-          ${SLACK_WEBHOOK_URL}
+          PAYLOAD=$(jq -n \
+            --arg wf "$WORKFLOW_NAME" \
+            --arg br "$BRANCH" \
+            --arg ac "$ACTOR" \
+            --arg url "$WORKFLOW_URL" \
+            '{
+              text: "code-hub CI failed",
+              blocks: [
+                {type: "section", text: {type: "mrkdwn", text: ("*Workflow:* " + $wf + "\n*Branch:* " + $br + "\n*Actor:* " + $ac)}},
+                {type: "actions", elements: [{type: "button", text: {type: "plain_text", text: "View Details"}, url: $url}]}
+              ]
+            }')
+          curl -sf -X POST -H 'Content-type: application/json' --data "$PAYLOAD" "$SLACK_WEBHOOK_URL"
