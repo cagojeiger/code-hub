@@ -43,9 +43,9 @@ docker compose up -d
 
 브라우저에서 http://localhost:8000 접속
 
-**기본 계정**: `admin` / `admin`
+**기본 계정**: `admin` / `qwer1234`
 
-> 초기 비밀번호를 변경하려면 `docker-compose.yml`에서 `CODEHUB_AUTH__INITIAL_ADMIN_PASSWORD` 환경변수를 설정하세요.
+> 초기 비밀번호를 변경하려면 환경변수 `ADMIN_PASSWORD`를 설정하세요.
 
 ## 문서
 

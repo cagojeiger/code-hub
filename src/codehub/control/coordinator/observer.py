@@ -34,6 +34,7 @@ from codehub.control.coordinator.base import (
     CoordinatorType,
     LeaderElection,
 )
+from codehub.core.domain.workspace import Phase
 from codehub.core.interfaces.runtime import WorkspaceRuntime, WorkspaceState
 from codehub.core.logging_schema import LogEvent
 from codehub.core.models import Workspace
@@ -246,7 +247,7 @@ class ObserverCoordinator(CoordinatorBase):
 
     async def _load_workspace_ids(self) -> set[str]:
         result = await self._conn.execute(
-            select(Workspace.id).where(Workspace.deleted_at.is_(None))
+            select(Workspace.id).where(Workspace.phase != Phase.DELETED.value)
         )
         return {str(row[0]) for row in result.fetchall()}
 
