@@ -75,7 +75,8 @@ def judge(input: JudgeInput) -> JudgeOutput:
         JudgeOutput with phase, healthy, error_reason
     """
     cond = input.conditions
-    has_resources = cond.container_ready or cond.volume_ready or cond.archive_ready
+    # archive는 GC Runner가 정리 — DELETING 판정에서 제외 (무한루프 방지)
+    has_resources = cond.container_ready or cond.volume_ready
 
     # Step 1: deleted_at (최우선)
     if input.deleted_at:
