@@ -61,6 +61,80 @@ code-hub의 S3 archive lifecycle은 Coder에 없는 고유 기능이므로, Hub-
 2. **FRP 터널을 기본 연결 수단으로 사용** — Agent(frpc)가 Hub(frps)에 연결
 3. **MinIO는 Agent(Data Plane) 쪽에 배치** — CP는 `archive_key` 메타데이터만 관리
 4. **Hub화 먼저, K8s runtime 나중에** — 구현 순서 분리
+5. **CP는 게이트키퍼, Agent는 리소스 제공자** — 역할 명확 분리 (아래 상세)
+
+### 역할 분리: 게이트키퍼 vs 리소스 제공자
+
+Hub-Spoke에서 CP와 Agent의 역할은 근본적으로 다르다.
+
+**CP (Hub) = 게이트키퍼**
+
+CP는 리소스를 소유하지 않는다. 리소스에 대한 **접근 권한을 관리**한다.
+
+| 역할 | 설명 |
+|------|------|
+| 인증 | 사용자가 누구인지 확인 (로그인, 세션) |
+| 인가 | 이 사용자가 이 워크스페이스에 접근 가능한지 확인 |
+| 라우팅 | 워크스페이스가 어떤 Agent에 있는지 결정 |
+| 상태 조율 | Reconciler로 desired ↔ actual 수렴 |
+| 메타데이터 | workspace, agent, user 정보를 DB에 저장 |
+
+CP에 필요한 인프라: PostgreSQL + Redis. 가벼운 Pod으로 충분하다.
+
+**Agent (DP) = 리소스 제공자**
+
+Agent가 실제 컴퓨팅 리소스를 소유하고 제공한다.
+
+| 역할 | 설명 |
+|------|------|
+| 컴퓨트 | 워크스페이스 컨테이너 실행 (Docker/K8s) |
+| 스토리지 | 볼륨 관리, S3 archive/restore |
+| 실행 | Hub의 명령(start, stop, archive 등)을 실제 수행 |
+| 로컬 관리 | 자체 리소스 모니터링, 감사 로그, 연결 관리 |
+
+Agent에 필요한 인프라: Container Runtime + MinIO + Docker Proxy. 실제 워크로드가 여기서 실행된다.
+
+**비유**: K8s에서 API Server(인증/스케줄링) vs Node(실제 Pod 실행)의 관계와 같다. Hub이 리소스를 "소유"하는 것이 아니라, Agent 소유자가 리소스를 Hub에 "등록하여 관리를 위임"하는 구조다.
+
+### Agent 자율성 (Agent Dashboard)
+
+Agent는 단순한 명령 실행기가 아니라, **자체 관리 기능을 가진 독립 서비스**다. Agent 소유자는 자신의 인프라에서 무슨 일이 일어나는지 투명하게 볼 수 있어야 한다.
+
+**Agent Dashboard** (`http://agent-local:8081/dashboard`):
+
+```
+Agent Dashboard
+├── 연결 상태
+│   ├── Hub 연결: hub.example.com ✅ Connected
+│   ├── FRP 터널: ✅ Active (latency: 3ms)
+│   └── [연결 해제] [재연결]
+│
+├── 감사 로그 (Hub이 보낸 명령)
+│   ├── 14:30:22  POST /observe           → 200
+│   ├── 14:30:21  POST /start ws-abc123   → 200
+│   └── 필터: 시간, 명령 타입, 워크스페이스
+│
+├── 워크스페이스 현황
+│   ├── ws-abc123: RUNNING (CPU 12%, MEM 256MB)
+│   ├── ws-def456: STANDBY (volume 2.1GB)
+│   └── 총: 2 실행 / 1 대기 / 15GB 사용
+│
+├── 리소스 사용량
+│   ├── CPU / Memory / Disk
+│   └── MinIO 아카이브 사용량
+│
+└── 설정
+    ├── Hub 등록 정보 (agent_id, 등록일)
+    ├── 리소스 제한 (max workspaces, max CPU/MEM)
+    └── [Hub 연결 해제] [Agent 초기화]
+```
+
+**Agent 소유권 원칙**:
+
+1. **투명성**: Hub이 Agent에 보낸 모든 명령은 감사 로그에 기록된다
+2. **제어권**: Agent 소유자는 언제든 Hub 연결을 해제할 수 있다
+3. **리소스 제한**: Agent 소유자가 최대 워크스페이스 수, CPU/메모리 상한을 설정한다
+4. **독립 실행**: Hub이 다운되어도 이미 실행 중인 워크스페이스는 계속 동작한다
 
 ### 아키텍처 구조
 
@@ -91,6 +165,8 @@ code-hub의 S3 archive lifecycle은 Coder에 없는 고유 기능이므로, Hub-
 │  │ (frp client)│  │ - Runtime    │  │ - archive/restore││
 │  │             │  │ - API        │  │ - volume backup  ││
 │  └─────────────┘  │ - Storage    │  └──────────────────┘│
+│                   │ - Dashboard  │                       │
+│                   │ - Audit Log  │                       │
 │                   └──────────────┘                       │
 │                                                          │
 │  ┌──────────────────────────────────────────────────────┐│
@@ -152,21 +228,34 @@ CP가 MinIO에 직접 접근하지 않음이 코드 분석에서 확인됨:
 
 ## 구현 순서
 
-### Phase 1: CP Hub화 + Agent 등록 시스템
+### Phase 0: CP/DP 분리
+1. docker-compose 네트워크 분리 (`cp-net`, `dp-net`)
+2. CP에서 불필요한 인프라 의존 제거 (`S3_*`, `DOCKER_HOST` 환경변수)
+3. CP의 Agent 정적 의존 제거 (`depends_on: agent` 제거, `AGENT_ENDPOINT` 제거)
+4. 네트워크 격리 검증 (CP↛MinIO, CP↛Docker Proxy, Agent↛PostgreSQL)
+
+### Phase 1: Agent 등록 시스템
 1. `agents` 테이블 + Alembic migration
 2. Agent 등록/해제 API (`POST /api/v1/agents/register`, `DELETE /api/v1/agents/{id}`)
-3. Agent heartbeat (`POST /api/v1/agents/{id}/heartbeat`)
-4. `workspace → agent` 라우팅 (workspace 생성 시 agent 지정)
-5. `agent_client.py` 수정: agent별 FRP 터널 URL 사용
-6. Observer/WC가 agent별로 observe/control
+3. Agent 시작 시 Hub에 자동 등록 (HUB_ENDPOINT + 등록 토큰)
+4. Agent heartbeat (`POST /api/v1/agents/{id}/heartbeat`)
+5. `agent_client.py` 수정: 정적 URL → DB에서 Agent URL 조회
+6. Observer/WC가 등록된 agent별로 observe/control
+7. `workspace → agent` 라우팅 (workspace 생성 시 agent 지정)
 
-### Phase 2: K8s Runtime 추가
+### Phase 2: Agent Dashboard + 감사 로그
+1. Agent 감사 로그 미들웨어 (Hub 명령 기록)
+2. Agent Dashboard UI (연결 상태, 감사 로그, 워크스페이스 현황, 리소스)
+3. Agent 리소스 제한 설정 (max workspaces, max CPU/MEM)
+4. Hub 연결 관리 (연결 해제/재연결)
+
+### Phase 3: K8s Runtime 추가
 1. `runtimes/models.py`로 공유 타입 추출 (OperationResult, JobType 등)
 2. `runtimes/kubernetes/` 구현 (instance.py, volume.py, job.py, storage.py)
 3. `protocols.py`에서 Docker-specific import 제거
 4. Agent config에 runtime 선택 (`runtime: docker | kubernetes`)
 
-### Phase 3: Helm Chart + 배포
+### Phase 4: Helm Chart + 배포
 1. CP Helm chart (FastAPI + PostgreSQL + Redis)
 2. Agent Helm chart (Agent + frpc + MinIO)
 3. OCI K8s 배포 및 E2E 테스트
@@ -188,6 +277,9 @@ MinIO가 Agent 로컬에 있으므로 archive/restore 시 FRP 터널 대역폭�
 ### 기존 아키텍처 보존
 Ordered State Machine, Level-Triggered Reconciliation, Single Writer Principle 등 핵심 계약은 변경 없음. Agent의 API 인터페이스도 동일 — 연결 경로만 FRP로 변경.
 
+### Agent 자율성
+Agent 소유자가 자신의 인프라를 직접 모니터링하고 제어할 수 있음. 감사 로그로 Hub의 모든 명령을 투명하게 확인. 리소스 제한으로 과도한 사용 방지. Hub 장애 시에도 기존 워크스페이스 계속 동작.
+
 ## 단점
 
 ### FRP 단일 장애점
@@ -201,6 +293,9 @@ Agent 추가/제거, heartbeat 감시, OFFLINE 감지 등 새로운 운영 부�
 
 ### 네트워크 지연
 FRP 터널 경유로 인한 지연 추가. Observer의 1s 폴링이 터널 지연을 포함하게 됨. (실제로는 수 ms 수준이므로 큰 영향 없음)
+
+### Agent Dashboard 개발 비용
+Agent가 headless API 서버에서 자체 UI를 가진 서비스로 확장됨. 프론트엔드 개발 및 유지보수 부담 추가. 다만 Agent Dashboard는 로컬 관리용이므로 CP Dashboard 대비 단순한 UI로 충분.
 
 ## 대안 (선택하지 않음)
 
