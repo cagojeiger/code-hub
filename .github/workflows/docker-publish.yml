@@ -23,6 +23,13 @@ on:
           - agent
           - storage-job
 
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-publish-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   get-version:
     runs-on: ubuntu-latest
@@ -31,59 +38,72 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Extract version from __init__.py
+      - name: Extract version
         id: version
         run: |
-          VERSION=$(grep -oP '__version__\s*=\s*"\K[^"]+' src/codehub/__init__.py)
+          set -euo pipefail
+          VERSION=$(python3 -c "
+          import re, sys
+          from pathlib import Path
+          m = re.search(r'__version__\s*=\"([^\"]+)\"', Path('src/codehub/__init__.py').read_text())
+          if not m or not m.group(1).strip():
+              sys.exit(1)
+          print(m.group(1).strip())
+          ")
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "::notice::Version: $VERSION"
 
+  select-images:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Build matrix
+        id: set-matrix
+        env:
+          IMAGE_INPUT: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+
+          all_images = [
+            {"name": "control-plane", "context": "./src", "dockerfile": "./src/Dockerfile", "image": "codehub-control-plane"},
+            {"name": "agent", "context": "./src", "dockerfile": "./src/Dockerfile.agent", "image": "codehub-agent"},
+            {"name": "storage-job", "context": "./containers/storage-job", "dockerfile": "./containers/storage-job/Dockerfile", "image": "codehub-storage-job"},
+          ]
+
+          choice = (os.environ.get("IMAGE_INPUT") or "").strip() or "all"
+          selected = all_images if choice == "all" else [i for i in all_images if i["name"] == choice]
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"matrix={json.dumps({'include': selected})}\n")
+          print(f"Selected: {', '.join(i['name'] for i in selected)}")
+          PY
+
   build-and-push:
-    needs: get-version
+    needs: [get-version, select-images]
+    if: needs.select-images.outputs.matrix != '' && needs.select-images.outputs.matrix != '{"include":[]}'
     runs-on: ubuntu-latest
     strategy:
-      matrix:
-        include:
-          - name: control-plane
-            context: ./src
-            dockerfile: ./src/Dockerfile
-            image: codehub-control-plane
-          - name: agent
-            context: ./src
-            dockerfile: ./src/Dockerfile.agent
-            image: codehub-agent
-          - name: storage-job
-            context: ./containers/storage-job
-            dockerfile: ./containers/storage-job/Dockerfile
-            image: codehub-storage-job
+      fail-fast: false
+      matrix: ${{ fromJson(needs.select-images.outputs.matrix) }}
     steps:
-      - name: Check if should build
-        id: check
-        run: |
-          if [ "${{ github.event_name }}" != "workflow_dispatch" ] || \
-             [ "${{ github.event.inputs.image }}" = "all" ] || \
-             [ "${{ github.event.inputs.image }}" = "${{ matrix.name }}" ]; then
-            echo "skip=false" >> $GITHUB_OUTPUT
-          else
-            echo "skip=true" >> $GITHUB_OUTPUT
-          fi
-
       - uses: actions/checkout@v4
-        if: steps.check.outputs.skip == 'false'
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        if: steps.check.outputs.skip == 'false'
         uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
-        if: steps.check.outputs.skip == 'false'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push
-        if: steps.check.outputs.skip == 'false'
         uses: docker/build-push-action@v5
         with:
           context: ${{ matrix.context }}
