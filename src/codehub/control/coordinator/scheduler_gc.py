@@ -131,7 +131,7 @@ class GCRunner:
                 text("""
                     SELECT DISTINCT archive_key
                     FROM workspaces
-                    WHERE archive_key IS NOT NULL AND deleted_at IS NULL
+                    WHERE archive_key IS NOT NULL AND phase != 'DELETED'
                 """)
             )
             archive_keys = [row[0] for row in result1.fetchall()]
@@ -141,7 +141,7 @@ class GCRunner:
                 text("""
                     SELECT DISTINCT id::text, archive_op_id
                     FROM workspaces
-                    WHERE archive_op_id IS NOT NULL AND deleted_at IS NULL
+                    WHERE archive_op_id IS NOT NULL AND phase != 'DELETED'
                 """)
             )
             protected_workspaces = [(row[0], row[1]) for row in result2.fetchall()]
@@ -162,7 +162,7 @@ class GCRunner:
     async def _get_valid_workspace_ids(self) -> set[str]:
         """Get valid workspace IDs from DB."""
         result = await self._conn.execute(
-            text("SELECT id::text FROM workspaces WHERE deleted_at IS NULL")
+            text("SELECT id::text FROM workspaces WHERE phase != 'DELETED'")
         )
         ws_ids = {row[0] for row in result.fetchall()}
         logger.debug("Found %d valid workspaces in DB", len(ws_ids))

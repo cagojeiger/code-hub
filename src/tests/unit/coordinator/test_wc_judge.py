@@ -126,6 +126,52 @@ class TestDeletionHandling:
         assert output.phase == Phase.DELETED
         assert output.healthy is True
 
+    def test_jdg_008_deleted_with_archive_only_returns_deleted(self):
+        """JDG-008: deleted_at + archive only (no container/volume) → DELETED.
+
+        Archive cleanup is GC Runner's responsibility, not DELETING operation's.
+        Without this, DELETING loops every 10s until GC cleans the archive (4h).
+        """
+        cond = ConditionInput(
+            container_ready=False,
+            volume_ready=False,
+            archive_ready=True,
+        )
+        input = JudgeInput(conditions=cond, deleted_at=True)
+
+        output = judge(input)
+
+        assert output.phase == Phase.DELETED
+        assert output.healthy is True
+
+    def test_jdg_009_deleted_with_volume_returns_deleting(self):
+        """JDG-009: deleted_at + volume (no container) → DELETING."""
+        cond = ConditionInput(
+            container_ready=False,
+            volume_ready=True,
+            archive_ready=False,
+        )
+        input = JudgeInput(conditions=cond, deleted_at=True)
+
+        output = judge(input)
+
+        assert output.phase == Phase.DELETING
+        assert output.healthy is True
+
+    def test_jdg_010_deleted_with_volume_and_archive_returns_deleting(self):
+        """JDG-010: deleted_at + volume + archive → DELETING (volume needs cleanup)."""
+        cond = ConditionInput(
+            container_ready=False,
+            volume_ready=True,
+            archive_ready=True,
+        )
+        input = JudgeInput(conditions=cond, deleted_at=True)
+
+        output = judge(input)
+
+        assert output.phase == Phase.DELETING
+        assert output.healthy is True
+
 
 class TestOrderPriority:
     """판단 순서 검증 (JDG-ORD-001 ~ JDG-ORD-003)."""
