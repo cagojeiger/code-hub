@@ -1,0 +1,87 @@
+name: Docker Image Publish
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/Dockerfile'
+      - 'src/Dockerfile.agent'
+      - 'src/codehub/**'
+      - 'src/codehub_agent/**'
+      - 'src/pyproject.toml'
+      - 'containers/storage-job/**'
+  workflow_dispatch:
+    inputs:
+      image:
+        description: 'Image to build (control-plane, agent, storage-job, all)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - control-plane
+          - agent
+          - storage-job
+
+jobs:
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from __init__.py
+        id: version
+        run: |
+          VERSION=$(grep -oP '__version__\s*=\s*"\K[^"]+' src/codehub/__init__.py)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "::notice::Version: $VERSION"
+
+  build-and-push:
+    needs: get-version
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - name: control-plane
+            context: ./src
+            dockerfile: ./src/Dockerfile
+            image: codehub-control-plane
+          - name: agent
+            context: ./src
+            dockerfile: ./src/Dockerfile.agent
+            image: codehub-agent
+          - name: storage-job
+            context: ./containers/storage-job
+            dockerfile: ./containers/storage-job/Dockerfile
+            image: codehub-storage-job
+    # Skip if specific image requested and this isn't it
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.image == 'all' ||
+      github.event.inputs.image == matrix.name
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:${{ needs.get-version.outputs.version }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
