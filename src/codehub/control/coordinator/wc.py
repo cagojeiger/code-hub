@@ -443,7 +443,7 @@ class WorkspaceController(CoordinatorBase):
         - OR phase == RUNNING (always check - container may be deleted externally)
         """
         stmt = select(Workspace).where(
-            Workspace.deleted_at.is_(None),
+            Workspace.phase != Phase.DELETED.value,
             or_(
                 Workspace.operation != Operation.NONE.value,
                 Workspace.phase != Workspace.desired_state,
