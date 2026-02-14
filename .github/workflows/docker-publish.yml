@@ -45,7 +45,7 @@ jobs:
           VERSION=$(python3 -c "
           import re, sys
           from pathlib import Path
-          m = re.search(r'__version__\s*=\"([^\"]+)\"', Path('src/codehub/__init__.py').read_text())
+          m = re.search(r'__version__\s*=\s*\"([^\"]+)\"', Path('src/codehub/__init__.py').read_text())
           if not m or not m.group(1).strip():
               sys.exit(1)
           print(m.group(1).strip())
