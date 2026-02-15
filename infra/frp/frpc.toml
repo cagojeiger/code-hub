@@ -1,0 +1,15 @@
+serverAddr = "frps"
+serverPort = 7000
+
+auth.method = "token"
+auth.token = "codehub-dev-token"
+
+log.to = "console"
+log.level = "info"
+
+[[proxies]]
+name = "agent-api"
+type = "tcp"
+localIP = "agent"
+localPort = 8081
+remotePort = 6100

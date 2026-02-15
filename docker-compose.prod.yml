@@ -41,7 +41,7 @@ services:
   # Core Application (pre-built images)
   # ---------------------------------------------------------------------------
 
-  # Networks: dp-net (own infra: minio, docker-proxy) + cp-net (Hub communication, simulates FRP tunnel)
+  # Networks: dp-net only (isolated from CP; reachable via FRP tunnel)
   agent:
     image: cagojeiger/codehub-agent:${CODEHUB_VERSION:-0.2.1}
     container_name: codehub-agent
@@ -75,7 +75,6 @@ services:
       start_period: 10s
     networks:
       - dp-net
-      - cp-net
     <<: [*dns, *logging, *restart]
 
   # Networks: cp-net only (CP is a gatekeeper — no direct access to MinIO/Docker)
@@ -87,7 +86,7 @@ services:
     environment:
       <<: *cp-env
       WORKERS: "3"
-      AGENT_ENDPOINT: http://agent:8081
+      AGENT_ENDPOINT: http://frps:6100
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,8 +94,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
-      agent:
-        condition: service_healthy
+      # agent dependency removed — CP is a Hub that starts independently.
+      # Agent connects via FRP tunnel (or cp-net for local dev).
     mem_limit: 512m
     cpus: 1.0
     healthcheck:
@@ -191,6 +190,41 @@ services:
   # Infrastructure
   # ---------------------------------------------------------------------------
 
+  # ---------------------------------------------------------------------------
+  # FRP Tunnel (Hub-Spoke communication)
+  # ---------------------------------------------------------------------------
+
+  # FRP Server — sits in cp-net (reachable by CP) + tunnel-net (reachable by frpc)
+  frps:
+    image: ghcr.io/fatedier/frps:v0.67.0
+    container_name: codehub-frps
+    command: ["-c", "/etc/frp/frps.toml"]
+    volumes:
+      - ./infra/frp/frps.toml:/etc/frp/frps.toml:ro
+    mem_limit: 64m
+    cpus: 0.25
+    networks:
+      - cp-net
+      - tunnel-net
+    <<: [*logging, *restart]
+
+  # FRP Client — sits in dp-net (reaches Agent) + tunnel-net (reaches frps)
+  frpc:
+    image: ghcr.io/fatedier/frpc:v0.67.0
+    container_name: codehub-frpc
+    command: ["-c", "/etc/frp/frpc.toml"]
+    volumes:
+      - ./infra/frp/frpc.toml:/etc/frp/frpc.toml:ro
+    depends_on:
+      - frps
+      - agent
+    mem_limit: 64m
+    cpus: 0.25
+    networks:
+      - dp-net
+      - tunnel-net
+    <<: [*logging, *restart]
+
   docker-proxy:
     image: tecnativa/docker-socket-proxy:latest
     container_name: codehub-docker-proxy
@@ -269,6 +303,9 @@ networks:
     driver: bridge
   dp-net:
     name: codehub-dp-net
+    driver: bridge
+  tunnel-net:
+    name: codehub-tunnel-net
     driver: bridge
 
 volumes:
