@@ -13,11 +13,13 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from codehub_agent import __version__
 from codehub_agent.api.v1 import (
     health_router,
+    proxy_router,
     workspaces_router,
 )
 from codehub_agent.api.errors import AgentError
 from codehub_agent.config import get_agent_config
 from codehub_agent.api.dependencies import close_runtime, init_runtime
+from codehub_agent.api.v1.proxy import close_http_client
 from codehub_agent.infra import ContainerAPI, close_docker
 from codehub_agent.logging import setup_logging
 from codehub_agent.logging_schema import LogEvent
@@ -99,6 +101,7 @@ async def lifespan(app: FastAPI):
 
     yield
     logger.info("Shutting down CodeHub Agent", extra={"event": LogEvent.APP_STOPPED})
+    await close_http_client()
     await close_runtime()
     await close_docker()
 
@@ -166,8 +169,10 @@ async def api_key_middleware(
     """Validate API key for non-health endpoints."""
     config = get_agent_config()
 
-    # Skip auth for health and metrics endpoints
     if request.url.path in ("/health", "/metrics"):
+        return await call_next(request)
+
+    if request.url.path.startswith("/w/"):
         return await call_next(request)
 
     # If API key is configured, validate it
@@ -200,6 +205,9 @@ async def metrics() -> Response:
 
 # API v1 endpoints with /api/v1 prefix (Fire-and-Forget pattern)
 app.include_router(workspaces_router, prefix="/api/v1")
+
+# Workspace proxy (no prefix — receives /w/{workspace_id}/{path} from CP)
+app.include_router(proxy_router)
 
 
 def main() -> None:
