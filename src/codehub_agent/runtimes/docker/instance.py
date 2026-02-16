@@ -39,6 +39,10 @@ class UpstreamInfo(BaseModel):
     def url(self) -> str:
         return f"http://{self.hostname}:{self.port}"
 
+    @property
+    def ws_url(self) -> str:
+        return f"ws://{self.hostname}:{self.port}"
+
 
 class ContainerInfo(BaseModel):
     """Container information for list operations."""

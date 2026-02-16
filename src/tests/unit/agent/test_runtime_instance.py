@@ -286,3 +286,4 @@ class TestInstanceManager:
         assert result.hostname == "codehub-ws1"
         assert result.port == 8080
         assert result.url == "http://codehub-ws1:8080"
+        assert result.ws_url == "ws://codehub-ws1:8080"
