@@ -1,12 +1,12 @@
-"""HTTP and WebSocket transport to upstream containers.
+"""Forward proxy transport: CP -> Agent (via FRP tunnel).
 
-Configuration via ProxyConfig (PROXY_ env prefix).
+CP authenticates the user and forwards the request to Agent.
+Agent handles the actual proxy to workspace containers.
 """
 
 import asyncio
 import contextlib
 import logging
-import time
 from collections.abc import AsyncGenerator
 
 import httpx
@@ -14,90 +14,39 @@ import websockets
 from fastapi import Request
 from fastapi.responses import StreamingResponse
 from starlette.websockets import WebSocket, WebSocketDisconnect
-
 from websockets.asyncio.client import ClientConnection
 
 from codehub.app.config import get_settings
-from codehub.app.metrics.collector import (
-    WS_ACTIVE_CONNECTIONS,
-    WS_ERRORS,
-    WS_MESSAGE_LATENCY,
-)
 from codehub.core.errors import UpstreamUnavailableError
-from codehub.core.interfaces.runtime import UpstreamInfo
 from codehub.core.logging_schema import LogEvent
 
-from .activity import get_activity_buffer
 from .client import WS_HOP_BY_HOP_HEADERS, filter_headers, get_http_client
 
 logger = logging.getLogger(__name__)
 
+_proxy_config = get_settings().proxy
 
-async def _stream_http_response(
+
+async def _stream_response(
     upstream_response: httpx.Response,
 ) -> AsyncGenerator[bytes, None]:
-    """Stream response chunks from upstream and ensure cleanup."""
     try:
         async for chunk in upstream_response.aiter_raw():
             yield chunk
     finally:
         await upstream_response.aclose()
 
-_proxy_config = get_settings().proxy
-_activity_buffer = get_activity_buffer()
 
-
-async def _relay_client_to_backend(
-    client_ws: WebSocket,
-    backend_ws: ClientConnection,
-    workspace_id: str,
-) -> None:
-    """Relay messages from client WebSocket to backend WebSocket."""
-    while True:
-        data = await client_ws.receive()
-        if data["type"] == "websocket.receive":
-            start = time.perf_counter()
-            _activity_buffer.record(workspace_id)
-            if "text" in data:
-                await backend_ws.send(data["text"])
-            elif "bytes" in data:
-                await backend_ws.send(data["bytes"])
-            WS_MESSAGE_LATENCY.labels(direction="client_to_backend").observe(
-                time.perf_counter() - start
-            )
-        elif data["type"] == "websocket.disconnect":
-            break
-
-
-async def _relay_backend_to_client(
-    client_ws: WebSocket,
-    backend_ws: ClientConnection,
-    workspace_id: str,
-) -> None:
-    """Relay messages from backend WebSocket to client WebSocket."""
-    async for message in backend_ws:
-        start = time.perf_counter()
-        _activity_buffer.record(workspace_id)
-        if isinstance(message, str):
-            await client_ws.send_text(message)
-        else:
-            await client_ws.send_bytes(message)
-        WS_MESSAGE_LATENCY.labels(direction="backend_to_client").observe(
-            time.perf_counter() - start
-        )
-
-
-async def proxy_http_to_upstream(
+async def forward_http_to_agent(
     request: Request,
-    upstream: UpstreamInfo,
-    path: str,
+    agent_endpoint: str,
     workspace_id: str,
+    path: str,
 ) -> StreamingResponse:
-    """Proxy HTTP request to upstream. Raises UpstreamUnavailableError on failure."""
-    target_path = f"/{path}" if path else "/"
+    target_path = f"/w/{workspace_id}/{path}" if path else f"/w/{workspace_id}/"
     if request.url.query:
         target_path = f"{target_path}?{request.url.query}"
-    target_url = f"{upstream.url}{target_path}"
+    target_url = f"{agent_endpoint}{target_path}"
 
     headers = filter_headers(dict(request.headers))
     http_client = await get_http_client()
@@ -114,13 +63,13 @@ async def proxy_http_to_upstream(
         response_headers = filter_headers(dict(upstream_response.headers))
 
         return StreamingResponse(
-            _stream_http_response(upstream_response),
+            _stream_response(upstream_response),
             status_code=upstream_response.status_code,
             headers=response_headers,
         )
     except httpx.ConnectError as exc:
         logger.warning(
-            "Connection error to upstream",
+            "Connection error to Agent",
             extra={
                 "event": LogEvent.UPSTREAM_ERROR,
                 "ws_id": workspace_id,
@@ -132,7 +81,7 @@ async def proxy_http_to_upstream(
         raise UpstreamUnavailableError() from exc
     except httpx.TimeoutException as exc:
         logger.warning(
-            "Timeout connecting to upstream",
+            "Timeout connecting to Agent",
             extra={
                 "event": LogEvent.UPSTREAM_ERROR,
                 "ws_id": workspace_id,
@@ -144,21 +93,52 @@ async def proxy_http_to_upstream(
         raise UpstreamUnavailableError() from exc
 
 
-async def proxy_ws_to_upstream(
-    websocket: WebSocket,
-    upstream: UpstreamInfo,
-    path: str,
-    workspace_id: str,
+async def _relay_client_to_backend(
+    client_ws: WebSocket,
+    backend_ws: ClientConnection,
 ) -> None:
-    """Proxy WebSocket to upstream and relay messages."""
-    target_path = f"/{path}" if path else "/"
+    while True:
+        data = await client_ws.receive()
+        if data["type"] == "websocket.receive":
+            if "text" in data:
+                await backend_ws.send(data["text"])
+            elif "bytes" in data:
+                await backend_ws.send(data["bytes"])
+        elif data["type"] == "websocket.disconnect":
+            break
+
+
+async def _relay_backend_to_client(
+    client_ws: WebSocket,
+    backend_ws: ClientConnection,
+) -> None:
+    async for message in backend_ws:
+        if isinstance(message, str):
+            await client_ws.send_text(message)
+        else:
+            await client_ws.send_bytes(message)
+
+
+async def forward_ws_to_agent(
+    websocket: WebSocket,
+    agent_endpoint: str,
+    workspace_id: str,
+    path: str,
+) -> None:
+    target_path = f"/w/{workspace_id}/{path}" if path else f"/w/{workspace_id}/"
     query_string = websocket.scope.get("query_string", b"").decode()
     if query_string:
         target_path = f"{target_path}?{query_string}"
-    upstream_ws_uri = f"{upstream.ws_url}{target_path}"
+
+    ws_endpoint = agent_endpoint.replace("http://", "ws://").replace(
+        "https://", "wss://"
+    )
+    upstream_ws_uri = f"{ws_endpoint}{target_path}"
 
     extra_headers = {
-        k: v for k, v in websocket.headers.items() if k.lower() not in WS_HOP_BY_HOP_HEADERS
+        k: v
+        for k, v in websocket.headers.items()
+        if k.lower() not in WS_HOP_BY_HOP_HEADERS
     }
 
     try:
@@ -170,79 +150,45 @@ async def proxy_ws_to_upstream(
             max_size=_proxy_config.ws_max_size,
             max_queue=_proxy_config.ws_max_queue,
         )
-    except websockets.InvalidURI as exc:
-        WS_ERRORS.labels(error_type="invalid_uri").inc()
-        logger.warning(
-            "Invalid WebSocket URI",
-            extra={
-                "event": LogEvent.WS_ERROR,
-                "ws_id": workspace_id,
-                "upstream_url": upstream_ws_uri,
-                "error_type": "invalid_uri",
-                "error": str(exc),
-            },
-        )
-        await websocket.close(code=1011, reason="Invalid upstream URI")
-        return
-    except websockets.InvalidHandshake as exc:
-        WS_ERRORS.labels(error_type="handshake_failed").inc()
-        logger.warning(
-            "WebSocket handshake failed",
-            extra={
-                "event": LogEvent.WS_ERROR,
-                "ws_id": workspace_id,
-                "upstream_url": upstream_ws_uri,
-                "error_type": "handshake_failed",
-                "error": str(exc),
-            },
-        )
-        await websocket.close(code=1011, reason="Upstream handshake failed")
-        return
     except Exception as exc:
-        WS_ERRORS.labels(error_type="connection_failed").inc()
         logger.warning(
-            "Failed to connect to upstream WebSocket",
+            "WebSocket connection to Agent failed",
             extra={
                 "event": LogEvent.WS_ERROR,
                 "ws_id": workspace_id,
                 "upstream_url": upstream_ws_uri,
-                "error_type": "connection_failed",
                 "error": str(exc),
             },
         )
-        await websocket.close(code=1011, reason="Upstream connection failed")
+        await websocket.close(code=1011, reason="Agent connection failed")
         return
 
     await websocket.accept()
-    WS_ACTIVE_CONNECTIONS.inc()
 
     try:
         async with backend_ws:
             try:
                 async with asyncio.TaskGroup() as tg:
                     tg.create_task(
-                        _relay_client_to_backend(websocket, backend_ws, workspace_id)
+                        _relay_client_to_backend(websocket, backend_ws)
                     )
                     tg.create_task(
-                        _relay_backend_to_client(websocket, backend_ws, workspace_id)
+                        _relay_backend_to_client(websocket, backend_ws)
                     )
             except* WebSocketDisconnect:
                 pass
             except* websockets.ConnectionClosed:
-                WS_ERRORS.labels(error_type="connection_closed").inc()
+                pass
     except Exception as exc:
-        WS_ERRORS.labels(error_type="relay_error").inc()
         logger.error(
-            "WebSocket proxy error",
+            "WebSocket relay error",
             extra={
                 "event": LogEvent.WS_ERROR,
                 "ws_id": workspace_id,
                 "upstream_url": upstream_ws_uri,
-                "error_type": "relay_error",
                 "error": str(exc),
             },
         )
     finally:
-        WS_ACTIVE_CONNECTIONS.dec()
         with contextlib.suppress(Exception):
             await websocket.close()

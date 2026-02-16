@@ -1,4 +1,8 @@
-"""Workspace proxy routes: /w/{workspace_id}/* -> container."""
+"""Workspace proxy routes: /w/{workspace_id}/* -> Agent -> container.
+
+CP handles authentication/authorization, then forwards traffic to Agent via FRP.
+Agent handles the actual proxy to workspace containers (Double Proxy).
+"""
 
 import logging
 from typing import Annotated
@@ -8,56 +12,37 @@ from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocket
 
-from codehub.agent.client import AgentClient, AgentConfig
 from codehub.app.config import get_settings
 from codehub.core.errors import (
     ForbiddenError,
     UnauthorizedError,
-    UpstreamUnavailableError,
     WorkspaceNotFoundError,
 )
-from codehub.core.interfaces.runtime import WorkspaceRuntime
 from codehub.infra import get_session
 
 from .activity import get_activity_buffer
 from .auth import get_user_id_from_session, get_workspace_for_user
 from .policy import ProxyDecision, decide_http, decide_ws
-from .transport import proxy_http_to_upstream, proxy_ws_to_upstream
+from .transport import forward_http_to_agent, forward_ws_to_agent
 
 logger = logging.getLogger(__name__)
 
 _activity_buffer = get_activity_buffer()
+_settings = get_settings()
 router = APIRouter(tags=["proxy"])
 
 DbSession = Annotated[AsyncSession, Depends(get_session)]
 
-_runtime: WorkspaceRuntime | None = None
-
-
-def get_runtime() -> WorkspaceRuntime:
-    global _runtime
-    if _runtime is None:
-        settings = get_settings()
-        config = AgentConfig(
-            endpoint=settings.agent.endpoint,
-            api_key=settings.agent.api_key,
-            timeout=settings.agent.timeout,
-            job_timeout=settings.agent.job_timeout,
-        )
-        _runtime = AgentClient(config)
-    return _runtime
-
-
-Runtime = Annotated[WorkspaceRuntime, Depends(get_runtime)]
-
 
 @router.get("/w/{workspace_id}")
-async def trailing_slash_redirect(workspace_id: str) -> RedirectResponse:
-    """308 Permanent Redirect to add trailing slash."""
-    return RedirectResponse(
-        url=f"/w/{workspace_id}/",
-        status_code=308,
-    )
+async def trailing_slash_redirect(
+    workspace_id: str, request: Request
+) -> RedirectResponse:
+    qs = str(request.url.query)
+    target = f"/w/{workspace_id}/"
+    if qs:
+        target = f"{target}?{qs}"
+    return RedirectResponse(url=target, status_code=308)
 
 
 @router.api_route(
@@ -70,10 +55,8 @@ async def proxy_http(
     path: str,
     request: Request,
     db: DbSession,
-    runtime: Runtime,
     session: Annotated[str | None, Cookie(alias="session")] = None,
 ) -> StreamingResponse | RedirectResponse:
-    """Proxy HTTP requests to workspace container."""
     user_id = await get_user_id_from_session(db, session)
     workspace = await get_workspace_for_user(db, workspace_id, user_id)
 
@@ -83,11 +66,9 @@ async def proxy_http(
 
     _activity_buffer.record(workspace_id)
 
-    upstream = await runtime.get_upstream(workspace_id)
-    if upstream is None:
-        raise UpstreamUnavailableError()
-
-    return await proxy_http_to_upstream(request, upstream, path, workspace_id)
+    return await forward_http_to_agent(
+        request, _settings.agent.endpoint, workspace_id, path
+    )
 
 
 @router.websocket("/w/{workspace_id}/{path:path}")
@@ -96,9 +77,7 @@ async def proxy_websocket(
     workspace_id: str,
     path: str,
     db: DbSession,
-    runtime: Runtime,
 ) -> None:
-    """Proxy WebSocket connections to workspace container."""
     session_cookie = websocket.cookies.get("session")
     try:
         user_id = await get_user_id_from_session(db, session_cookie)
@@ -123,9 +102,6 @@ async def proxy_websocket(
 
     _activity_buffer.record(workspace_id)
 
-    upstream = await runtime.get_upstream(workspace_id)
-    if upstream is None:
-        await websocket.close(code=1011, reason="Upstream unavailable")
-        return
-
-    await proxy_ws_to_upstream(websocket, upstream, path, workspace_id)
+    await forward_ws_to_agent(
+        websocket, _settings.agent.endpoint, workspace_id, path
+    )

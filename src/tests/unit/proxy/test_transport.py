@@ -1,13 +1,11 @@
-"""Tests for WebSocket relay functions in transport module.
+"""Tests for WebSocket relay and HTTP forwarding in transport module.
 
-Verifies that WebSocket messages trigger activity recording.
+CP transport forwards requests to Agent (via FRP tunnel).
+Activity recording is handled by the router, not the relay functions.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
-import codehub.app.proxy.transport as transport_module
 from codehub.app.proxy.transport import (
     _relay_client_to_backend,
     _relay_backend_to_client,
@@ -17,13 +15,11 @@ from codehub.app.proxy.transport import (
 class TestRelayClientToBackend:
     """_relay_client_to_backend() tests."""
 
-    async def test_records_activity_on_text_message(self):
-        """record() is called when client sends text message."""
+    async def test_forwards_text_message(self):
+        """Text message is forwarded to backend."""
         mock_client_ws = AsyncMock()
         mock_backend_ws = AsyncMock()
-        workspace_id = "test-ws-123"
 
-        # Simulate: receive text message, then disconnect
         mock_client_ws.receive = AsyncMock(
             side_effect=[
                 {"type": "websocket.receive", "text": "hello"},
@@ -31,20 +27,14 @@ class TestRelayClientToBackend:
             ]
         )
 
-        mock_buffer = MagicMock()
-        with patch.object(transport_module, "_activity_buffer", mock_buffer):
-            await _relay_client_to_backend(mock_client_ws, mock_backend_ws, workspace_id)
+        await _relay_client_to_backend(mock_client_ws, mock_backend_ws)
 
-            # record() should be called once
-            mock_buffer.record.assert_called_once_with(workspace_id)
-            # Text should be sent to backend
-            mock_backend_ws.send.assert_called_once_with("hello")
+        mock_backend_ws.send.assert_called_once_with("hello")
 
-    async def test_records_activity_on_bytes_message(self):
-        """record() is called when client sends bytes message."""
+    async def test_forwards_bytes_message(self):
+        """Bytes message is forwarded to backend."""
         mock_client_ws = AsyncMock()
         mock_backend_ws = AsyncMock()
-        workspace_id = "test-ws-123"
 
         mock_client_ws.receive = AsyncMock(
             side_effect=[
@@ -53,20 +43,15 @@ class TestRelayClientToBackend:
             ]
         )
 
-        mock_buffer = MagicMock()
-        with patch.object(transport_module, "_activity_buffer", mock_buffer):
-            await _relay_client_to_backend(mock_client_ws, mock_backend_ws, workspace_id)
+        await _relay_client_to_backend(mock_client_ws, mock_backend_ws)
 
-            mock_buffer.record.assert_called_once_with(workspace_id)
-            mock_backend_ws.send.assert_called_once_with(b"\x00\x01\x02")
+        mock_backend_ws.send.assert_called_once_with(b"\x00\x01\x02")
 
-    async def test_records_activity_on_each_message(self):
-        """record() is called for each message."""
+    async def test_forwards_multiple_messages(self):
+        """Multiple messages are all forwarded."""
         mock_client_ws = AsyncMock()
         mock_backend_ws = AsyncMock()
-        workspace_id = "test-ws-123"
 
-        # 3 messages before disconnect
         mock_client_ws.receive = AsyncMock(
             side_effect=[
                 {"type": "websocket.receive", "text": "msg1"},
@@ -76,76 +61,59 @@ class TestRelayClientToBackend:
             ]
         )
 
-        mock_buffer = MagicMock()
-        with patch.object(transport_module, "_activity_buffer", mock_buffer):
-            await _relay_client_to_backend(mock_client_ws, mock_backend_ws, workspace_id)
+        await _relay_client_to_backend(mock_client_ws, mock_backend_ws)
 
-            # record() should be called 3 times
-            assert mock_buffer.record.call_count == 3
+        assert mock_backend_ws.send.call_count == 3
 
     async def test_stops_on_disconnect(self):
         """Relay stops when client disconnects."""
         mock_client_ws = AsyncMock()
         mock_backend_ws = AsyncMock()
-        workspace_id = "test-ws-123"
 
         mock_client_ws.receive = AsyncMock(
             return_value={"type": "websocket.disconnect"}
         )
 
-        mock_buffer = MagicMock()
-        with patch.object(transport_module, "_activity_buffer", mock_buffer):
-            await _relay_client_to_backend(mock_client_ws, mock_backend_ws, workspace_id)
+        await _relay_client_to_backend(mock_client_ws, mock_backend_ws)
 
-            # No messages received, no record() calls
-            mock_buffer.record.assert_not_called()
+        mock_backend_ws.send.assert_not_called()
 
 
 class TestRelayBackendToClient:
     """_relay_backend_to_client() tests."""
 
-    async def test_records_activity_on_text_message(self):
-        """record() is called when backend sends text message."""
+    async def test_forwards_text_message(self):
+        """Text message from backend is forwarded to client."""
         mock_client_ws = AsyncMock()
         mock_backend_ws = MagicMock()
-        workspace_id = "test-ws-123"
 
-        # Mock async iterator
         async def mock_iter():
             yield "hello from backend"
 
         mock_backend_ws.__aiter__ = lambda self: mock_iter()
 
-        mock_buffer = MagicMock()
-        with patch.object(transport_module, "_activity_buffer", mock_buffer):
-            await _relay_backend_to_client(mock_client_ws, mock_backend_ws, workspace_id)
+        await _relay_backend_to_client(mock_client_ws, mock_backend_ws)
 
-            mock_buffer.record.assert_called_once_with(workspace_id)
-            mock_client_ws.send_text.assert_called_once_with("hello from backend")
+        mock_client_ws.send_text.assert_called_once_with("hello from backend")
 
-    async def test_records_activity_on_bytes_message(self):
-        """record() is called when backend sends bytes message."""
+    async def test_forwards_bytes_message(self):
+        """Bytes message from backend is forwarded to client."""
         mock_client_ws = AsyncMock()
         mock_backend_ws = MagicMock()
-        workspace_id = "test-ws-123"
 
         async def mock_iter():
             yield b"\x00\x01\x02"
 
         mock_backend_ws.__aiter__ = lambda self: mock_iter()
 
-        mock_buffer = MagicMock()
-        with patch.object(transport_module, "_activity_buffer", mock_buffer):
-            await _relay_backend_to_client(mock_client_ws, mock_backend_ws, workspace_id)
+        await _relay_backend_to_client(mock_client_ws, mock_backend_ws)
 
-            mock_buffer.record.assert_called_once_with(workspace_id)
-            mock_client_ws.send_bytes.assert_called_once_with(b"\x00\x01\x02")
+        mock_client_ws.send_bytes.assert_called_once_with(b"\x00\x01\x02")
 
-    async def test_records_activity_on_each_message(self):
-        """record() is called for each backend message."""
+    async def test_forwards_multiple_messages(self):
+        """Multiple backend messages are all forwarded."""
         mock_client_ws = AsyncMock()
         mock_backend_ws = MagicMock()
-        workspace_id = "test-ws-123"
 
         async def mock_iter():
             yield "msg1"
@@ -154,9 +122,7 @@ class TestRelayBackendToClient:
 
         mock_backend_ws.__aiter__ = lambda self: mock_iter()
 
-        mock_buffer = MagicMock()
-        with patch.object(transport_module, "_activity_buffer", mock_buffer):
-            await _relay_backend_to_client(mock_client_ws, mock_backend_ws, workspace_id)
+        await _relay_backend_to_client(mock_client_ws, mock_backend_ws)
 
-            # record() should be called 3 times
-            assert mock_buffer.record.call_count == 3
+        assert mock_client_ws.send_text.call_count == 2
+        mock_client_ws.send_bytes.assert_called_once_with(b"msg3")
