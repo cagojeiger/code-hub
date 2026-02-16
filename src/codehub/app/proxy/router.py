@@ -62,6 +62,7 @@ async def proxy_http(
 
     policy_result = await decide_http(db, workspace, user_id)
     if policy_result.decision != ProxyDecision.ALLOW:
+        assert policy_result.response is not None
         return policy_result.response
 
     _activity_buffer.record(workspace_id)
@@ -95,7 +96,7 @@ async def proxy_websocket(
     policy_result = decide_ws(workspace)
     if policy_result.decision != ProxyDecision.ALLOW:
         await websocket.close(
-            code=policy_result.ws_close_code,
+            code=policy_result.ws_close_code or 1008,
             reason=policy_result.ws_close_reason,
         )
         return

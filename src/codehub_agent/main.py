@@ -2,7 +2,7 @@
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Callable
+from collections.abc import Awaitable, Callable
 
 import uvicorn
 from fastapi import FastAPI, Request, Response
@@ -56,7 +56,7 @@ async def cleanup_orphaned_job_containers() -> None:
             return
 
         # Extract container names
-        names = [c["Names"][0].lstrip("/") for c in containers]
+        names = [c.Names[0].lstrip("/") for c in containers]
 
         # Log containers to be removed
         for name in names:
@@ -164,7 +164,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 # API key authentication middleware
 @app.middleware("http")
 async def api_key_middleware(
-    request: Request, call_next: Callable[[Request], Response]
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ) -> Response:
     """Validate API key for non-health endpoints."""
     config = get_agent_config()
