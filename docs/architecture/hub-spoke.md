@@ -13,7 +13,7 @@ flowchart TB
     subgraph Hub["OCI K8s Cluster (Hub)"]
         subgraph CP["Control Plane"]
             API["API Server<br/>(FastAPI)"]
-            Proxy["Reverse Proxy"]
+            FwdProxy["Forward Proxy<br/>(인증 후 포워딩)"]
             subgraph Coord["Coordinator"]
                 OB["Observer"]
                 WC["WC"]
@@ -29,23 +29,26 @@ flowchart TB
         API --> Redis
         Coord --> DB
         Coord --> Redis
-        Proxy --> FRPS
+        FwdProxy --> FRPS
     end
 
     subgraph Agent1["Agent Site (NAT 뒤)"]
         FRPC1["frpc"]
-        AG1["Agent<br/>(FastAPI)"]
+        AG1["Agent<br/>(DP Gateway)"]
+        WSProxy["Workspace Proxy<br/>(HTTP + WebSocket)"]
         MINIO1["MinIO"]
         RT1["Container Runtime<br/>(Docker / K8s)"]
 
         FRPC1 --> AG1
+        AG1 --> WSProxy
+        WSProxy --> RT1
         AG1 --> MINIO1
         AG1 --> RT1
     end
 
     FRPC1 -.->|"FRP Tunnel"| FRPS
-    Coord -->|"via frps"| AG1
-    Proxy -->|"via frps"| RT1
+    Coord -->|"API (via frps)"| AG1
+    FwdProxy -->|"트래픽 포워딩 (via frps)"| WSProxy
 ```
 
 ---
@@ -73,10 +76,12 @@ CP ──HTTP──▶ frps ◀──frpc── Agent (NAT 뒤 어디서든)
 | 트래픽 | 방향 | 경로 | 데이터 크기 |
 |--------|------|------|------------|
 | 제어 명령 (observe, start, stop...) | Hub → Agent (via frps) | CP → frps → frpc → Agent API | 수 KB (JSON) |
-| Workspace 프록시 (code-server) | User → Agent (via frps) | Browser → frps → frpc → Container | 실시간 스트림 |
+| Workspace 프록시 (code-server) | User → Agent (via frps) | Browser → CP(인증) → frps → frpc → **Agent(프록시)** → Container | 실시간 스트림 |
 | S3 Archive/Restore | Agent 내부 | Agent → MinIO (로컬) | 수 GB |
 
 **대역폭 설계**: FRP 터널은 메타데이터(JSON)와 IDE 스트림만 전달. 볼륨 데이터(GB)는 Agent 로컬의 MinIO에서 처리되므로 터널 병목 없음.
+
+**Double Proxy**: Workspace 트래픽은 CP(인증/포워딩) → Agent(프록시) 이중 경유. CP는 인증만 담당하고, 실제 workspace 컨테이너 프록시는 Agent가 수행한다. CP는 workspace 컨테이너 IP를 알 필요가 없다.
 
 ---
 
@@ -112,30 +117,25 @@ server_port = 7000
 authentication_method = token
 token = "<shared-secret>"
 
-# Agent API 터널 (CP → Agent 제어 명령)
+# Agent API + Workspace Proxy 터널 (단일 TCP 터널로 모든 트래픽 처리)
 [[proxies]]
 name = "agent-api"
 type = "tcp"
-local_ip = "127.0.0.1"
-local_port = 8080
+local_ip = "agent"
+local_port = 8081
 remote_port = 6100
-
-# Workspace 프록시 터널 (User → code-server)
-[[proxies]]
-name = "workspace-proxy"
-type = "http"
-local_ip = "127.0.0.1"
-local_port = 8080
-custom_domains = ["ws.hub.example.com"]
 ```
+
+> **Note**: Agent API와 Workspace Proxy가 같은 Agent 프로세스에서 동작하므로, 단일 TCP 터널로 충분하다. Agent가 path 기반으로 API 요청(`/api/v1/*`)과 프록시 요청(`/w/*`)을 분리한다.
 
 ### 연결 흐름
 
 ```
 1. Agent 시작 → frpc가 frps에 연결 (Agent → Hub 방향, NAT 투과)
 2. frps가 remote_port(6100)를 열어 CP가 접근 가능
-3. CP의 agent_client.base_url = "http://frps:6100"
-4. CP → frps:6100 → frpc → Agent:8080 (투명 프록시)
+3. CP의 AGENT_ENDPOINT = "http://frps:6100"
+4. 제어 명령: CP → frps:6100 → frpc → Agent:8081/api/v1/* (투명 프록시)
+5. Workspace: CP → frps:6100 → frpc → Agent:8081/w/* → Container (Agent가 로컬 프록시)
 ```
 
 ---
@@ -150,19 +150,21 @@ custom_domains = ["ws.hub.example.com"]
 | Observer | 변경 없음 | `agent_client.observe()` → frps 경유 |
 | WC | 변경 없음 | `agent_client.start/stop/archive()` → frps 경유 |
 | GC Runner | 변경 없음 | `agent_client.run_gc()` → frps 경유 |
-| Reverse Proxy | 라우팅 변경 | workspace → frps vhost로 프록시 |
+| Forward Proxy | **변경** | workspace 트래픽을 Agent로 포워딩 (인증 후). CP가 container IP를 알 필요 없음 |
 | agent_client | base_url 변경 | 직접 URL → frps 프록시 URL |
 
 **CP에서 제거하는 것**:
 - `S3_*` 환경변수 (MinIO 접근 불필요)
 - `DOCKER_HOST` 환경변수 (Docker 접근 불필요)
 - `depends_on: agent` (네트워크 분리)
+- Container IP 직접 접근 (Agent가 프록시)
 
-### Agent (Data Plane)
+### Agent (Data Plane) — Data Plane Gateway
 
 | 컴포넌트 | 변경 | 상세 |
 |---------|------|------|
 | Agent API | 변경 없음 | REST API 그대로 유지 |
+| **Workspace Proxy** | **신규** | HTTP reverse proxy + WebSocket relay. CP에서 전달받은 트래픽을 로컬 workspace 컨테이너로 중계 |
 | Docker Runtime | 변경 없음 | 로컬 Docker 그대로 |
 | StorageManager | 변경 없음 | 로컬 MinIO 접근 |
 | frpc | **신규** | Hub frps에 연결, 터널 유지 |
@@ -268,23 +270,41 @@ services:
 ### 현재 (v0.2.x)
 
 ```
-User → Reverse Proxy → Docker Container (같은 네트워크)
+User → CP (Reverse Proxy) → Docker Container (같은 네트워크)
+       └─ get_upstream() → container IP 직접 반환
 ```
 
-### 변경 후 (v0.3.0)
+CP가 Agent에 container IP를 물어보고, 해당 IP로 직접 HTTP/WebSocket 프록시.
+
+### 변경 후 (v0.3.0) — Double Proxy
 
 ```
-User → Hub Ingress → frps (vhost) → frpc → Docker Container
+User → CP (Forward Proxy) → FRP 터널 → Agent (Workspace Proxy) → Container
+       └─ 인증/인가만 수행          └─ 로컬 container에 직접 프록시
 ```
 
-### 라우팅 규칙
+### 흐름 상세
+
+1. User가 `GET /w/{workspace_id}/` 요청
+2. **CP**: 세션 쿠키로 인증 → DB에서 workspace 소유권 확인 → 인가
+3. **CP**: 요청을 Agent로 포워딩 (FRP 터널 경유)
+4. **Agent**: workspace_id로 로컬 container 조회 → HTTP/WebSocket 프록시
+5. **Agent → Container**: dp-net 내부 통신 (직접 접근 가능)
+
+### 왜 Double Proxy인가
+
+NAT 격리 환경에서 CP는 workspace 컨테이너에 직접 도달할 수 없다. Agent만이 dp-net에 있으므로 Agent를 경유해야 한다. CP는 인증만 담당하고, container routing은 Agent에 위임한다.
+
+### WebSocket
+
+code-server는 HTTP + WebSocket을 모두 사용한다. Agent의 Workspace Proxy는 양쪽을 모두 지원해야 한다.
 
 ```
-https://ws.hub.example.com/w/{workspace_id}/
-  → frps vhost → frpc → container:{port}
+HTTP:      User → CP → FRP → Agent → Container (요청/응답)
+WebSocket: User ↔ CP ↔ FRP ↔ Agent ↔ Container (양방향 지속 연결)
 ```
 
-Hub의 Reverse Proxy가 workspace_id를 기반으로 올바른 frps vhost 프록시로 라우팅.
+CP와 Agent 모두 stateless relay이므로, CP 인스턴스가 여러 개여도 문제없다. WebSocket 재접속 시 다른 CP 인스턴스로 가도 동일한 workspace container에 도달한다.
 
 ---
 
@@ -313,8 +333,10 @@ Hub-Spoke 전환 시 변경하지 않는 핵심 계약:
 | 항목 | 한계 | 근거 |
 |------|------|------|
 | frps 동시 연결 | ~50 workspace | FRP 벤치마크 기준 |
-| FRP 터널 대역폭 | 제어 명령에 충분 | JSON 메타데이터만 전달 |
+| FRP 터널 대역폭 | 제어 명령 + IDE 스트림 | JSON 메타데이터 + WebSocket 트래픽 |
+| Agent 프록시 부하 | 동시 WebSocket 수에 비례 | Agent가 모든 workspace 트래픽 중계 |
 | Observer 폴링 지연 | +수 ms | FRP 터널 경유 |
+| Double Proxy 지연 | 같은 노드 내 sub-ms | CP→Agent 추가 hop, 체감 미미 |
 
 ### 향후 확장 (v0.4.0+)
 

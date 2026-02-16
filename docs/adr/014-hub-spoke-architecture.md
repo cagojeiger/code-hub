@@ -1,7 +1,7 @@
 # ADR-014: Hub-Spoke 아키텍처 도입
 
 ## 상태
-Proposed
+Accepted (v0.3.0)
 
 ## 컨텍스트
 
@@ -61,9 +61,9 @@ code-hub의 S3 archive lifecycle은 Coder에 없는 고유 기능이므로, Hub-
 2. **FRP 터널을 기본 연결 수단으로 사용** — Agent(frpc)가 Hub(frps)에 연결
 3. **MinIO는 Agent(Data Plane) 쪽에 배치** — CP는 `archive_key` 메타데이터만 관리
 4. **Hub화 먼저, K8s runtime 나중에** — 구현 순서 분리
-5. **CP는 게이트키퍼, Agent는 리소스 제공자** — 역할 명확 분리 (아래 상세)
+5. **CP는 게이트키퍼, Agent는 Data Plane Gateway** — 역할 명확 분리 (아래 상세)
 
-### 역할 분리: 게이트키퍼 vs 리소스 제공자
+### 역할 분리: 게이트키퍼 vs Data Plane Gateway
 
 Hub-Spoke에서 CP와 Agent의 역할은 근본적으로 다르다.
 
@@ -78,21 +78,25 @@ CP는 리소스를 소유하지 않는다. 리소스에 대한 **접근 권한�
 | 라우팅 | 워크스페이스가 어떤 Agent에 있는지 결정 |
 | 상태 조율 | Reconciler로 desired ↔ actual 수렴 |
 | 메타데이터 | workspace, agent, user 정보를 DB에 저장 |
+| 트래픽 포워딩 | 인증된 사용자 트래픽을 Agent로 전달 |
 
 CP에 필요한 인프라: PostgreSQL + Redis. 가벼운 Pod으로 충분하다.
 
-**Agent (DP) = 리소스 제공자**
+**Agent (DP) = Data Plane Gateway**
 
-Agent가 실제 컴퓨팅 리소스를 소유하고 제공한다.
+Agent는 Data Plane으로 들어오는 **모든 트래픽의 유일한 진입점**이다. Runtime API뿐 아니라 사용자의 workspace 접속 트래픽도 Agent를 통해서만 DP에 도달할 수 있다.
 
 | 역할 | 설명 |
 |------|------|
 | 컴퓨트 | 워크스페이스 컨테이너 실행 (Docker/K8s) |
 | 스토리지 | 볼륨 관리, S3 archive/restore |
 | 실행 | Hub의 명령(start, stop, archive 등)을 실제 수행 |
+| **Workspace 프록시** | **CP에서 전달받은 HTTP/WebSocket 트래픽을 로컬 workspace 컨테이너로 중계** |
 | 로컬 관리 | 자체 리소스 모니터링, 감사 로그, 연결 관리 |
 
 Agent에 필요한 인프라: Container Runtime + MinIO + Docker Proxy. 실제 워크로드가 여기서 실행된다.
+
+**왜 Agent가 프록시를 담당하는가**: NAT 격리 환경에서 CP는 workspace 컨테이너에 직접 도달할 수 없다. Agent는 workspace 컨테이너와 같은 네트워크(dp-net)에 있으므로 로컬 프록시가 가능하다. 또한 Agent는 컨테이너의 실제 상태를 즉시 알 수 있어, CP가 DB 기반으로 판단하는 것보다 더 정확한 프록시 응답이 가능하다.
 
 **비유**: K8s에서 API Server(인증/스케줄링) vs Node(실제 Pod 실행)의 관계와 같다. Hub이 리소스를 "소유"하는 것이 아니라, Agent 소유자가 리소스를 Hub에 "등록하여 관리를 위임"하는 구조다.
 
@@ -146,7 +150,7 @@ Agent Dashboard
 │  │ CP (FastAPI) │  │ PostgreSQL  │  │ Redis            │ │
 │  │ - API Server │  │ - workspaces│  │ - Pub/Sub        │ │
 │  │ - Coordinator│  │ - agents    │  │ - SSE events     │ │
-│  │ - Proxy      │  │ - routing   │  │                  │ │
+│  │ - Fwd Proxy  │  │ - routing   │  │                  │ │
 │  └──────┬───────┘  └─────────────┘  └──────────────────┘ │
 │         │                                                │
 │  ┌──────┴───────┐                                        │
@@ -161,10 +165,11 @@ Agent Dashboard
 │  Agent Site (NAT 뒤)                                     │
 │             │                                            │
 │  ┌──────────┴──┐  ┌──────────────┐  ┌──────────────────┐│
-│  │ frpc        │  │ Agent        │  │ MinIO (S3)       ││
+│  │ frpc        │  │ Agent (DP GW)│  │ MinIO (S3)       ││
 │  │ (frp client)│  │ - Runtime    │  │ - archive/restore││
 │  │             │  │ - API        │  │ - volume backup  ││
 │  └─────────────┘  │ - Storage    │  └──────────────────┘│
+│                   │ - WS Proxy   │                       │
 │                   │ - Dashboard  │                       │
 │                   │ - Audit Log  │                       │
 │                   └──────────────┘                       │
@@ -186,14 +191,22 @@ CP ──HTTP──▶ Agent
 
 변경 후 (FRP 터널 경유):
 ```
-Agent ──frpc──▶ frps ──▶ CP        (제어 명령: Hub→Agent via tunnel)
-Agent ──frpc──▶ frps ──▶ User      (Workspace 프록시: User→Agent via tunnel)
+CP ──HTTP──▶ frps ──▶ frpc ──▶ Agent API    (제어 명령: Hub→Agent via tunnel)
+User ──▶ CP ──▶ frps ──▶ frpc ──▶ Agent ──▶ Workspace Container
+                                             (Workspace 프록시: Agent가 로컬 프록시)
 ```
 
 **FRP가 제공하는 것**:
 - Agent→Hub 방향 연결이므로 NAT/방화벽 통과
-- TCP/HTTP 프록시: Workspace(code-server) 접근을 Hub의 단일 도메인으로 노출
+- TCP 프록시: CP→Agent API 통신을 터널링
 - 연결 다중화: 하나의 FRP 연결로 제어 + 프록시 트래픽 동시 처리
+
+**Workspace 프록시 흐름 (Double Proxy)**:
+1. User → CP: 인증/인가 확인 후 트래픽을 Agent로 포워딩
+2. CP → frps → frpc → Agent: FRP 터널 경유
+3. Agent → Workspace Container: Agent가 dp-net 내부에서 직접 프록시
+
+CP는 인증만 담당하고, 실제 workspace 컨테이너 프록시는 Agent가 수행한다. CP가 workspace 컨테이너 IP를 알 필요가 없다.
 
 ### Agent Registry
 
@@ -228,11 +241,17 @@ CP가 MinIO에 직접 접근하지 않음이 코드 분석에서 확인됨:
 
 ## 구현 순서
 
-### Phase 0: CP/DP 분리
-1. docker-compose 네트워크 분리 (`cp-net`, `dp-net`)
-2. CP에서 불필요한 인프라 의존 제거 (`S3_*`, `DOCKER_HOST` 환경변수)
-3. CP의 Agent 정적 의존 제거 (`depends_on: agent` 제거, `AGENT_ENDPOINT` 제거)
-4. 네트워크 격리 검증 (CP↛MinIO, CP↛Docker Proxy, Agent↛PostgreSQL)
+### Phase 0: CP/DP 네트워크 분리 ✅ 완료
+1. docker-compose 네트워크 분리 (`cp-net`, `dp-net`, `tunnel-net`)
+2. FRP 터널 구성 (frps/frpc 서비스, Agent API 터널)
+3. CP에서 불필요한 인프라 의존 제거 (`depends_on: agent` 제거)
+4. 네트워크 격리 검증 E2E 15/15 통과
+
+### Phase 0.5: Agent Workspace Proxy
+1. Agent에 Workspace 프록시 엔드포인트 추가 (`/w/{ws_id}/{path}`)
+2. HTTP reverse proxy + WebSocket relay 구현
+3. CP의 `get_upstream()` 변경: workspace container IP → Agent(FRP) 주소 반환
+4. E2E에 code-server 프록시 접속 테스트 추가
 
 ### Phase 1: Agent 등록 시스템
 1. `agents` 테이블 + Alembic migration
@@ -291,8 +310,8 @@ FRP 서버/클라이언트 설정, 인증서 관리, 터널 모니터링이 추�
 ### Agent 등록 관리
 Agent 추가/제거, heartbeat 감시, OFFLINE 감지 등 새로운 운영 부담. 기존 단일 Agent 구조보다 복잡.
 
-### 네트워크 지연
-FRP 터널 경유로 인한 지연 추가. Observer의 1s 폴링이 터널 지연을 포함하게 됨. (실제로는 수 ms 수준이므로 큰 영향 없음)
+### 네트워크 지연 (Double Proxy)
+Workspace 트래픽은 CP(인증) → FRP 터널 → Agent(프록시) → Container로 이중 프록시를 거친다. 같은 노드 내 프록시 hop은 sub-ms 수준이므로 실사용 체감은 미미하지만, 물리적 거리(User↔Hub↔Agent)에 따른 지연은 불가피하다. Observer 폴링도 터널 지연을 포함하게 됨.
 
 ### Agent Dashboard 개발 비용
 Agent가 headless API 서버에서 자체 UI를 가진 서비스로 확장됨. 프론트엔드 개발 및 유지보수 부담 추가. 다만 Agent Dashboard는 로컬 관리용이므로 CP Dashboard 대비 단순한 UI로 충분.
@@ -334,11 +353,13 @@ Agent와 Hub를 VPN으로 연결하여 같은 네트워크처럼 사용.
 |----------|-----|-----------|-----------|------|-----|
 | NAT 투과 | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 기존 REST API 유지 | ✅ | ❌ 재작성 | ❌ 재작성 | ❌ 재작성 | ✅ |
-| Workspace 프록시 | ✅ 내장 | ❌ 별도 | ❌ 별도 | ❌ 별도 | ✅ |
+| Workspace 프록시 | ✅ 터널 경유 | ❌ 별도 | ❌ 별도 | ❌ 별도 | ✅ |
 | 이미 운영 중 | ✅ OCI frps | - | - | - | - |
 | 구현 비용 | 낮음 | 높음 | 높음 | 매우 높음 | 중간 |
 
-**FRP의 결정적 장점**: 기존 REST API를 변경 없이 터널링. Workspace 프록시도 FRP가 처리. 이미 OCI에 frps가 운영 중.
+**FRP의 결정적 장점**: 기존 REST API를 변경 없이 터널링. FRP가 CP↔Agent 경로를 제공하고, Agent가 로컬 workspace 프록시를 수행. 이미 OCI에 frps가 운영 중.
+
+> **Note**: Workspace 프록시는 FRP가 직접 라우팅하는 것이 아니라, FRP 터널을 경유하여 Agent의 프록시 엔드포인트에 도달하는 구조다 (User → CP → FRP → Agent → Container).
 
 ## 관련 문서
 
