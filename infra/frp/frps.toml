@@ -1,0 +1,11 @@
+bindAddr = "0.0.0.0"
+bindPort = 7000
+
+auth.method = "token"
+auth.token = "codehub-dev-token"
+
+log.to = "console"
+log.level = "info"
+
+transport.maxPoolCount = 5
+transport.heartbeatTimeout = 90

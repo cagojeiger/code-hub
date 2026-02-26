@@ -23,21 +23,14 @@ x-logging: &logging
       max-size: "10m"
       max-file: "3"
 
-x-network: &network
-  networks:
-    - codehub-net
-
 x-restart: &restart
   restart: unless-stopped
 
-x-common-env: &common-env
+# CP-only environment variables (no S3, no Docker — CP is a gatekeeper)
+x-cp-env: &cp-env
   PYTHONUNBUFFERED: "1"
   DATABASE_URL: postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
   REDIS_URL: redis://redis:6379
-  S3_ENDPOINT: http://minio:9000
-  S3_ACCESS_KEY: codehub
-  S3_SECRET_KEY: codehub123
-  DOCKER_HOST: tcp://docker-proxy:2375
 
 # =============================================================================
 # Services
@@ -48,6 +41,7 @@ services:
   # Core Application (pre-built images)
   # ---------------------------------------------------------------------------
 
+  # Networks: dp-net only (isolated from CP; reachable via FRP tunnel)
   agent:
     image: cagojeiger/codehub-agent:${CODEHUB_VERSION:-0.2.1}
     container_name: codehub-agent
@@ -57,7 +51,7 @@ services:
       AGENT_CLUSTER_ID: default
       AGENT_RESOURCE_PREFIX: codehub-ws-
       AGENT_DOCKER_HOST: tcp://docker-proxy:2375
-      AGENT_DOCKER_NETWORK: codehub-net
+      AGENT_DOCKER_NETWORK: codehub-dp-net
       AGENT_S3_ENDPOINT: http://minio:9000
       AGENT_S3_INTERNAL_ENDPOINT: http://minio:9000
       AGENT_S3_BUCKET: codehub-archives
@@ -79,30 +73,29 @@ services:
       timeout: 10s
       retries: 3
       start_period: 10s
-    <<: [*dns, *logging, *network, *restart]
+    networks:
+      - dp-net
+    <<: [*dns, *logging, *restart]
 
+  # Networks: cp-net only (CP is a gatekeeper — no direct access to MinIO/Docker)
   control-plane:
     image: cagojeiger/codehub-control-plane:${CODEHUB_VERSION:-0.2.1}
     container_name: codehub-control-plane
     ports:
       - "0.0.0.0:18000:8000"
     environment:
-      <<: *common-env
+      <<: *cp-env
       WORKERS: "3"
-      AGENT_ENDPOINT: http://agent:8081
+      AGENT_ENDPOINT: http://frps:6100
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_healthy
-      docker-proxy:
-        condition: service_started
       migrate:
         condition: service_completed_successfully
-      agent:
-        condition: service_healthy
+      # agent dependency removed — CP is a Hub that starts independently.
+      # Agent connects via FRP tunnel (or cp-net for local dev).
     mem_limit: 512m
     cpus: 1.0
     healthcheck:
@@ -116,7 +109,9 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
-    <<: [*dns, *network, *restart]
+    networks:
+      - cp-net
+    <<: [*dns, *restart]
 
   migrate:
     image: cagojeiger/codehub-control-plane:${CODEHUB_VERSION:-0.2.1}
@@ -127,7 +122,9 @@ services:
         condition: service_healthy
     environment:
       - DATABASE_URL=postgresql+asyncpg://codehub:codehub@postgres:5432/codehub
-    <<: [*dns, *network]
+    networks:
+      - cp-net
+    <<: *dns
 
   # ---------------------------------------------------------------------------
   # Database & Storage
@@ -149,7 +146,9 @@ services:
       retries: 5
     mem_limit: 256m
     cpus: 0.5
-    <<: [*dns, *logging, *network, *restart]
+    networks:
+      - cp-net
+    <<: [*dns, *logging, *restart]
 
   redis:
     image: redis:7
@@ -161,7 +160,9 @@ services:
       retries: 5
     mem_limit: 128m
     cpus: 0.25
-    <<: [*dns, *logging, *network, *restart]
+    networks:
+      - cp-net
+    <<: [*dns, *logging, *restart]
 
   minio:
     image: minio/minio
@@ -181,11 +182,48 @@ services:
       retries: 5
     mem_limit: 256m
     cpus: 0.5
-    <<: [*dns, *logging, *network, *restart]
+    networks:
+      - dp-net
+    <<: [*dns, *logging, *restart]
 
   # ---------------------------------------------------------------------------
   # Infrastructure
   # ---------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # FRP Tunnel (Hub-Spoke communication)
+  # ---------------------------------------------------------------------------
+
+  # FRP Server — sits in cp-net (reachable by CP) + tunnel-net (reachable by frpc)
+  frps:
+    image: ghcr.io/fatedier/frps:v0.67.0
+    container_name: codehub-frps
+    command: ["-c", "/etc/frp/frps.toml"]
+    volumes:
+      - ./infra/frp/frps.toml:/etc/frp/frps.toml:ro
+    mem_limit: 64m
+    cpus: 0.25
+    networks:
+      - cp-net
+      - tunnel-net
+    <<: [*logging, *restart]
+
+  # FRP Client — sits in dp-net (reaches Agent) + tunnel-net (reaches frps)
+  frpc:
+    image: ghcr.io/fatedier/frpc:v0.67.0
+    container_name: codehub-frpc
+    command: ["-c", "/etc/frp/frpc.toml"]
+    volumes:
+      - ./infra/frp/frpc.toml:/etc/frp/frpc.toml:ro
+    depends_on:
+      - frps
+      - agent
+    mem_limit: 64m
+    cpus: 0.25
+    networks:
+      - dp-net
+      - tunnel-net
+    <<: [*logging, *restart]
 
   docker-proxy:
     image: tecnativa/docker-socket-proxy:latest
@@ -205,7 +243,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     mem_limit: 64m
     cpus: 0.25
-    <<: [*dns, *logging, *network, *restart]
+    networks:
+      - dp-net
+    <<: [*dns, *logging, *restart]
 
   # ---------------------------------------------------------------------------
   # Monitoring
@@ -226,7 +266,10 @@ services:
         condition: service_healthy
     mem_limit: 256m
     cpus: 0.5
-    <<: [*dns, *network, *restart]
+    networks:
+      - cp-net
+      - dp-net
+    <<: [*dns, *restart]
 
   grafana:
     image: grafana/grafana:12.3.1
@@ -246,15 +289,23 @@ services:
       - prometheus
     mem_limit: 256m
     cpus: 0.5
-    <<: [*dns, *network, *restart]
+    networks:
+      - cp-net
+    <<: [*dns, *restart]
 
 # =============================================================================
 # Networks & Volumes
 # =============================================================================
 
 networks:
-  codehub-net:
-    name: codehub-net
+  cp-net:
+    name: codehub-cp-net
+    driver: bridge
+  dp-net:
+    name: codehub-dp-net
+    driver: bridge
+  tunnel-net:
+    name: codehub-tunnel-net
     driver: bridge
 
 volumes:

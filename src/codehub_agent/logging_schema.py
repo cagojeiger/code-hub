@@ -45,6 +45,10 @@ class LogEvent(StrEnum):
     CLEANUP_COMPLETED = "cleanup_completed"
     CLEANUP_FAILED = "cleanup_failed"
 
+    # Proxy events
+    PROXY_ERROR = "proxy_error"
+    PROXY_WS_ERROR = "proxy_ws_error"
+
     # Error events
     UNHANDLED_EXCEPTION = "unhandled_exception"
     AGENT_ERROR = "agent_error"
