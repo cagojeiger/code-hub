@@ -110,30 +110,6 @@ REDIS_POOL_TOTAL = Gauge(
 )
 
 # =============================================================================
-# WebSocket Metrics
-# =============================================================================
-# These metrics track WebSocket proxy performance and connection health
-
-WS_ACTIVE_CONNECTIONS = Gauge(
-    "codehub_ws_active_connections",
-    "Currently active WebSocket connections",
-    multiprocess_mode="livesum",
-)
-
-WS_MESSAGE_LATENCY = Histogram(
-    "codehub_ws_message_latency_seconds",
-    "WebSocket message relay latency",
-    ["direction"],
-    buckets=_BUCKETS_FAST,
-)
-
-WS_ERRORS = Counter(
-    "codehub_ws_errors_total",
-    "WebSocket connection errors",
-    ["error_type"],
-)
-
-# =============================================================================
 # Coordinator Metrics (Control Plane)
 # =============================================================================
 # These metrics track coordinator health and performance
@@ -449,13 +425,6 @@ def _init_metrics() -> None:
     # Event Errors (hopefully never called, but show 0 not nodata)
     EVENT_ERRORS_TOTAL.labels(operation="sse")
     EVENT_ERRORS_TOTAL.labels(operation="wake")
-
-    # WebSocket Errors
-    WS_ERRORS.labels(error_type="invalid_uri")
-    WS_ERRORS.labels(error_type="handshake_failed")
-    WS_ERRORS.labels(error_type="connection_failed")
-    WS_ERRORS.labels(error_type="connection_closed")
-    WS_ERRORS.labels(error_type="relay_error")
 
     # SSE Metrics
     SSE_MESSAGES_TOTAL.labels(event_type="workspace")

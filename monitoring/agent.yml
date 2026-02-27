@@ -1,0 +1,14 @@
+global:
+  scrape_interval: 15s
+  external_labels:
+    agent_id: "dp-local"
+    site: "local-dev"
+
+scrape_configs:
+  - job_name: 'agent'
+    static_configs:
+      - targets: ['agent:8081']
+    metrics_path: '/metrics'
+
+remote_write:
+  - url: "http://prometheus:9090/api/v1/write"
