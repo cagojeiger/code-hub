@@ -272,7 +272,7 @@ services:
   # Monitoring
   # ---------------------------------------------------------------------------
 
-  # Prometheus - Metrics collection (needs both networks to scrape CP and Agent)
+  # Prometheus - Central metrics storage (CP network only)
   prometheus:
     image: prom/prometheus:v3.9.1
     container_name: codehub-prometheus
@@ -283,6 +283,7 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--web.enable-lifecycle'
+      - '--web.enable-remote-write-receiver'
     depends_on:
       control-plane:
         condition: service_healthy
@@ -290,8 +291,27 @@ services:
     cpus: 0.5
     networks:
       - cp-net
-      - dp-net
     <<: [*dns, *restart]
+
+  prom-agent:
+    image: prom/prometheus:v3.9.1
+    container_name: codehub-prom-agent
+    command:
+      - '--agent'
+      - '--config.file=/etc/prometheus/agent.yml'
+    volumes:
+      - ./monitoring/agent.yml:/etc/prometheus/agent.yml:ro
+    depends_on:
+      agent:
+        condition: service_started
+      prometheus:
+        condition: service_started
+    mem_limit: 64m
+    cpus: 0.25
+    networks:
+      - dp-net
+      - cp-net
+    <<: [*logging, *restart]
 
   # Grafana - Metrics visualization (CP-side, talks to Prometheus)
   grafana:

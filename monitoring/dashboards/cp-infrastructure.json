@@ -1,0 +1,390 @@
+{
+  "id": null,
+  "uid": "codehub-cp-infrastructure",
+  "title": "CodeHub CP Infrastructure",
+  "description": "PostgreSQL, Redis 커넥션 풀 상태 (USE Method)",
+  "tags": [
+    "control-plane",
+    "infrastructure",
+    "codehub"
+  ],
+  "schemaVersion": 40,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 0,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "links": [
+    {
+      "title": "Overview",
+      "type": "link",
+      "icon": "dashboard",
+      "url": "/d/codehub-overview",
+      "tooltip": "System Overview",
+      "targetBlank": false,
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "asDropdown": false
+    },
+    {
+      "title": "CP Service",
+      "type": "link",
+      "icon": "dashboard",
+      "url": "/d/codehub-cp-service",
+      "tooltip": "CP API & SSE",
+      "targetBlank": false,
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "asDropdown": false
+    },
+    {
+      "title": "Coordinators",
+      "type": "link",
+      "icon": "dashboard",
+      "url": "/d/codehub-cp-coordinators",
+      "tooltip": "Reconcile & TTL",
+      "targetBlank": false,
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "asDropdown": false
+    },
+    {
+      "title": "Resilience",
+      "type": "link",
+      "icon": "dashboard",
+      "url": "/d/codehub-cp-resilience",
+      "tooltip": "Circuit Breaker & Events",
+      "targetBlank": false,
+      "includeVars": false,
+      "keepTime": true,
+      "tags": [],
+      "asDropdown": false
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Guide",
+      "description": "Infrastructure 해석 가이드",
+      "transparent": true,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 2,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**📖 DB/Redis 리소스가 포화됐나?** (USE Method) — Utilization < 70% → ✅ 여유 | > 80% → ⚠️ 증설 검토 | 100% 접근 → ❌ 커넥션 풀 포화"
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "PG Pool Usage",
+      "description": "PostgreSQL 커넥션 풀 사용률 (%).\nactive / total * 100\n정상: < 70%\n경고: > 80%",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 12,
+        "x": 0,
+        "y": 2
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(codehub_postgresql_pool_active) / sum(codehub_postgresql_pool_total) * 100",
+          "legendFormat": "PG Usage %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Redis Pool Usage",
+      "description": "Redis 커넥션 풀 사용률 (%).\nactive / total * 100\n정상: < 70%\n경고: > 80%",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 3,
+        "w": 12,
+        "x": 12,
+        "y": 2
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(codehub_redis_pool_active) / sum(codehub_redis_pool_total) * 100",
+          "legendFormat": "Redis Usage %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": ""
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto"
+      }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "PG Pool Over Time",
+      "description": "PostgreSQL 풀 상태 추이.\nidle: 유휴 연결\nactive: 사용중 연결\ntotal: 전체 연결\noverflow: 초과 연결 (양수면 풀 초과)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(codehub_postgresql_pool_idle)",
+          "legendFormat": "idle"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(codehub_postgresql_pool_active)",
+          "legendFormat": "active"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(codehub_postgresql_pool_total)",
+          "legendFormat": "total"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(codehub_postgresql_pool_overflow)",
+          "legendFormat": "overflow"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Redis Pool Over Time",
+      "description": "Redis 풀 상태 추이.\nidle: 유휴 연결\nactive: 사용중 연결\ntotal: 전체 연결",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(codehub_redis_pool_idle)",
+          "legendFormat": "idle"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(codehub_redis_pool_active)",
+          "legendFormat": "active"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "expr": "sum(codehub_redis_pool_total)",
+          "legendFormat": "total"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    }
+  ]
+}

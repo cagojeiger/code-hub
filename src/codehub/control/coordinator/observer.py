@@ -21,7 +21,6 @@ from codehub.app.config import get_settings
 from codehub.app.metrics.collector import (
     OBSERVER_ARCHIVES,
     OBSERVER_CONTAINERS,
-    OBSERVER_OBSERVE_DURATION,
     OBSERVER_STAGE_DURATION,
     OBSERVER_VOLUMES,
     OBSERVER_WORKSPACES,
@@ -76,13 +75,11 @@ class ObserverCoordinator(CoordinatorBase):
                 self._runtime.observe(), timeout=self._timeout_s
             )
             duration = time.monotonic() - start
-            OBSERVER_OBSERVE_DURATION.observe(duration)  # Legacy
-            RUNTIME_OBSERVE_DURATION.observe(duration)   # New
+            RUNTIME_OBSERVE_DURATION.observe(duration)
             return result
         except asyncio.TimeoutError:
             duration = time.monotonic() - start
-            OBSERVER_OBSERVE_DURATION.observe(duration)  # Legacy
-            RUNTIME_OBSERVE_DURATION.observe(duration)   # New
+            RUNTIME_OBSERVE_DURATION.observe(duration)
             logger.warning(
                 "Observe timeout",
                 extra={
@@ -94,8 +91,7 @@ class ObserverCoordinator(CoordinatorBase):
             return None
         except Exception as exc:
             duration = time.monotonic() - start
-            OBSERVER_OBSERVE_DURATION.observe(duration)  # Legacy
-            RUNTIME_OBSERVE_DURATION.observe(duration)   # New
+            RUNTIME_OBSERVE_DURATION.observe(duration)
             logger.exception(
                 "Observe failed",
                 extra={

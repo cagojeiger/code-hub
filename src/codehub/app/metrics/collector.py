@@ -110,30 +110,6 @@ REDIS_POOL_TOTAL = Gauge(
 )
 
 # =============================================================================
-# WebSocket Metrics
-# =============================================================================
-# These metrics track WebSocket proxy performance and connection health
-
-WS_ACTIVE_CONNECTIONS = Gauge(
-    "codehub_ws_active_connections",
-    "Currently active WebSocket connections",
-    multiprocess_mode="livesum",
-)
-
-WS_MESSAGE_LATENCY = Histogram(
-    "codehub_ws_message_latency_seconds",
-    "WebSocket message relay latency",
-    ["direction"],
-    buckets=_BUCKETS_FAST,
-)
-
-WS_ERRORS = Counter(
-    "codehub_ws_errors_total",
-    "WebSocket connection errors",
-    ["error_type"],
-)
-
-# =============================================================================
 # Coordinator Metrics (Control Plane)
 # =============================================================================
 # These metrics track coordinator health and performance
@@ -198,13 +174,6 @@ OBSERVER_STAGE_DURATION = Histogram(
     buckets=_BUCKETS_FAST,
 )
 
-# Observer observe duration - slow external API calls
-OBSERVER_OBSERVE_DURATION = Histogram(
-    "codehub_observer_observe_duration_seconds",
-    "Duration of observer observe stage",
-    buckets=_BUCKETS_MEDIUM,
-)
-
 # =============================================================================
 # Workspace Metrics (NEW - Workspace-centric)
 # =============================================================================
@@ -231,12 +200,6 @@ RUNTIME_OBSERVE_DURATION = Histogram(
     buckets=_BUCKETS_MEDIUM,
 )
 
-OBSERVER_API_DURATION = Histogram(
-    "codehub_observer_api_duration_seconds",
-    "Duration of individual observation API calls",
-    ["api"],  # containers, volumes, archives
-    buckets=_BUCKETS_MEDIUM,
-)
 
 # =============================================================================
 # WorkspaceController Metrics
@@ -329,12 +292,6 @@ COORDINATOR_WAKE_RECEIVED_TOTAL = Counter(
     ["coordinator"],
 )
 
-# EventListener leadership (separate from CoordinatorBase)
-EVENT_LISTENER_IS_LEADER = Gauge(
-    "codehub_event_listener_is_leader",
-    "Whether EventListener is the leader (1) or not (0)",
-    multiprocess_mode="livesum",
-)
 
 # =============================================================================
 # SSE (Server-Sent Events) Metrics
@@ -436,6 +393,9 @@ def _init_metrics() -> None:
     CIRCUIT_BREAKER_CALLS_TOTAL.labels(circuit="external", result="failure")
     CIRCUIT_BREAKER_REJECTIONS_TOTAL.labels(circuit="external")
 
+    # Coordinator leadership (all 3 coordinators + event_listener)
+    for coord in ["observer", "wc", "scheduler", "event_listener"]:
+        COORDINATOR_IS_LEADER.labels(coordinator=coord).set(0)
     # External Call Errors
     EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="retryable")
     EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="permanent")
@@ -449,13 +409,6 @@ def _init_metrics() -> None:
     # Event Errors (hopefully never called, but show 0 not nodata)
     EVENT_ERRORS_TOTAL.labels(operation="sse")
     EVENT_ERRORS_TOTAL.labels(operation="wake")
-
-    # WebSocket Errors
-    WS_ERRORS.labels(error_type="invalid_uri")
-    WS_ERRORS.labels(error_type="handshake_failed")
-    WS_ERRORS.labels(error_type="connection_failed")
-    WS_ERRORS.labels(error_type="connection_closed")
-    WS_ERRORS.labels(error_type="relay_error")
 
     # SSE Metrics
     SSE_MESSAGES_TOTAL.labels(event_type="workspace")
