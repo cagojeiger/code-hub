@@ -19,6 +19,7 @@ from codehub_agent.metrics.collector import (
     AGENT_S3_BYTES,
     AGENT_S3_DURATION,
     AGENT_S3_ERRORS,
+    AGENT_OBSERVE_API_DURATION,
     AGENT_VOLUMES_TOTAL,
 )
 
@@ -42,4 +43,5 @@ __all__ = [
     "AGENT_S3_ERRORS",
     "AGENT_CONTAINERS_TOTAL",
     "AGENT_VOLUMES_TOTAL",
+    "AGENT_OBSERVE_API_DURATION",
 ]

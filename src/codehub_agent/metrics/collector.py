@@ -58,7 +58,7 @@ AGENT_DOCKER_ERRORS = Counter(
 AGENT_S3_DURATION = Histogram(
     "codehub_agent_s3_duration_seconds",
     "Duration of S3 operations",
-    ["operation"],  # upload, download, delete, list
+    ["operation"],  # list, delete, delete_batch, exists, get_object
     buckets=_BUCKETS_TRANSFER,
 )
 
@@ -72,6 +72,18 @@ AGENT_S3_ERRORS = Counter(
     "codehub_agent_s3_errors_total",
     "Total S3 operation errors",
     ["operation", "error_type"],
+)
+
+# =============================================================================
+# Observe API Sub-call Metrics
+# =============================================================================
+# Track individual sub-call durations in the observe endpoint
+
+AGENT_OBSERVE_API_DURATION = Histogram(
+    "codehub_agent_observe_api_duration_seconds",
+    "Duration of individual observe sub-calls (containers, volumes, archives)",
+    ["api"],  # containers, volumes, archives
+    buckets=_BUCKETS_SLOW,
 )
 
 # =============================================================================
@@ -167,14 +179,14 @@ AGENT_PROXY_WS_SESSION_DURATION = Histogram(
 def _init_metrics() -> None:
     """Initialize labeled metrics with zero values."""
     # Docker operations
-    for op in ["create", "start", "stop", "remove", "inspect", "volume_create", "volume_remove", "volume_list"]:
+    for op in ["list", "inspect", "create", "start", "stop", "remove", "wait", "logs", "volume_list", "volume_inspect", "volume_create", "volume_remove", "image_exists", "image_pull"]:
         _ = AGENT_DOCKER_DURATION.labels(operation=op)
         _ = AGENT_DOCKER_ERRORS.labels(operation=op, error_type="api_error")
         _ = AGENT_DOCKER_ERRORS.labels(operation=op, error_type="timeout")
         _ = AGENT_DOCKER_ERRORS.labels(operation=op, error_type="not_found")
 
     # S3 operations
-    for op in ["upload", "download", "delete", "list"]:
+    for op in ["list", "delete", "delete_batch", "exists", "get_object"]:
         _ = AGENT_S3_DURATION.labels(operation=op)
         _ = AGENT_S3_ERRORS.labels(operation=op, error_type="connection")
         _ = AGENT_S3_ERRORS.labels(operation=op, error_type="timeout")
@@ -200,6 +212,10 @@ def _init_metrics() -> None:
         _ = AGENT_PROXY_WS_MESSAGES_TOTAL.labels(direction=direction)
     for error_type in ["connect_failed", "relay_error", "handshake_failed"]:
         _ = AGENT_PROXY_WS_ERRORS_TOTAL.labels(error_type=error_type)
+
+    # Observe API sub-calls
+    for api in ["containers", "volumes", "archives"]:
+        _ = AGENT_OBSERVE_API_DURATION.labels(api=api)
 
 
 _init_metrics()

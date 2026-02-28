@@ -6,7 +6,9 @@ Supports both Unix socket and TCP connections.
 
 import json
 import logging
-
+import time
+from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
 import httpx
 from pydantic import BaseModel
 
@@ -14,6 +16,7 @@ from codehub_agent.api.errors import VolumeInUseError
 from codehub_agent.config import get_agent_config
 from codehub_agent.infra.concurrency import get_docker_read_semaphore, get_docker_write_semaphore
 from codehub_agent.logging_schema import LogEvent
+from codehub_agent.metrics import AGENT_DOCKER_DURATION, AGENT_DOCKER_ERRORS
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +187,26 @@ async def close_docker() -> None:
         _shared_docker_client = None
 
 
+@asynccontextmanager
+async def _docker_timer(operation: str) -> AsyncIterator[None]:
+    """Time Docker operations and classify errors."""
+    start = time.monotonic()
+    try:
+        yield
+    except httpx.TimeoutException:
+        AGENT_DOCKER_ERRORS.labels(operation=operation, error_type="timeout").inc()
+        raise
+    except httpx.HTTPStatusError as exc:
+        error_type = "not_found" if exc.response.status_code == 404 else "api_error"
+        AGENT_DOCKER_ERRORS.labels(operation=operation, error_type=error_type).inc()
+        raise
+    except Exception:
+        AGENT_DOCKER_ERRORS.labels(operation=operation, error_type="api_error").inc()
+        raise
+    finally:
+        AGENT_DOCKER_DURATION.labels(operation=operation).observe(time.monotonic() - start)
+
+
 class BaseDockerAPI:
     """Base class for Docker API operations."""
 
@@ -195,7 +218,7 @@ class ContainerAPI(BaseDockerAPI):
     """Docker Container API operations."""
 
     async def list(self, filters: dict | None = None) -> list[ContainerListItem]:
-        async with get_docker_read_semaphore():
+        async with _docker_timer("list"), get_docker_read_semaphore():
             client = self._docker.client()
             params: dict = {"all": "true"}
             if filters:
@@ -205,7 +228,7 @@ class ContainerAPI(BaseDockerAPI):
             return [ContainerListItem.model_validate(c) for c in resp.json()]
 
     async def inspect(self, name: str) -> ContainerInspect | None:
-        async with get_docker_read_semaphore():
+        async with _docker_timer("inspect"), get_docker_read_semaphore():
             client = self._docker.client()
             resp = await client.get(f"/containers/{name}/json")
             if resp.status_code == 404:
@@ -214,7 +237,7 @@ class ContainerAPI(BaseDockerAPI):
             return ContainerInspect.model_validate(resp.json())
 
     async def create(self, config: ContainerConfig) -> None:
-        async with get_docker_write_semaphore():
+        async with _docker_timer("create"), get_docker_write_semaphore():
             client = self._docker.client()
             resp = await client.post(
                 "/containers/create",
@@ -234,7 +257,7 @@ class ContainerAPI(BaseDockerAPI):
             )
 
     async def start(self, name: str) -> None:
-        async with get_docker_write_semaphore():
+        async with _docker_timer("start"), get_docker_write_semaphore():
             client = self._docker.client()
             resp = await client.post(f"/containers/{name}/start")
             if resp.status_code not in (204, 304):
@@ -245,7 +268,7 @@ class ContainerAPI(BaseDockerAPI):
             )
 
     async def stop(self, name: str, timeout: int = 10) -> None:
-        async with get_docker_write_semaphore():
+        async with _docker_timer("stop"), get_docker_write_semaphore():
             client = self._docker.client()
             resp = await client.post(f"/containers/{name}/stop", params={"t": str(timeout)})
             if resp.status_code not in (204, 304, 404):
@@ -256,7 +279,7 @@ class ContainerAPI(BaseDockerAPI):
             )
 
     async def remove(self, name: str, force: bool = True) -> None:
-        async with get_docker_write_semaphore():
+        async with _docker_timer("remove"), get_docker_write_semaphore():
             client = self._docker.client()
             resp = await client.delete(
                 f"/containers/{name}", params={"force": "true" if force else "false"}
@@ -279,26 +302,27 @@ class ContainerAPI(BaseDockerAPI):
         Note: This method does NOT use the semaphore because wait operations
         are long-running and should not block other Docker operations.
         """
-        if timeout is None:
-            timeout = _agent_config.docker.container_wait_timeout
-        client = self._docker.client()
-        # Add buffer to HTTP timeout beyond container wait timeout
-        http_timeout = timeout + _agent_config.docker.timeout_buffer
-        resp = await client.post(
-            f"/containers/{name}/wait",
-            timeout=http_timeout,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        exit_code = data.get("StatusCode", -1)
-        logger.info(
-            "Container exited",
-            extra={"event": LogEvent.CONTAINER_EXITED, "container": name, "exit_code": exit_code},
-        )
-        return exit_code
+        async with _docker_timer("wait"):
+            if timeout is None:
+                timeout = _agent_config.docker.container_wait_timeout
+            client = self._docker.client()
+            # Add buffer to HTTP timeout beyond container wait timeout
+            http_timeout = timeout + _agent_config.docker.timeout_buffer
+            resp = await client.post(
+                f"/containers/{name}/wait",
+                timeout=http_timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            exit_code = data.get("StatusCode", -1)
+            logger.info(
+                "Container exited",
+                extra={"event": LogEvent.CONTAINER_EXITED, "container": name, "exit_code": exit_code},
+            )
+            return exit_code
 
     async def logs(self, name: str, stdout: bool = True, stderr: bool = True) -> bytes:
-        async with get_docker_read_semaphore():
+        async with _docker_timer("logs"), get_docker_read_semaphore():
             client = self._docker.client()
             params = {"stdout": stdout, "stderr": stderr}
             resp = await client.get(f"/containers/{name}/logs", params=params)
@@ -310,7 +334,7 @@ class VolumeAPI(BaseDockerAPI):
     """Docker Volume API operations."""
 
     async def list(self, filters: dict | None = None) -> list[VolumeListItem]:
-        async with get_docker_read_semaphore():
+        async with _docker_timer("volume_list"), get_docker_read_semaphore():
             client = self._docker.client()
             params: dict = {}
             if filters:
@@ -321,7 +345,7 @@ class VolumeAPI(BaseDockerAPI):
             return [VolumeListItem.model_validate(v) for v in data.get("Volumes", [])]
 
     async def inspect(self, name: str) -> dict | None:
-        async with get_docker_read_semaphore():
+        async with _docker_timer("volume_inspect"), get_docker_read_semaphore():
             client = self._docker.client()
             resp = await client.get(f"/volumes/{name}")
             if resp.status_code == 404:
@@ -330,7 +354,7 @@ class VolumeAPI(BaseDockerAPI):
             return resp.json()
 
     async def create(self, config: VolumeConfig) -> None:
-        async with get_docker_write_semaphore():
+        async with _docker_timer("volume_create"), get_docker_write_semaphore():
             client = self._docker.client()
             resp = await client.post("/volumes/create", json=config.to_api())
             if resp.status_code == 409:
@@ -346,7 +370,7 @@ class VolumeAPI(BaseDockerAPI):
             )
 
     async def remove(self, name: str) -> None:
-        async with get_docker_write_semaphore():
+        async with _docker_timer("volume_remove"), get_docker_write_semaphore():
             client = self._docker.client()
             resp = await client.delete(f"/volumes/{name}")
             if resp.status_code == 404:
@@ -368,7 +392,7 @@ class ImageAPI(BaseDockerAPI):
     """Docker Image API operations."""
 
     async def exists(self, image_ref: str) -> bool:
-        async with get_docker_read_semaphore():
+        async with _docker_timer("image_exists"), get_docker_read_semaphore():
             client = self._docker.client()
             resp = await client.get(f"/images/{image_ref}/json")
             return resp.status_code == 200
@@ -379,28 +403,29 @@ class ImageAPI(BaseDockerAPI):
         Note: This method does NOT use the semaphore because image pulls
         are long-running and should not block other Docker operations.
         """
-        client = self._docker.client()
+        async with _docker_timer("image_pull"):
+            client = self._docker.client()
 
-        if ":" in image_ref:
-            image, tag = image_ref.rsplit(":", 1)
-        else:
-            image, tag = image_ref, "latest"
+            if ":" in image_ref:
+                image, tag = image_ref.rsplit(":", 1)
+            else:
+                image, tag = image_ref, "latest"
 
-        logger.info(
-            "Pulling image",
-            extra={"event": LogEvent.IMAGE_PULLED, "image": image, "tag": tag, "started": True},
-        )
+            logger.info(
+                "Pulling image",
+                extra={"event": LogEvent.IMAGE_PULLED, "image": image, "tag": tag, "started": True},
+            )
 
-        resp = await client.post(
-            "/images/create",
-            params={"fromImage": image, "tag": tag},
-            timeout=_agent_config.docker.image_pull_timeout,
-        )
-        resp.raise_for_status()
-        logger.info(
-            "Image pulled",
-            extra={"event": LogEvent.IMAGE_PULLED, "image": image, "tag": tag},
-        )
+            resp = await client.post(
+                "/images/create",
+                params={"fromImage": image, "tag": tag},
+                timeout=_agent_config.docker.image_pull_timeout,
+            )
+            resp.raise_for_status()
+            logger.info(
+                "Image pulled",
+                extra={"event": LogEvent.IMAGE_PULLED, "image": image, "tag": tag},
+            )
 
     async def ensure(self, image_ref: str) -> None:
         """Ensure image exists locally, pull if not."""

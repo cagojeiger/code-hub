@@ -207,12 +207,6 @@ RUNTIME_OBSERVE_DURATION = Histogram(
     buckets=_BUCKETS_MEDIUM,
 )
 
-OBSERVER_API_DURATION = Histogram(
-    "codehub_observer_api_duration_seconds",
-    "Duration of individual observation API calls",
-    ["api"],  # containers, volumes, archives
-    buckets=_BUCKETS_MEDIUM,
-)
 
 # =============================================================================
 # WorkspaceController Metrics

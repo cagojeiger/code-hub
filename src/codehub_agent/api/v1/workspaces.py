@@ -1,6 +1,7 @@
 """Workspace API endpoints."""
 
 import asyncio
+import time
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends
@@ -29,7 +30,7 @@ from codehub_agent.api.v1.schemas import (
     VolumeStatus,
     WorkspaceState,
 )
-from codehub_agent.metrics import AGENT_CONTAINERS_TOTAL, AGENT_VOLUMES_TOTAL
+from codehub_agent.metrics import AGENT_CONTAINERS_TOTAL, AGENT_OBSERVE_API_DURATION, AGENT_VOLUMES_TOTAL
 from codehub_agent.runtimes.docker.lock import get_workspace_lock
 from codehub_agent.runtimes.protocols import RuntimeProtocol
 
@@ -46,10 +47,29 @@ async def observe(
     runtime: RuntimeProtocol = Depends(get_runtime),
 ) -> ObserveResponse:
     """Return complete state snapshot of all workspaces."""
+
+    async def _timed_containers():
+        start = time.monotonic()
+        result = await runtime.instances.list_all()
+        AGENT_OBSERVE_API_DURATION.labels(api="containers").observe(time.monotonic() - start)
+        return result
+
+    async def _timed_volumes():
+        start = time.monotonic()
+        result = await runtime.volumes.list_all()
+        AGENT_OBSERVE_API_DURATION.labels(api="volumes").observe(time.monotonic() - start)
+        return result
+
+    async def _timed_archives():
+        start = time.monotonic()
+        result = await runtime.storage.list_archives_and_markers()
+        AGENT_OBSERVE_API_DURATION.labels(api="archives").observe(time.monotonic() - start)
+        return result
+
     containers, volumes, (archives, restore_markers, error_markers) = await asyncio.gather(
-        runtime.instances.list_all(),
-        runtime.volumes.list_all(),
-        runtime.storage.list_archives_and_markers(),
+        _timed_containers(),
+        _timed_volumes(),
+        _timed_archives(),
     )
 
     AGENT_CONTAINERS_TOTAL.set(len(containers))
