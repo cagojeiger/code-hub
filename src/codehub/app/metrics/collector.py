@@ -174,13 +174,6 @@ OBSERVER_STAGE_DURATION = Histogram(
     buckets=_BUCKETS_FAST,
 )
 
-# Observer observe duration - slow external API calls
-OBSERVER_OBSERVE_DURATION = Histogram(
-    "codehub_observer_observe_duration_seconds",
-    "Duration of observer observe stage",
-    buckets=_BUCKETS_MEDIUM,
-)
-
 # =============================================================================
 # Workspace Metrics (NEW - Workspace-centric)
 # =============================================================================
@@ -299,12 +292,6 @@ COORDINATOR_WAKE_RECEIVED_TOTAL = Counter(
     ["coordinator"],
 )
 
-# EventListener leadership (separate from CoordinatorBase)
-EVENT_LISTENER_IS_LEADER = Gauge(
-    "codehub_event_listener_is_leader",
-    "Whether EventListener is the leader (1) or not (0)",
-    multiprocess_mode="livesum",
-)
 
 # =============================================================================
 # SSE (Server-Sent Events) Metrics
@@ -406,6 +393,9 @@ def _init_metrics() -> None:
     CIRCUIT_BREAKER_CALLS_TOTAL.labels(circuit="external", result="failure")
     CIRCUIT_BREAKER_REJECTIONS_TOTAL.labels(circuit="external")
 
+    # Coordinator leadership (all 3 coordinators + event_listener)
+    for coord in ["observer", "wc", "scheduler", "event_listener"]:
+        COORDINATOR_IS_LEADER.labels(coordinator=coord).set(0)
     # External Call Errors
     EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="retryable")
     EXTERNAL_CALL_ERRORS_TOTAL.labels(error_type="permanent")
