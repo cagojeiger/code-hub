@@ -2,17 +2,51 @@
   "annotations": {
     "list": []
   },
+  "description": "시스템 전체 상태 한눈에 보기 (Golden Signals)",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [],
+  "links": [
+    {"title": "CP Service", "type": "link", "icon": "dashboard", "url": "/d/codehub-cp-service", "tooltip": "CP API & SSE", "targetBlank": false, "includeVars": false, "keepTime": true, "tags": [], "asDropdown": false},
+    {"title": "DP Service", "type": "link", "icon": "dashboard", "url": "/d/codehub-dp-service", "tooltip": "DP Proxy & WS", "targetBlank": false, "includeVars": false, "keepTime": true, "tags": [], "asDropdown": false},
+    {"title": "CP Coordinators", "type": "link", "icon": "dashboard", "url": "/d/codehub-cp-coordinators", "tooltip": "Reconcile & TTL", "targetBlank": false, "includeVars": false, "keepTime": true, "tags": [], "asDropdown": false},
+    {"title": "CP Resilience", "type": "link", "icon": "dashboard", "url": "/d/codehub-cp-resilience", "tooltip": "Circuit Breaker & Events", "targetBlank": false, "includeVars": false, "keepTime": true, "tags": [], "asDropdown": false},
+    {"title": "CP Infrastructure", "type": "link", "icon": "dashboard", "url": "/d/codehub-cp-infrastructure", "tooltip": "DB & Redis Pools", "targetBlank": false, "includeVars": false, "keepTime": true, "tags": [], "asDropdown": false},
+    {"title": "DP Infrastructure", "type": "link", "icon": "dashboard", "url": "/d/codehub-dp-infrastructure", "tooltip": "Docker & S3", "targetBlank": false, "includeVars": false, "keepTime": true, "tags": [], "asDropdown": false}
+  ],
   "panels": [
     {
       "datasource": {
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
+      "gridPos": {
+        "h": 2,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 8,
+      "options": {
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "**📖 시스템이 정상인가?** (Golden Signals) — Status=Up(서비스 가동) | Workspaces 정상 분포 | Latency 안정 | Errors=0 | 이상 시: → [CP Service](/d/codehub-cp-service) | [DP Service](/d/codehub-dp-service)",
+        "mode": "markdown"
+      },
+      "transparent": true,
+      "title": "",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "description": "Control Plane 서비스 상태.\nUp=정상(green), Down=서비스 중단(red)\n이상: Down → 즉시 확인",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -54,7 +88,7 @@
         "h": 3,
         "w": 4,
         "x": 0,
-        "y": 0
+        "y": 2
       },
       "id": 1,
       "options": {
@@ -90,6 +124,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
+      "description": "Data Plane Agent 상태.\nUp=정상(green), Down=Agent 다운(red)\n이상: Down → DP Service 대시보드 확인",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -131,7 +166,7 @@
         "h": 3,
         "w": 4,
         "x": 4,
-        "y": 0
+        "y": 2
       },
       "id": 2,
       "options": {
@@ -167,6 +202,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
+      "description": "워크스페이스 상태별 카운트.\nrunning=실행중(green), stopped=정지(yellow)\narchived=보관(blue), unhealthy=비정상(red)",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -216,7 +252,7 @@
         "h": 3,
         "w": 8,
         "x": 8,
-        "y": 0
+        "y": 2
       },
       "id": 3,
       "options": {
@@ -252,6 +288,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
+      "description": "현재 활성 WebSocket 연결 수.\n정상: 사용 중인 워크스페이스 수와 일치\n이상: 0 → DP Service 확인",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -275,7 +312,7 @@
         "h": 3,
         "w": 4,
         "x": 16,
-        "y": 0
+        "y": 2
       },
       "id": 4,
       "options": {
@@ -311,6 +348,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
+      "description": "전체 HTTP 초당 요청 수.\n정상: 사용자 활동에 비례한 안정 패턴\n이상: 0 → 서비스 다운, 급증 → 트래픽 스파이크",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -334,7 +372,7 @@
         "h": 3,
         "w": 4,
         "x": 20,
-        "y": 0
+        "y": 2
       },
       "id": 5,
       "options": {
@@ -370,6 +408,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
+      "description": "프록시 응답시간 p50(중앙값) / p99(꼬리).\n정상: p50 < 50ms, p99 < 1s\n이상: 급증 → DP Service / CP Service 확인",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -422,10 +461,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 6,
         "w": 12,
         "x": 0,
-        "y": 4
+        "y": 5
       },
       "id": 6,
       "options": {
@@ -471,6 +510,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
+      "description": "에러 발생률 (proxy upstream + CP HTTP 5xx).\n정상: 0\n이상: 증가 → CP Service / DP Service 대시보드 확인",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -523,10 +563,10 @@
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 6,
         "w": 12,
         "x": 12,
-        "y": 4
+        "y": 5
       },
       "id": 7,
       "options": {
