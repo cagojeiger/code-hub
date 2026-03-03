@@ -84,4 +84,3 @@ def patch_settings(monkeypatch: pytest.MonkeyPatch, mock_settings: MagicMock) ->
     import codehub.services.workspace_service as workspace_service
 
     monkeypatch.setattr(workspace_service, "get_settings", lambda: mock_settings)
-    monkeypatch.setattr(workspace_service, "_settings", mock_settings)

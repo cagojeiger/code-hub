@@ -21,20 +21,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Regex pattern cache for GC operations
-_ARCHIVE_PATTERN_CACHE: dict[str, re.Pattern] = {}
-
-
-def _get_archive_pattern(resource_prefix: str, archive_suffix: str) -> re.Pattern:
-    """Get or create cached compiled regex pattern for archive matching."""
-    cache_key = f"{resource_prefix}||{archive_suffix}"
-    if cache_key not in _ARCHIVE_PATTERN_CACHE:
-        _ARCHIVE_PATTERN_CACHE[cache_key] = re.compile(
-            rf"^{re.escape(resource_prefix)}([^/]+)/([^/]+)/{re.escape(archive_suffix)}$"
-        )
-    return _ARCHIVE_PATTERN_CACHE[cache_key]
-
-
 class ArchiveInfo(BaseModel):
     """Archive observation result."""
 
@@ -75,11 +61,21 @@ class StorageManager:
         self,
         config: AgentConfig,
         naming: ResourceNaming,
-        s3: S3Operations | None = None,
+        s3: S3Operations,
     ) -> None:
         self._config = config
         self._naming = naming
-        self._s3 = s3 or S3Operations(config)
+        self._s3 = s3
+        self._archive_pattern_cache: dict[str, re.Pattern[str]] = {}
+
+    def _get_archive_pattern(self, resource_prefix: str, archive_suffix: str) -> re.Pattern[str]:
+        """Get or create cached compiled regex pattern for archive matching."""
+        cache_key = f"{resource_prefix}||{archive_suffix}"
+        if cache_key not in self._archive_pattern_cache:
+            self._archive_pattern_cache[cache_key] = re.compile(
+                rf"^{re.escape(resource_prefix)}([^/]+)/([^/]+)/{re.escape(archive_suffix)}$"
+            )
+        return self._archive_pattern_cache[cache_key]
 
     async def run_gc(
         self,
@@ -120,7 +116,7 @@ class StorageManager:
 
         # 3. Group archives by workspace
         #    Pattern: {prefix}{ws_id}/{archive_op_id}/home.tar.zst
-        pattern = _get_archive_pattern(resource_prefix, archive_suffix)
+        pattern = self._get_archive_pattern(resource_prefix, archive_suffix)
 
         # Group: {ws_id: [(archive_prefix, last_modified), ...]}
         workspace_archives: dict[str, list[tuple[str, datetime]]] = defaultdict(list)

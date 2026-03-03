@@ -90,6 +90,8 @@ def event_listener(
         database_url="postgresql://localhost:5432/codehub",
         redis_client=mock_redis_client,
         publisher=mock_publisher,
+        sse_prefix="codehub:sse",
+        wake_prefix="codehub:wake",
     )
     listener._notify_conn = mock_psycopg_conn
     listener._sa_conn = mock_conn
