@@ -5,7 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from codehub_agent.infra import ContainerAPI, ImageAPI, VolumeAPI
+from codehub_agent.infra.s3 import S3ObjectInfo, S3Operations
 from codehub_agent.runtimes.docker.naming import ResourceNaming
+from codehub_agent.runtimes.docker.storage import StorageManager
 
 
 @pytest.fixture
@@ -85,3 +87,32 @@ def mock_agent_config() -> MagicMock:
 def mock_naming(mock_agent_config: MagicMock) -> ResourceNaming:
     """ResourceNaming with mock config for testing."""
     return ResourceNaming(mock_agent_config)
+
+
+@pytest.fixture
+def mock_s3() -> AsyncMock:
+    s3 = AsyncMock(spec=S3Operations)
+    s3.list_objects = AsyncMock(return_value=[])
+    s3.list_objects_with_metadata = AsyncMock(return_value=[])
+    s3.get_object = AsyncMock(return_value=None)
+    s3.delete_object = AsyncMock(return_value=True)
+    s3.delete_objects = AsyncMock(return_value=[])
+    s3.object_exists = AsyncMock(return_value=False)
+    return s3
+
+
+@pytest.fixture
+def storage_manager(
+    mock_agent_config: MagicMock,
+    mock_naming: ResourceNaming,
+    mock_s3: AsyncMock,
+) -> StorageManager:
+    return StorageManager(mock_agent_config, mock_naming, mock_s3)
+
+
+@pytest.fixture
+def make_s3_object_info():
+    def _make(key: str, last_modified):
+        return S3ObjectInfo(Key=key, LastModified=last_modified)
+
+    return _make
