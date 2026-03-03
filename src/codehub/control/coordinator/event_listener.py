@@ -27,7 +27,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection as SAConnection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from codehub.app.config import get_settings
 from codehub.app.metrics.collector import (
     COORDINATOR_IS_LEADER,
     EVENT_ERRORS_TOTAL,
@@ -41,9 +40,6 @@ from codehub.infra.pg_leader import SQLAlchemyLeaderElection
 from codehub.infra.redis_pubsub import ChannelPublisher
 
 logger = logging.getLogger(__name__)
-
-_settings = get_settings()
-_channel_config = _settings.redis_channel
 
 # SQL query to fetch workspace data for SSE (SQLAlchemy :param style)
 _FETCH_WORKSPACE_SQL = """
@@ -79,6 +75,8 @@ class EventListener:
         database_url: str,
         redis_client: redis.Redis,
         publisher: ChannelPublisher | None = None,
+        sse_prefix: str = "codehub:sse",
+        wake_prefix: str = "codehub:wake",
     ) -> None:
         """Initialize EventListener.
 
@@ -90,6 +88,8 @@ class EventListener:
         """
         self._database_url = database_url
         self._publisher = publisher or ChannelPublisher(redis_client)
+        self._sse_prefix = sse_prefix
+        self._wake_prefix = wake_prefix
         self._running = False
         self._log_prefix = self.__class__.__name__
 
@@ -263,7 +263,7 @@ class EventListener:
                 return
 
             # Publish full workspace data (including deleted_at for soft deletes)
-            channel = f"{_channel_config.sse_prefix}:{user_id}"
+            channel = f"{self._sse_prefix}:{user_id}"
             await self._publisher.publish(channel, json.dumps(workspace_data))
             EVENT_SSE_PUBLISHED_TOTAL.inc()
             logger.info(
@@ -330,8 +330,8 @@ class EventListener:
         Publishes to both Observer and WC channels in parallel (1 RTT).
         """
         try:
-            observer_channel = f"{_channel_config.wake_prefix}:observer"
-            wc_channel = f"{_channel_config.wake_prefix}:wc"
+            observer_channel = f"{self._wake_prefix}:observer"
+            wc_channel = f"{self._wake_prefix}:wc"
             observer_count, wc_count = await asyncio.gather(
                 self._publisher.publish(observer_channel),
                 self._publisher.publish(wc_channel),

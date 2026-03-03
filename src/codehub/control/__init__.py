@@ -62,7 +62,13 @@ async def _run_event_listener(redis_client: redis.Redis) -> None:
     """
     settings = get_settings()
     db_url = settings.database.url.replace("+asyncpg", "")
-    listener = EventListener(db_url, redis_client)
+    ch = settings.redis_channel
+    listener = EventListener(
+        db_url,
+        redis_client,
+        sse_prefix=ch.sse_prefix,
+        wake_prefix=ch.wake_prefix,
+    )
     await listener.run()
 
 

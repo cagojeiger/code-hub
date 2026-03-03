@@ -17,11 +17,7 @@ from codehub_agent.runtimes.docker import DockerRuntime
 from codehub_agent.runtimes.docker.instance import InstanceStatus
 from codehub_agent.runtimes.docker.job import JobType
 from codehub_agent.runtimes.docker.naming import ResourceNaming
-from codehub_agent.runtimes.docker.storage import (
-    StorageManager,
-    _ARCHIVE_PATTERN_CACHE,
-    _get_archive_pattern,
-)
+from codehub_agent.runtimes.docker.storage import StorageManager
 from codehub_agent.runtimes.docker.volume import VolumeStatus
 from codehub_agent.logging_schema import LogEvent
 
@@ -345,24 +341,32 @@ class TestDeleteWorkspaceMarkers:
 
 
 class TestGetArchivePattern:
-    def test_pattern_matches_valid_key(self) -> None:
-        _ARCHIVE_PATTERN_CACHE.clear()
-
-        pattern = _get_archive_pattern("codehub-", "home.tar.zst")
+    def test_pattern_matches_valid_key(
+        self,
+        mock_agent_config: MagicMock,
+        mock_naming: ResourceNaming,
+        mock_s3: AsyncMock,
+    ) -> None:
+        manager = StorageManager(mock_agent_config, mock_naming, mock_s3)
+        pattern = manager._get_archive_pattern("codehub-", "home.tar.zst")
         match = pattern.match("codehub-ws-1/op-1/home.tar.zst")
 
         assert match is not None
         assert match.group(1) == "ws-1"
         assert match.group(2) == "op-1"
 
-    def test_pattern_caching(self) -> None:
-        _ARCHIVE_PATTERN_CACHE.clear()
-
-        pattern1 = _get_archive_pattern("codehub-", "home.tar.zst")
-        pattern2 = _get_archive_pattern("codehub-", "home.tar.zst")
+    def test_pattern_caching(
+        self,
+        mock_agent_config: MagicMock,
+        mock_naming: ResourceNaming,
+        mock_s3: AsyncMock,
+    ) -> None:
+        manager = StorageManager(mock_agent_config, mock_naming, mock_s3)
+        pattern1 = manager._get_archive_pattern("codehub-", "home.tar.zst")
+        pattern2 = manager._get_archive_pattern("codehub-", "home.tar.zst")
 
         assert pattern1 is pattern2
-        assert len(_ARCHIVE_PATTERN_CACHE) == 1
+        assert len(manager._archive_pattern_cache) == 1
 
 
 class TestStorageManagerInit:
@@ -375,21 +379,6 @@ class TestStorageManagerInit:
         manager = StorageManager(mock_agent_config, mock_naming, mock_s3)
 
         assert manager._s3 is mock_s3
-
-    def test_init_creates_default_s3(
-        self,
-        mock_agent_config: MagicMock,
-        mock_naming: ResourceNaming,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        created_s3 = MagicMock()
-        s3_factory = MagicMock(return_value=created_s3)
-        monkeypatch.setattr("codehub_agent.runtimes.docker.storage.S3Operations", s3_factory)
-
-        manager = StorageManager(mock_agent_config, mock_naming, None)
-
-        s3_factory.assert_called_once_with(mock_agent_config)
-        assert manager._s3 is created_s3
 
 
 class TestRunGc:

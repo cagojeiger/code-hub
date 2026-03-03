@@ -16,7 +16,6 @@ from codehub.core.errors import (
 )
 from codehub.core.models import Workspace
 
-_settings = get_settings()
 
 
 async def create_workspace(
@@ -30,8 +29,9 @@ async def create_workspace(
     workspace_id = str(uuid4())
     now = datetime.now(UTC)
 
-    final_image_ref = image_ref or _settings.runtime.default_image
-    resource_prefix = _settings.runtime.resource_prefix
+    settings = get_settings()
+    final_image_ref = image_ref or settings.runtime.default_image
+    resource_prefix = settings.runtime.resource_prefix
 
     archive_key = None
     initial_phase = Phase.PENDING.value
@@ -315,7 +315,8 @@ async def _can_start_workspace(db: AsyncSession, user_id: str) -> bool:
         True if user hasn't exceeded running limit
     """
     count = await count_running_workspaces(db, user_id)
-    return count < _settings.limits.max_running_per_user
+    settings = get_settings()
+    return count < settings.limits.max_running_per_user
 
 
 async def request_start(

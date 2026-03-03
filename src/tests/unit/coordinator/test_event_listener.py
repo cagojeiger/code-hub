@@ -1,6 +1,5 @@
 import asyncio
 from datetime import datetime
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 from codehub.control.coordinator.event_listener import EventListener
@@ -14,7 +13,13 @@ class TestEventListenerInit:
         mock_publisher: AsyncMock,
     ) -> None:
         with patch("codehub.control.coordinator.event_listener.ChannelPublisher") as mock_class:
-            listener = EventListener("postgresql://localhost:5432/codehub", mock_redis_client, mock_publisher)
+            listener = EventListener(
+                "postgresql://localhost:5432/codehub",
+                mock_redis_client,
+                mock_publisher,
+                sse_prefix="codehub:sse",
+                wake_prefix="codehub:wake",
+            )
 
         assert listener._publisher is mock_publisher
         mock_class.assert_not_called()
@@ -25,7 +30,12 @@ class TestEventListenerInit:
             "codehub.control.coordinator.event_listener.ChannelPublisher",
             return_value=created_publisher,
         ) as mock_class:
-            listener = EventListener("postgresql://localhost:5432/codehub", mock_redis_client)
+            listener = EventListener(
+                "postgresql://localhost:5432/codehub",
+                mock_redis_client,
+                sse_prefix="codehub:sse",
+                wake_prefix="codehub:wake",
+            )
 
         assert listener._publisher is created_publisher
         mock_class.assert_called_once_with(mock_redis_client)
@@ -109,13 +119,7 @@ class TestHandleSse:
         event_listener._publisher.publish = AsyncMock(return_value=2)
 
         sse_metric = MagicMock()
-        with (
-            patch(
-                "codehub.control.coordinator.event_listener._channel_config",
-                SimpleNamespace(sse_prefix="codehub:sse", wake_prefix="codehub:wake"),
-            ),
-            patch("codehub.control.coordinator.event_listener.EVENT_SSE_PUBLISHED_TOTAL", sse_metric),
-        ):
+        with patch("codehub.control.coordinator.event_listener.EVENT_SSE_PUBLISHED_TOTAL", sse_metric):
             await event_listener._handle_sse('{"id": "ws-1", "owner_user_id": "u-1"}')
 
         event_listener._fetch_workspace.assert_called_once_with("ws-1")
@@ -170,13 +174,9 @@ class TestHandleSse:
         )
         event_listener._publisher.publish = AsyncMock(return_value=1)
 
-        with patch(
-            "codehub.control.coordinator.event_listener._channel_config",
-            SimpleNamespace(sse_prefix="app:sse", wake_prefix="app:wake"),
-        ):
-            await event_listener._handle_sse('{"id": "ws-2", "owner_user_id": "user-42"}')
+        await event_listener._handle_sse('{"id": "ws-2", "owner_user_id": "user-42"}')
 
-        assert event_listener._publisher.publish.call_args.args[0] == "app:sse:user-42"
+        assert event_listener._publisher.publish.call_args.args[0] == "codehub:sse:user-42"
 
     async def test_handle_sse_publish_exception_caught(self, event_listener: EventListener) -> None:
         event_listener._fetch_workspace = AsyncMock(
@@ -186,10 +186,6 @@ class TestHandleSse:
 
         errors_metric = MagicMock()
         with (
-            patch(
-                "codehub.control.coordinator.event_listener._channel_config",
-                SimpleNamespace(sse_prefix="codehub:sse", wake_prefix="codehub:wake"),
-            ),
             patch("codehub.control.coordinator.event_listener.EVENT_ERRORS_TOTAL", errors_metric),
             patch("codehub.control.coordinator.event_listener.logger.exception") as mock_log,
         ):
@@ -293,13 +289,7 @@ class TestHandleWake:
         event_listener._publisher.publish = AsyncMock(side_effect=[3, 5])
 
         wake_metric = MagicMock()
-        with (
-            patch(
-                "codehub.control.coordinator.event_listener._channel_config",
-                SimpleNamespace(sse_prefix="codehub:sse", wake_prefix="codehub:wake"),
-            ),
-            patch("codehub.control.coordinator.event_listener.EVENT_WAKE_PUBLISHED_TOTAL", wake_metric),
-        ):
+        with patch("codehub.control.coordinator.event_listener.EVENT_WAKE_PUBLISHED_TOTAL", wake_metric):
             await event_listener._handle_wake()
 
         event_listener._publisher.publish.assert_has_calls(
@@ -313,10 +303,6 @@ class TestHandleWake:
 
         errors_metric = MagicMock()
         with (
-            patch(
-                "codehub.control.coordinator.event_listener._channel_config",
-                SimpleNamespace(sse_prefix="codehub:sse", wake_prefix="codehub:wake"),
-            ),
             patch("codehub.control.coordinator.event_listener.EVENT_ERRORS_TOTAL", errors_metric),
             patch("codehub.control.coordinator.event_listener.logger.exception") as mock_log,
         ):
@@ -329,13 +315,10 @@ class TestHandleWake:
     async def test_handle_wake_uses_gather(self, event_listener: EventListener) -> None:
         event_listener._publisher.publish = AsyncMock(side_effect=[1, 1])
 
-        with (
-            patch(
-                "codehub.control.coordinator.event_listener._channel_config",
-                SimpleNamespace(sse_prefix="codehub:sse", wake_prefix="codehub:wake"),
-            ),
-            patch("codehub.control.coordinator.event_listener.asyncio.gather", wraps=asyncio.gather) as mock_gather,
-        ):
+        with patch(
+            "codehub.control.coordinator.event_listener.asyncio.gather",
+            wraps=asyncio.gather,
+        ) as mock_gather:
             await event_listener._handle_wake()
 
         mock_gather.assert_called_once()
